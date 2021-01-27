@@ -13,7 +13,7 @@ import bpy
 from mathutils import Quaternion
 
 from .frames import get_frame
-from .plural import to_shape
+from .plural import to_shape, setattrs, getattrs
 
 
 from .commons import base_error_title
@@ -29,6 +29,10 @@ class WStruct():
     
     def __init__(self, wrapped):
         super().__setattr__("wrapped", wrapped)
+        
+        
+    def __repr__(self):
+        return f"[Wrapper {self.__class__.__name__} of {self.class_name} '{self.wrapped}']"
     
     def __getattr__(self, name):
         if name in dir(self):
@@ -580,6 +584,16 @@ class WMesh(WID):
         locs = self.verts
         locs[:, 2] = to_shape(values, self.vcount)
         self.verts = locs
+        
+    # vertices attributes
+    
+    @property
+    def bevel_weights(self):
+        return getattrs(self.wrapped.vertices, "bevel_weight", 1, np.float)
+    
+    @bevel_weights.setter
+    def bevel_weights(self, values):
+        setattrs(self.wrapped.vertices, "bevel_weight", values, 1)
         
     # edges as indices
         
