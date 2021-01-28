@@ -11,7 +11,7 @@ import numpy as np
 #"""
 import bpy
 
-from .core.blender import get_frame
+from .blender import get_frame
 
 """
 
@@ -30,7 +30,7 @@ def get_frame(f):
 
 class Interval():
     
-    def __init__(self, start=None, end=None):
+    def __init__(self, start=0, end=1000000):
         self.frames = np.array([[get_frame(start), get_frame(end)]])
         
     @classmethod
@@ -94,6 +94,16 @@ class Interval():
     def duration(self, index = 0):
         return self.frames[index, 1] - self.frames[index, 0]
     
+    @property
+    def durations(self):
+        return self.frames[:, 1] - self.frames[:, 0]
+    
+    def factors(self, frame):
+        durs  = self.durations
+        facts = (frame - self.frames[:, 0])/durs
+        return np.clip(facts, 0., 1.)
+        
+    
     def split(self, count, duration=None):
 
         tot_dur = self.duration()
@@ -144,7 +154,8 @@ class Interval():
 class Animator():
     
     def __init__(self, action, objects=None, interval=Interval(), before=None, after=None):
-        self.interval = interval
+        self.interval  = interval
+        self.durations = interval.durations
         
         self.before   = before
         self.action   = action
@@ -154,33 +165,36 @@ class Animator():
             self.objects = None
         else:
             self.objects = np.array(objects)
-            
         
     def animate(self, frame):
         
         if self.objects is None:
             w = self.interval.when(frame)
+        
             if (w == -1) and (self.before is not None):
                 self.before(frame)
+            
             if (w == 0) and (self.action is not None):
                 self.action(frame)
+            
             if (w == 1) and (self.after is not None):
                 self.after(frame)
         
         else:
             bef, dur, aft = self.interval.frame_locations(frame)
+            factors = self.interval.factors(frame)
             
             if self.before is not None:
                 for i in bef:
-                    self.before(self.objects[i], frame)
+                    self.before(self.objects[i], frame=frame, start=self.interval.frames[i:, 0], end=self.interval.frames[i, 1], factor=factors[i])
                     
             if self.action is not None:
                 for i in dur:
-                    self.action(self.objects[i], frame)
+                    self.action(self.objects[i], frame=frame, start=self.interval.frames[i:, 0], end=self.interval.frames[i, 1], factor=factors[i])
                 
             if self.after is not None:
                 for i in aft:
-                    self.after(self.objects[i], frame)
+                    self.after(self.objects[i], frame=frame, start=self.interval.frames[i:, 0], end=self.interval.frames[i, 1], factor=factors[i])
                     
                     
     @staticmethod
@@ -222,20 +236,20 @@ class Engine():
     # Add an animator
         
     @staticmethod
-    def add(f, animator):
+    def add(animator):
         Engine.ANIMATORS.append(animator)
         
     # Add an action : action(frame)
         
     @staticmethod
     def add_action(action, interval=Interval(), before=None, after=None):
-        Engine.add_animator(action, objects=None, interval=interval, before=before, after=after)
+        Engine.add(Animator(action, objects=None, interval=interval, before=before, after=after))
         
     # Add an action on objects
         
     @staticmethod
     def add_objects(action, objects, interval=Interval(), before=None, after=None):
-        Engine.add_animator(Animator(action, objects, interval, before, after))
+        Engine.add(Animator(action, objects, interval, before, after))
         
     @staticmethod
     def add_setup(f):
@@ -254,11 +268,7 @@ class Engine():
     # Animation is submitted to global var
     
     @staticmethod
-    def animate(self, frame):
-        
-        if not bpy.context.scene.wa_frame_exec:
-            return
-            
+    def animate():
         frame = bpy.context.scene.frame_current
         
         if Engine.verbose:
@@ -274,22 +284,24 @@ class Engine():
     @staticmethod
     def run(go=True):
         bpy.context.scene.bw_engine_animate = go
-        Engine.animate()
+        if go:
+            Engine.animate()
         
 # =============================================================================================================================
 # Execution of an action during an interval on a list of objects
             
 def engine_handler(scene):
     if  bpy.context.scene.bw_engine_animate:
-        Engine.execute()
+        Engine.animate()
 
 # =============================================================================================================================
 # Registering the module
         
 def register():
+    print("Registering animation")
     
     bpy.types.Scene.bw_engine_animate = bpy.props.BoolProperty(description="Animate at frame change")
-    bpy.types.Scene.bw_hide_viewport = bpy.props.BoolProperty(description="Hide in viewport when hiding render")
+    bpy.types.Scene.bw_hide_viewport  = bpy.props.BoolProperty(description="Hide in viewport when hiding render")
    
     bpy.app.handlers.frame_change_pre.clear()
     bpy.app.handlers.frame_change_pre.append(engine_handler)
@@ -297,7 +309,6 @@ def register():
 
 def unregister():
     bpy.app.handlers.frame_change_pre.remove(engine_handler)
-
 
 if __name__ == "__main__":
     register()

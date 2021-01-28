@@ -72,6 +72,10 @@ class Duplicator():
         for obj in self.collection.objects:
             obj.update_tag()
         bpy.context.view_layer.update()
+        
+    @property
+    def as_array(self):
+        return np.array([obj for obj in self.collection.objects])
                 
     # -----------------------------------------------------------------------------------------------------------------------------
     # The objects are supposed to all have the same parameters
