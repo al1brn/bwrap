@@ -377,4 +377,20 @@ def set_material(obj, material_name):
 
     return mat
 
+
+# =============================================================================================================================
+# Registering the module
+        
+def register():
+    # Ensure control object is created
+    get_control_object()
+
+def unregister():
+    pass
+
+if __name__ == "__main__":
+    register()
+
+
+
    
