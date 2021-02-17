@@ -23,6 +23,9 @@ import bpy
 
 from .core.wrappers import wrap
 
+from .core.utils import dicho
+from .core.utils import npdicho
+
 from .core.interpolation import Interpolation
 
 from .core.blender import create_collection
@@ -52,6 +55,15 @@ from .core.animation import register as animation_register
 from .core.animation import unregister as animation_unregister
 from .core.animation import Interval
 from .core.animation import Engine
+
+from .core.interpolation import Interpolation
+
+from .core.bezier import PointsInterpolation
+
+from .core.curspaces import Space
+from .core.curspaces import Sphere
+
+from .core.meshes import arrow, curved_arrow
 
 
 
