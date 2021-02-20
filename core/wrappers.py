@@ -383,6 +383,27 @@ class WStruct():
         if value is not None:
             setattr(self.wrapped, name, curr)
 
+    def hide(self, frame, show_before=False, viewport=True):
+        self.set_kfs("hide_render", frame, True)
+        if show_before:
+            self.set_kfs("hide_render", get_frame(frame)-1, False)
+
+        if viewport:
+            self.set_kfs("hide_viewport", frame, True)
+            if show_before:
+                self.set_kfs("hide_viewport", get_frame(frame)-1, False)
+
+    def show(self, frame, hide_before=False, viewport=True):
+        self.set_kfs("hide_render", frame, False)
+        if hide_before:
+            self.set_kfs("hide_render", get_frame(frame)-1, True)
+
+        if viewport:
+            self.set_kfs("hide_viewport", frame, False)
+            if hide_before:
+                self.set_kfs("hide_viewport", get_frame(frame)-1, True)
+
+
 
 # ---------------------------------------------------------------------------
 # Root wrapper
@@ -908,8 +929,8 @@ class WSpline(WStruct):
     # ---------------------------------------------------------------------------
     # Geometry from function
 
-    def from_function(self, count, f, t0, t1):
-        dt = (t1-t0)/10000
+    def from_function(self, count, f, t0=0, t1=1):
+        dt = (t1-t0)/1000
         verts, lefts, rights = control_points(f, count, t0, t1, dt)
 
         self.set_verts(verts, lefts, rights)

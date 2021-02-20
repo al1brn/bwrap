@@ -37,7 +37,8 @@ def derivative_f(f, s, ds = 0.01):
 
 def partial_f(f, X, i, dX):
 
-    XL = np.array(X)
+    XL = np.array(X, np.float)
+
     XL[i] = XL[i] - dX[i]/2.
     v0 = f(XL)
 
@@ -64,25 +65,6 @@ def a2s(a):
     return s + "]"
 
 # -----------------------------------------------------------------------------------------------------------------------------
-# A class storing information on a point:
-# - X  : The coordinates
-# - P  : Point in space (P = f(X))
-# - s  : Curve absciss&
-# - T  : Tangent at that point
-
-class CPoint():
-    def __init__(self, X, P, s=0.):
-        self.X = np.array(X)
-        self.P = np.array(P)
-        self.s = s
-
-    def clone(self):
-        return CPoint(self.X, self.P, self.s)
-
-    def __repr__(self):
-        return f"X: {a2s(self.X)} P: {a2s(self.P)} s:{self.s:+2.3f}"
-
-# -----------------------------------------------------------------------------------------------------------------------------
 # Curved space
 #
 # The following functions must/can be overloaded:
@@ -107,7 +89,7 @@ class Space():
         if dX is None:
             self.dX = np.ones(dim)*0.01
         else:
-            self.dX = np.array(dX)
+            self.dX = np.array(dX, np.float)
         self.basis_is_inversible = False # True only when space and amp dimes are equal
 
     # ---------------------------------------------------------------------------
@@ -324,9 +306,9 @@ class Space():
         # From the covariant basis
 
         else:
-
             if basis is None:
                 basis = self.covariant_basis(X)
+
             #M = np.array([basis[i]/Vector(basis[i]).length_squared for i in range(self.dim)])
             M = np.array([basis[i]/np.dot(basis[i], basis[i]) for i in range(self.dim)])
 
@@ -345,7 +327,6 @@ class Space():
 
 
         return G
-
 
     # -----------------------------------------------------------------------------------------------------------------------------
     # Parallel transport
@@ -385,9 +366,16 @@ class Space():
         return W
 
     # -----------------------------------------------------------------------------------------------------------------------------
-    # Geodesic
+    # Fully parameterized geodesic
+    # - X           : starting map coordinates
+    # - V           : direction
+    # - length      : geodesic length
+    # - map_length  : length is computed on map coordinates, not on surface coordinaates
+    # - move_first  : move in the direction of the vector before parallel transport
+    # - count       : number of points to return
+    # - ds          : increment
 
-    def geodesic(self, X, V, length, count=None, ds=0.01):
+    def geodesic(self, X, V, length, count=None, map_length=False, ds=0.01):
 
         X = np.array(X)
         V = np.array(V)
@@ -400,11 +388,62 @@ class Space():
 
         # Loop
         for i in range(10000):
+
             V = V * ds
             V = self.parallel_transport(X, V, V)
 
             X = X + V
             G.append(X)
+
+            Q = self.f(X)
+            if map_length:
+                s += np.linalg.norm(V)
+            else:
+                s += np.linalg.norm(Q - P)
+            P = Q
+
+            V = V / np.linalg.norm(V)
+            T.append(V)
+
+            if s >= length:
+                break
+
+        if count is None:
+            return np.array(G), np.array(T)
+        else:
+            return from_points(count, G)[0], from_points(count, T)[0]
+
+
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # Geodesic
+
+    def geodesic_OLD(self, X, V, length, count=None, ds=0.01):
+
+        X = np.array(X)
+        V = np.array(V)
+        V = V / np.linalg.norm(V)
+
+        s = 0.              # Length
+        G = [X]             # The geodesic
+        T = [np.array(V)]   # Tangent
+        P = self.f(X)
+
+        move_before = False
+
+        # Loop
+        for i in range(10000):
+            V = V * ds
+
+            # Option 1 : X incremented after
+            if move_before:
+                G.append(X+V)
+
+            V = self.parallel_transport(X, V, V)
+            X = X + V
+
+            # Option 2 : X incremented after
+            if not move_before:
+                G.append(X)
 
             Q = self.f(X)
             s += np.linalg.norm(Q - P)
@@ -424,12 +463,15 @@ class Space():
     # -----------------------------------------------------------------------------------------------------------------------------
     # Curved vector
 
-    def curved_vector(self, X, axis, length=1., count=10):
+    def curved_vector(self, X, axis, length=1., count=None, map_length=True, ds=0.01):
         V = np.zeros(self.dim, np.float)
         V[axis] = 1
 
-        G, T = self.geodesic(X, V, length, count)
-        return self.f([G[:, 0], G[:, 1]])
+        #G, T = self.geodesic(X, V, length, count)
+        G, T = self.geodesic(X, V, length, map_length=map_length, count=count, ds=ds)
+        return G
+
+        #return self.f([G[:, 0], G[:, 1]])
 
     # -----------------------------------------------------------------------------------------------------------------------------
     # Tensor envelop
@@ -463,9 +505,38 @@ class Space():
 
 
 # -----------------------------------------------------------------------------------------------------------------------------
+# Random Surface
+
+class RandSurface(Space):
+
+    def __init__(self, count=10, size=400, omega=0.3, amplitude=20., damping=50, seed=0):
+        Space.__init__(self, dim=2)
+
+        rng = np.random.default_rng(seed)
+
+        self.Os  = rng.uniform(-size/2, size/2, (count, 2))
+        self.Ws  = rng.uniform(omega/10, omega, count)
+        self.As  = rng.uniform(amplitude/10, amplitude, count)
+        self.damping = damping
+
+    def f(self, X):
+
+        Xs  = np.array(X)
+        zs  = np.zeros(Xs[0].shape, np.float)
+
+        for i in range(len(self.Ws)):
+            dxs = Xs[0] - self.Os[i, 0]
+            dys = Xs[1] - self.Os[i, 1]
+            ds  = np.sqrt(dxs*dxs + dys*dys)
+
+            zs += self.As[i]*np.sin(self.Ws[i]*ds)*np.exp(-ds/self.damping)
+
+        return np.array((Xs[0], Xs[1], zs)).transpose()
+
+
+# -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
 # Surface 3D sphère
-
 
 class Sphere3(Space):
 

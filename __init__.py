@@ -65,7 +65,8 @@ from .core.curspaces import Sphere
 
 from .core.meshes import arrow, curved_arrow
 
-
+from .core.meshbuilder import MeshBuilder
+from .core.markers import markers
 
 from .core.commons import base_error_title
 error_title = base_error_title % "main.%s"
