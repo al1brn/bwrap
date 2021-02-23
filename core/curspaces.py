@@ -13,17 +13,12 @@ Created on Tue Jan 26 21:24:15 2021
 # Module le 30/09/2017
 # Modified february 2021
 
-CURVES_DEBUG=None
-
 from math import cos, sin, tan, asin, acos, atan, atan2, radians, degrees, sqrt, pi
 import numpy as np
 
 from .bezier import  from_points
 
-
-#from mathutils import (Matrix, Vector)
 #import fourD
-#import automator as atm
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Derivative function
@@ -60,7 +55,7 @@ def a2s(a):
     s = "["
     sep = ""
     for v in a:
-        a += sep + f"{v:6.2f}"
+        s += sep + f"{v:6.2f}"
         sep = ", "
     return s + "]"
 
@@ -70,14 +65,14 @@ def a2s(a):
 # The following functions must/can be overloaded:
 #
 # Mandatory:
-# - f(self, X): returns a vector
+# - __call__(self, X): returns a vector
 #
 # Facultative:
-# - partial_calc(self, X, i)      : Partial derivative
-# - partial2_calc(self, X, i, j)  : Second partial derivative
-# - partial_metric_tensor_calc(X) : Derivative of the metric tensor
+# - partial(self, X, i)        : Partial derivative
+# - partial2(self, X, i, j)    : Second partial derivative
+# - derivated_metric_tensor(X) : Derivative of the metric tensor
 
-class Space():
+class CurvedSpace():
 
     # ---------------------------------------------------------------------------
     # Initialize with the space dimension
@@ -90,7 +85,34 @@ class Space():
             self.dX = np.ones(dim)*0.01
         else:
             self.dX = np.array(dX, np.float)
-        self.basis_is_inversible = False # True only when space and amp dimes are equal
+        self.basis_is_inversible = False # True only when space and map dims are equal
+
+    # ---------------------------------------------------------------------------
+    # Encapsulated predefined spaces
+
+    @staticmethod
+    def RandSurface(count=10, size=400, omega=0.3, amplitude=20., damping=50, seed=0):
+        return RandSurface(count=count, size=size, omega=omega, amplitude=amplitude, damping=damping, seed=seed)
+
+    @staticmethod
+    def Sphere2(R=1., by_metric=False):
+        return Sphere2(R, by_metric=by_metric)
+
+    @staticmethod
+    def Sphere3():
+        return Sphere2()
+
+    @staticmethod
+    def Hyperboloid2(R=1.):
+        return Hyperboloid2(R=R)
+
+    @staticmethod
+    def Hyperboloid3():
+        return Hyperboloid3()
+
+    @staticmethod
+    def Hypersphere(R=1.):
+        return Hypersphere(R=R)
 
     # ---------------------------------------------------------------------------
     # Return an empty Vector
@@ -99,42 +121,46 @@ class Space():
         return np.zeros(self.dim, np.float)
 
     # ---------------------------------------------------------------------------
-    # Retourne un vecteur 3D pour visualisation
+    # Return a 3D vector which can be used in Blender
 
     def to3D(self, X):
-        if len(X) == 1:
-            return np.array((X[0], 0, 0))
+        Xs = np.array(X)
+        d  = Xs.shape[-1]
+        zs = np.zeros(Xs[0].shape, np.float)
+        if d == 1:
+            return np.array((X[0], zs, zs)).transpose()
         elif len(X) == 2:
-            return np.array((X[0], X[1], 0))
+            return np.array((X[0], X[1], zs)).transpose()
         elif len(X) == 3:
-            return np.array(X)
+            return Xs.transpose()
         else:
-            return np.array(X)[:3]
+            # To be updated :-)
+            return Xs[:3].transpose()
 
     # ---------------------------------------------------------------------------
-    # The function return a vector for given map coordinates
+    # By default, the function return the map coordinates for visualization
 
-    def f(self, X):
-        raise RuntimeError(f"Function f of Space class must be overloaded in subclass {type(self)}")
+    def __call__(self, X):
+        return self.to3D(np.array(X))
+
+        #raise RuntimeError(f"Magic function __call__ of Space class must be overloaded in subclass {type(self)}")
+
+    #def f(self, X):
+    #    raise RuntimeError(f"Function f of Space class must be overloaded in subclass {type(self)}")
 
     # ---------------------------------------------------------------------------
     # Partial derivative
-    # Numerically computed if the partial_calc method doesn't exist
+    # Can be overloaded if required
 
     def partial(self, X, i):
-        if hasattr(self, 'partial_calc'):
-            return self.partial_calc(X, i)
-
-        return partial_f(lambda Y: self.f(Y), X,  i, self.dX)
+        return partial_f(self, X,  i, self.dX)
 
     # ---------------------------------------------------------------------------
     # Second partial derivative
+    # Can be overloaded if required
 
     def partial2(self, X, i, j):
-        if hasattr(self, 'partial2_calc'):
-            return self.partial2_calc(X, i, j)
-
-        return partial2_f(lambda Y: self.f(Y), X, i, j, self.dX)
+        return partial2_f(self, X, i, j, self.dX)
 
     # ---------------------------------------------------------------------------
     # Covariant basis
@@ -179,9 +205,6 @@ class Space():
     # Returns a tensor of order 3
 
     def derivated_metric_tensor(self, X):
-
-        if hasattr(self, 'partial_metric_tensor_calc'):
-            return self.partial_metric_tensor_calc(X)
 
         Dg = np.zeros(self.dim**3).reshape((self.dim, self.dim, self.dim))
 
@@ -325,7 +348,6 @@ class Space():
 
                     G[i,j] = M.dot(de)
 
-
         return G
 
     # -----------------------------------------------------------------------------------------------------------------------------
@@ -384,7 +406,7 @@ class Space():
         s = 0.              # Length
         G = [X]             # The geodesic
         T = [np.array(V)]   # Tangent
-        P = self.f(X)
+        P = self(X)
 
         # Loop
         for i in range(10000):
@@ -395,7 +417,7 @@ class Space():
             X = X + V
             G.append(X)
 
-            Q = self.f(X)
+            Q = self(X)
             if map_length:
                 s += np.linalg.norm(V)
             else:
@@ -413,65 +435,17 @@ class Space():
         else:
             return from_points(count, G)[0], from_points(count, T)[0]
 
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Geodesic
-
-    def geodesic_OLD(self, X, V, length, count=None, ds=0.01):
-
-        X = np.array(X)
-        V = np.array(V)
-        V = V / np.linalg.norm(V)
-
-        s = 0.              # Length
-        G = [X]             # The geodesic
-        T = [np.array(V)]   # Tangent
-        P = self.f(X)
-
-        move_before = False
-
-        # Loop
-        for i in range(10000):
-            V = V * ds
-
-            # Option 1 : X incremented after
-            if move_before:
-                G.append(X+V)
-
-            V = self.parallel_transport(X, V, V)
-            X = X + V
-
-            # Option 2 : X incremented after
-            if not move_before:
-                G.append(X)
-
-            Q = self.f(X)
-            s += np.linalg.norm(Q - P)
-            P = Q
-
-            V = V / np.linalg.norm(V)
-            T.append(V)
-
-            if s >= length:
-                break
-
-        if count is None:
-            return np.array(G), np.array(T)
-        else:
-            return from_points(count, G)[0], from_points(count, T)[0]
-
     # -----------------------------------------------------------------------------------------------------------------------------
     # Curved vector
+    # Returns the map coordinates of a geodesic
+
 
     def curved_vector(self, X, axis, length=1., count=None, map_length=True, ds=0.01):
         V = np.zeros(self.dim, np.float)
         V[axis] = 1
 
-        #G, T = self.geodesic(X, V, length, count)
         G, T = self.geodesic(X, V, length, map_length=map_length, count=count, ds=ds)
         return G
-
-        #return self.f([G[:, 0], G[:, 1]])
 
     # -----------------------------------------------------------------------------------------------------------------------------
     # Tensor envelop
@@ -503,14 +477,23 @@ class Space():
 
         return E
 
+# =============================================================================================================================
+# Some usefull curved spaces
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Random Surface
+# The surface is defined by the addition of damped 2D sinusoids
+# - count     : number of sinusoids to add
+# - size      : square side into which locate the center of the sinusoid
+# - omega     : max omega of the sinusoids
+# - amplitude : max amplitude of the sinusoids
+# - damping   : damping factor (the higher, the stronger is the damping. 0 : no daping)
+# - seed      : seed for random generation
 
-class RandSurface(Space):
+class RandSurface(CurvedSpace):
 
     def __init__(self, count=10, size=400, omega=0.3, amplitude=20., damping=50, seed=0):
-        Space.__init__(self, dim=2)
+        CurvedSpace.__init__(self, dim=2)
 
         rng = np.random.default_rng(seed)
 
@@ -519,157 +502,357 @@ class RandSurface(Space):
         self.As  = rng.uniform(amplitude/10, amplitude, count)
         self.damping = damping
 
-    def f(self, X):
+    # ---------------------------------------------------------------------------
+    # The function
+    # Takes a 2D parameter (x,y), computes z, return (x, y, z)
+
+    def __call__(self, X):
 
         Xs  = np.array(X)
         zs  = np.zeros(Xs[0].shape, np.float)
 
-        for i in range(len(self.Ws)):
-            dxs = Xs[0] - self.Os[i, 0]
-            dys = Xs[1] - self.Os[i, 1]
+        for k in range(len(self.Ws)):
+            dxs = Xs[0] - self.Os[k, 0]
+            dys = Xs[1] - self.Os[k, 1]
             ds  = np.sqrt(dxs*dxs + dys*dys)
 
-            zs += self.As[i]*np.sin(self.Ws[i]*ds)*np.exp(-ds/self.damping)
+            zs += self.As[k]*np.sin(self.Ws[k]*ds)*np.exp(-ds/self.damping)
 
         return np.array((Xs[0], Xs[1], zs)).transpose()
 
 
 # -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Surface 3D sphère
+# 3D sphere
+# The map is 3D : (R, theta, phi)
 
-class Sphere3(Space):
+class Sphere3(CurvedSpace):
 
     # ---------------------------------------------------------------------------
-    # Initialise en dimension 3
+    # 3D initialization
 
     def __init__(self):
-        Space.__init__(self, dim=3)
+        CurvedSpace.__init__(self, dim=3)
         self.dX[0] = 0.01
         self.dX[1] = radians(0.5)
         self.dX[2] = radians(1.)
 
     # ---------------------------------------------------------------------------
-    # Retourne un vecteur en coordonnées sphériques
+    # Returns a 3D vector from spherical coordinates
 
-    def f(self, X):
+    def __call__(self, X):
 
-        Xs = np.array(X)
-        if np.size(Xs) == 3:
-            r = Xs[0]*sin(Xs[1])
-            return np.array( (r*np.cos(Xs[2]), r*np.sin(Xs[2]), Xs[0]*np.cos(Xs[1])))
+        Xs  = np.array(X)
 
-        pts = np.empty((len(Xs), 3), np.float)
-
-        rs  = Xs[:, 0] * np.sin(Xs[:, 1])
-        pts[:, 0] = rs * np.cos(Xs[:, 2])
-        pts[:, 1] = rs * np.sin(Xs[:, 2])
-        pts[:, 2] = Xs[:, 0]*np.cos(Xs[:, 1])
-
-        return pts
-
-    # ---------------------------------------------------------------------------
-    # Dérivée partielle calculée
-
-    def partial_calc(self, X, i):
-
-        R       = X[0]
-        theta   = X[1]
-        phi     = X[2]
-
-        if i == 0:
-            sint = sin(theta)
-            return  np.array((sint*cos(phi), sint*sin(phi), cos(theta)))
-
-        if i == 1:
-            r = R*cos(theta)
-            return  np.array((r*cos(phi), r*sin(phi), -R*sin(theta)))
-
-        if i == 2:
-            r = R*sin(theta)
-            return  np.array((-r*sin(phi), r*cos(phi), 0.))
-
-        return None
-
-    # ---------------------------------------------------------------------------
-    # Dérivée partielle seconde calculée
-
-    def partial2_calc(self, X, i, j):
-
-        R       = X[0]
-        theta   = X[1]
-        phi     = X[2]
-
-        if i == 0:
-            if j == 0:
-                return np.zeros(3)
-            if j == 1:
-                r = cos(theta)
-                return  np.array((r*cos(phi), r*sin(phi), -sin(theta)))
-            if j == 2:
-                r = sin(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-
-        if i == 1:
-            if j == 0:
-                r = cos(theta)
-                return  np.array((r*cos(phi), r*sin(phi), -sin(theta)))
-            if j == 1:
-                r = -R*sin(theta)
-                return  np.array((r*cos(phi), r*sin(phi), -R*cos(theta)))
-            if j == 2:
-                r = R*cos(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-
-        if i == 2:
-            if j == 0:
-                r = sin(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-            if j == 1:
-                r = R*cos(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-            if j == 2:
-                r = R*sin(theta)
-                return  np.array((-r*cos(phi), -r*sin(phi), 0.))
-
-        return None
-
-
-
-
+        sns = np.sin(Xs[1])
+        return (Xs[0]*np.array( (sns*np.cos(Xs[2]), sns*np.sin(Xs[2]), np.cos(Xs[1]) ) )).transpose()
 
 
 # -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Surface 2D à la surface d'une sphère
+# 2D Sphere
+# The map is 2D : (theta, phi) R is fixed
 
-class Sphere(Space):
+class Sphere2(CurvedSpace):
 
-    def __init__(self, R=1.):
-        Space.__init__(self, dim=2)
-        self.R = R
+    def __init__(self, R=1., by_metric=False):
+        CurvedSpace.__init__(self, dim=2, by_metric=by_metric)
+        self.R  = R
+        self.R2 = R*R
         self.dX[0] = radians(0.5)
         self.dX[1] = radians(1.)
 
-    def f(self, X):
-        Xs = np.array(X)
-        r = self.R*np.sin(Xs[0])
-        Y = np.array( (r*np.cos(Xs[1]), r*np.sin(Xs[1]), self.R*np.cos(Xs[0])))
-        return np.transpose(Y)
+    def __call__(self, X):
+        Xs  = np.array(X)
+        sns = np.sin(Xs[0])
+
+        return (self.R*np.array( (sns*np.cos(Xs[1]), sns*np.sin(Xs[1]), np.cos(Xs[0])))).transpose()
 
     # ---------------------------------------------------------------------------
-    # Dérivées partielles calculées
-    # Utilise les formules de l'espace sphérique en supprimant l'axe 0
+    # Metric tensor
 
-    def partial_calc(self, X, i):
-        return Sphere3.partial_calc(self, np.array((self.R, X[0], X[1])), i+1)
+    def metric_tensor(self, X, basis=None):
+        cu = np.sin(X[0])
+        return np.array([[self.R2, 0.], [0., self.R2*cu*cu]])
 
-    def partial2_calc(self, X, i, j):
-        return Sphere3.partial2_calc(self, np.array((self.R, X[0], X[1])), i+1, j+1)
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# 2D hyperboloid
+# Radius R is fixed
+# X0 -> z
+# X1 -> phi
+
+class Hyperboloid2(CurvedSpace):
+
+    def __init__(self, R=1.):
+        CurvedSpace.__init__(self, dim=2)
+        self.R  = R
+        self.R2 = R*R
+        self.dX[0] = radians(0.01)
+        self.dX[1] = radians(0.01)
+
+    def __call__(self, X):
+        Xs  = np.array(X)
+        rs  = np.sqrt(self.R2 + np.square(Xs[0]))
+
+        return np.array( (rs*np.cos(Xs[1]), rs*np.sin(Xs[1]), Xs[0]) ).transpose()
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# 3D hyperboloid
+
+class Hyperboloid3(CurvedSpace):
+
+    def __init__(self):
+        CurvedSpace.__init__(self, dim=3)
+        self.dX[0] = 0.01
+        self.dX[1] = radians(0.01)
+        self.dX[2] = radians(0.01)
+
+    def __call__(self, X):
+
+        Xs  = np.array(X)
+        rs  = np.sqrt(np.square(Xs[0]) + np.square(Xs[1]))
+
+        return np.array( (rs*np.cos(Xs[2]), rs*np.sin(Xs[2]), Xs[1]) ).transpose()
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# A 3D sphere plunged in a 4D space
+# - Radius R is fixed
+# 3 angle coordinates : theta, phi, alpha
+
+class Hypersphere(CurvedSpace):
+
+    def __init__(self, R=1.):
+
+        CurvedSpace.__init__(self, dim=3)
+
+        self.R = R
+        self.dX[0] = radians(1.0)
+        self.dX[1] = radians(0.5)
+        self.dX[2] = radians(0.5)
+
+    def __call__(self, X):
+
+        Xs  = np.array(X)
+        cal = np.cos(Xs[2])  # cos(alpha)
+        cph = np.cos(Xs[1])  # cos(phi)
+        cc = cal * cph
+
+        return (self.R * np.array( (cc*np.cos(Xs[0]), cc*np.sin(Xs[0]), cal*np.sin(Xs[1]), np.sin(Xs[2])) )).transpose()
 
 
 """
 
+# -----------------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------------
+# Espace cylindrique 3D généré par un espace en rotation géométrique
+# On utilise les coordonnées cartésiennes
+
+class SpaceCentrifuge(Space):
+
+    def __init__(self, omega=1.):
+
+        Space.__init__(self, dim=3)
+
+        self.omega = omega
+
+        self.dX[0] = 0.01
+        self.dX[1] = 0.01
+        self.dX[2] = 0.01
+
+    # ---------------------------------------------------------------------------
+    # Mouvement du référentiel dans l'espace
+    #
+    # rho   = sqrt(x^2 + y^2)
+    # theta = atan(y/x)
+    #
+    # x = rho*cos(theta + wt)
+    # y = rho*sin(theta + wt)
+
+    def f(self, X):
+
+        Vxy = Vector((X[0], X[1]))
+
+        t     = X[2]
+        rho   = Vxy.length
+        theta = atan2(Vxy.y, Vxy.x)
+
+        x = rho*cos(theta + self.omega*t)
+        y = rho*sin(theta + self.omega*t)
+
+        return np.array( (x, y, t) )
+
+    def inv_f(self, P):
+        Vxy = Vector((P[0], P[1]))
+
+        t     = P[2]
+        rho   = Vxy.length
+        theta = atan2(Vxy.y, Vxy.x)
+
+        x = rho*cos(theta - self.omega*t)
+        y = rho*sin(theta - self.omega*t)
+
+        return np.array( (x, y, t) )
+
+    # ---------------------------------------------------------------------------
+    # Dérivées partielles
+    #
+    # X = rho*cos(atan(y/x) + self.omega*t)
+    # dX/dx = x/rho*cos() - (-y/x^2 * rho/(1+(y/x)^2)*sin() = x/rho*cos() + y/rho*sin() = (x.cos + y.sin)/rho
+    # dX/dy = y/rho*cos() - (1/x * rho/(1+(y/x)^2)*sin() = y/rho*cos() - x/rho*sin()    = (y.cos - x.sin)/rho
+    # dX/dt = -omega*rho*sin
+    #
+    # Y = rho*sin(atan(y/x) + self.omega*t)
+    # dY/dx = (x.sin - y.cos)/rho
+    # dY/dx = (x.cos + y.sin)/rho
+    # dY/dt = omega*rho*cos
+    #
+    # T = t
+    # dT/dx = 0
+    # dT/dy = 0
+    # dT/dt = 1
+    #
+    # Aide -------------------------
+    # https://www.solumaths.com/fr/calculatrice-en-ligne/calculer/deriver
+    #
+    # deriver(sqrt(x^2+y^2)*cos(atan(y/x)+w*t);x)
+
+    def partial_calc(self, X, i):
+
+        x = X[0]
+        y = X[1]
+        t = X[2]
+
+        rho   = sqrt(x*x + y*y)
+        theta = atan2(y, x)
+
+        cs = cos(theta + self.omega*t)
+        sn = sin(theta + self.omega*t)
+
+        if i == 0:
+            if rho < 0.00001:
+                return Vector((1000., 0., 0.))
+            return Vector(((x*cs + y*sn)/rho, (x*sn - y*cs)/rho, 0.))
+
+        if i == 1:
+            if rho < 0.00001:
+                return Vector((0., 1000., 0.))
+            return Vector(((y*cs - x*sn)/rho, (x*cs + y*sn)/rho, 0.))
+
+        if i == 2:
+            sor = self.omega*rho
+            return Vector((-sor*sn, sor*cs, 1.))
+
+        return None
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------------
+# Métrique de Newton (?)
+
+class NewtonGravity(Space):
+
+    def __init__(self, G=1., M=1., c=1.):
+        Space.__init__(self, dim=3, by_metric=False)
+
+        self.G = G
+        self.M = M
+        self.c = c
+
+        self.dX[0] = 0.1
+        self.dX[1] = 0.1
+        self.dX[2] = radians(0.5)
+
+    def f(self, X):
+        r     = X[0]
+        theta = X[1]
+        t     = X[2]
+
+        return Vector((t, r - self.G*self.M/r**2*(self.c*t)**2, theta))
+
+    def metric_tensor_OLD(self, X, basis=None):
+
+        r     = X[0]
+        theta = X[1]
+        t     = self.c*X[2]
+
+
+        g = np.zeros((3, 3))
+        g[0, 0] = r*r
+        g[1, 1] = 1.
+        g[2, 2] = 1.
+
+        return g
+
+
+
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------------------------------------------
+# Métrique de Schwarzschild
+
+class MetricSwartzschild(Space):
+
+    def __init__(self, G=1., M=1., c=1.):
+        Space.__init__(self, dim=4, by_metric=True)
+
+        self.G = G
+        self.M = M
+        self.c = c
+
+        # Rayon de Swarzschild
+        self.GM_c2 = 2.*self.G*self.M/(self.c*self.c)
+        self.SR = self.GM_c2
+
+        self.dX[0] = 0.1
+        self.dX[1] = 0.1
+        self.dX[2] = radians(0.5)
+        self.dX[3] = radians(1.)
+
+
+    def to3D(self, X):
+        t     = X[0]
+        R     = X[1]
+        theta = X[2]
+        phi   = X[3]
+        return Vector((R*cos(theta), R*sin(theta), t))
+
+
+    # ---------------------------------------------------------------------------
+    # Points
+
+    def f(self, X):
+        t     = X[0]
+        R     = X[1]
+        theta = X[2]
+        phi   = X[3]
+
+        r = R*sin(theta)
+        return np.array( (t, r*cos(phi), r*sin(phi), R*cos(theta)))
+
+    # ---------------------------------------------------------------------------
+    # Le tenseur métrique
+
+    def metric_tensor(self, X, basis=None):
+
+        t     = X[0]
+        r     = X[1]
+        theta = X[2]
+        phi   = X[3]
+
+        rsin = r*sin(theta)
+        K = (1. - self.GM_c2/r)
+
+        g = np.zeros((4, 4))
+        g[0, 0] = -K
+        g[1, 1] = 1/K
+        g[2, 2] = r*r
+        g[3, 3] = rsin*rsin
+
+        return g
+"""
+
+
+
+
+"""
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -1013,436 +1196,4 @@ class Geodesics():
 
         Geodesics.populate(X0, V, X1=X1, V1=V, count=count, steps=steps, sMax=sMax, decimate=decimate, space=space)
 
-
-
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Une surface sphérique
-# Convention phyisique : phi est la longitude (0 à 2pi) et theta la colatitude (0 à pi)
-
-class SpaceSphere(Space):
-
-    # ---------------------------------------------------------------------------
-    # Initialise en dimension 3
-
-    def __init__(self):
-        Space.__init__(self, dim=3)
-        self.dX[0] = 0.01
-        self.dX[1] = radians(0.5)
-        self.dX[2] = radians(1.)
-
-    # ---------------------------------------------------------------------------
-    # Retourne un vecteur en coordonnées sphériques
-
-    def f(self, X):
-        R       = X[0]
-        theta   = X[1]
-        phi     = X[2]
-
-        r = R*sin(theta)
-        return np.array( (r*cos(phi), r*sin(phi), R*cos(theta)))
-
-    # ---------------------------------------------------------------------------
-    # Dérivée partielle calculée
-
-    def partial_calc(self, X, i):
-
-        R       = X[0]
-        theta   = X[1]
-        phi     = X[2]
-
-        if i == 0:
-            sint = sin(theta)
-            return  np.array((sint*cos(phi), sint*sin(phi), cos(theta)))
-
-        if i == 1:
-            r = R*cos(theta)
-            return  np.array((r*cos(phi), r*sin(phi), -R*sin(theta)))
-
-        if i == 2:
-            r = R*sin(theta)
-            return  np.array((-r*sin(phi), r*cos(phi), 0.))
-
-        return None
-
-    # ---------------------------------------------------------------------------
-    # Dérivée partielle seconde calculée
-
-    def partial2_calc(self, X, i, j):
-
-        R       = X[0]
-        theta   = X[1]
-        phi     = X[2]
-
-        if i == 0:
-            if j == 0:
-                return np.zeros(3)
-            if j == 1:
-                r = cos(theta)
-                return  np.array((r*cos(phi), r*sin(phi), -sin(theta)))
-            if j == 2:
-                r = sin(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-
-        if i == 1:
-            if j == 0:
-                r = cos(theta)
-                return  np.array((r*cos(phi), r*sin(phi), -sin(theta)))
-            if j == 1:
-                r = -R*sin(theta)
-                return  np.array((r*cos(phi), r*sin(phi), -R*cos(theta)))
-            if j == 2:
-                r = R*cos(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-
-        if i == 2:
-            if j == 0:
-                r = sin(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-            if j == 1:
-                r = R*cos(theta)
-                return  np.array((-r*sin(phi), r*cos(phi), 0.))
-            if j == 2:
-                r = R*sin(theta)
-                return  np.array((-r*cos(phi), -r*sin(phi), 0.))
-
-        return None
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Surface 2D à la surface d'une sphère
-
-class SpaceSphereSurface(Space):
-
-    def __init__(self, R=1.):
-        Space.__init__(self, dim=2)
-        self.R = R
-        self.dX[0] = radians(0.5)
-        self.dX[1] = radians(1.)
-
-    def f(self, X):
-
-        R       = self.R
-        theta   = X[0]
-        phi     = X[1]
-
-        r = R*sin(theta)
-        return np.array( (r*cos(phi), r*sin(phi), R*cos(theta)))
-
-    # ---------------------------------------------------------------------------
-    # Dérivées partielles calculées
-    # Utilise les formules de l'espace sphérique en supprimant l'axe 0
-
-    def partial_calc(self, X, i):
-        return SpaceSphere.partial_calc(self, np.array((self.R, X[0], X[1])), i+1)
-
-    def partial2_calc(self, X, i, j):
-        return SpaceSphere.partial2_calc(self, np.array((self.R, X[0], X[1])), i+1, j+1)
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Surface 2D sphérique métrique
-
-class MetricSphere2D(Space):
-
-    def __init__(self, R=1.):
-        Space.__init__(self, dim=2, by_metric=True)
-        self.R = R
-        self.R2 = R*R
-        self.dX[0] = radians(0.5)
-        self.dX[1] = radians(1.)
-
-    # ---------------------------------------------------------------------------
-    # Le tenseur métrique
-
-    def metric_tensor(self, X, basis=None):
-        cu = sin(X[0])
-        return np.array([[self.R2, 0.], [0., self.R2*cu*cu]])
-
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Surface 2D à la surface d'un hyperboloïde
-
-class SpaceHyperboloid1(Space):
-
-    def __init__(self, R):
-        Space.__init__(self, dim=2)
-        self.R = R
-        self.dX[0] = radians(0.01)
-        self.dX[1] = radians(0.01)
-
-    def f(self, X):
-
-        R       = self.R
-        z       = X[0]
-        phi     = X[1]
-
-        r = math.sqrt(R**2 + z**2)
-        return np.array( (r*cos(phi), r*sin(phi), z))
-
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Surface 3D à la surface d'un hyperboloïde
-
-class SpaceHyperboloid1_3D(Space):
-
-    def __init__(self):
-        Space.__init__(self, dim=3)
-        self.dX[0] = radians(0.01)
-        self.dX[1] = radians(0.01)
-
-    def f(self, X):
-
-        R       = X[0]
-        z       = X[1]
-        phi     = X[2]
-
-        r = math.sqrt(R**2 + z**2)
-        return np.array( (r*cos(phi), r*sin(phi), z))
-
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Espace sphèrique 3D à l'intérieur d'une hypersphère
-# Les coordonnées sont theta1, theta2, theta3
-# Le rayon de la sphere
-
-class Space3DHypersphere(Space):
-
-    def __init__(self, R=1.):
-
-        Space.__init__(self, dim=3)
-
-        self.R = R
-        self.dX[0] = radians(1.0)
-        self.dX[1] = radians(0.5)
-        self.dX[2] = radians(0.5)
-
-    def f(self, X):
-
-        S = fourD.Spherical4D(self.R, X[0], X[1], X[2])
-        return fourD.toCartesian4D(S)
-
-        # ----- ANCIEN
-
-        R     = self.R
-        th1   = X[0]
-        th2   = X[1]
-        th3   = X[2]
-
-        sth1 = sin(th1)
-        sth2 = sin(th2)
-        sth3 = sin(th3)
-
-        return R * np.array( (cos(th1), sth1*cos(th2), sth1*sth2*cos(th3), sth1*sth2*sth3) )
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Espace cylindrique 3D généré par un espace en rotation géométrique
-# On utilise les coordonnées cartésiennes
-
-class SpaceCentrifuge(Space):
-
-    def __init__(self, omega=1.):
-
-        Space.__init__(self, dim=3)
-
-        self.omega = omega
-
-        self.dX[0] = 0.01
-        self.dX[1] = 0.01
-        self.dX[2] = 0.01
-
-    # ---------------------------------------------------------------------------
-    # Mouvement du référentiel dans l'espace
-    #
-    # rho   = sqrt(x^2 + y^2)
-    # theta = atan(y/x)
-    #
-    # x = rho*cos(theta + wt)
-    # y = rho*sin(theta + wt)
-
-    def f(self, X):
-
-        Vxy = Vector((X[0], X[1]))
-
-        t     = X[2]
-        rho   = Vxy.length
-        theta = atan2(Vxy.y, Vxy.x)
-
-        x = rho*cos(theta + self.omega*t)
-        y = rho*sin(theta + self.omega*t)
-
-        return np.array( (x, y, t) )
-
-    def inv_f(self, P):
-        Vxy = Vector((P[0], P[1]))
-
-        t     = P[2]
-        rho   = Vxy.length
-        theta = atan2(Vxy.y, Vxy.x)
-
-        x = rho*cos(theta - self.omega*t)
-        y = rho*sin(theta - self.omega*t)
-
-        return np.array( (x, y, t) )
-
-    # ---------------------------------------------------------------------------
-    # Dérivées partielles
-    #
-    # X = rho*cos(atan(y/x) + self.omega*t)
-    # dX/dx = x/rho*cos() - (-y/x^2 * rho/(1+(y/x)^2)*sin() = x/rho*cos() + y/rho*sin() = (x.cos + y.sin)/rho
-    # dX/dy = y/rho*cos() - (1/x * rho/(1+(y/x)^2)*sin() = y/rho*cos() - x/rho*sin()    = (y.cos - x.sin)/rho
-    # dX/dt = -omega*rho*sin
-    #
-    # Y = rho*sin(atan(y/x) + self.omega*t)
-    # dY/dx = (x.sin - y.cos)/rho
-    # dY/dx = (x.cos + y.sin)/rho
-    # dY/dt = omega*rho*cos
-    #
-    # T = t
-    # dT/dx = 0
-    # dT/dy = 0
-    # dT/dt = 1
-    #
-    # Aide -------------------------
-    # https://www.solumaths.com/fr/calculatrice-en-ligne/calculer/deriver
-    #
-    # deriver(sqrt(x^2+y^2)*cos(atan(y/x)+w*t);x)
-
-    def partial_calc(self, X, i):
-
-        x = X[0]
-        y = X[1]
-        t = X[2]
-
-        rho   = sqrt(x*x + y*y)
-        theta = atan2(y, x)
-
-        cs = cos(theta + self.omega*t)
-        sn = sin(theta + self.omega*t)
-
-        if i == 0:
-            if rho < 0.00001:
-                return Vector((1000., 0., 0.))
-            return Vector(((x*cs + y*sn)/rho, (x*sn - y*cs)/rho, 0.))
-
-        if i == 1:
-            if rho < 0.00001:
-                return Vector((0., 1000., 0.))
-            return Vector(((y*cs - x*sn)/rho, (x*cs + y*sn)/rho, 0.))
-
-        if i == 2:
-            sor = self.omega*rho
-            return Vector((-sor*sn, sor*cs, 1.))
-
-        return None
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Métrique de Newton (?)
-
-class NewtonGravity(Space):
-
-    def __init__(self, G=1., M=1., c=1.):
-        Space.__init__(self, dim=3, by_metric=False)
-
-        self.G = G
-        self.M = M
-        self.c = c
-
-        self.dX[0] = 0.1
-        self.dX[1] = 0.1
-        self.dX[2] = radians(0.5)
-
-    def f(self, X):
-        r     = X[0]
-        theta = X[1]
-        t     = X[2]
-
-        return Vector((t, r - self.G*self.M/r**2*(self.c*t)**2, theta))
-
-    def metric_tensor_OLD(self, X, basis=None):
-
-        r     = X[0]
-        theta = X[1]
-        t     = self.c*X[2]
-
-
-        g = np.zeros((3, 3))
-        g[0, 0] = r*r
-        g[1, 1] = 1.
-        g[2, 2] = 1.
-
-        return g
-
-
-
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# -----------------------------------------------------------------------------------------------------------------------------
-# Métrique de Schwarzschild
-
-class MetricSwartzschild(Space):
-
-    def __init__(self, G=1., M=1., c=1.):
-        Space.__init__(self, dim=4, by_metric=True)
-
-        self.G = G
-        self.M = M
-        self.c = c
-
-        # Rayon de Swarzschild
-        self.GM_c2 = 2.*self.G*self.M/(self.c*self.c)
-        self.SR = self.GM_c2
-
-        self.dX[0] = 0.1
-        self.dX[1] = 0.1
-        self.dX[2] = radians(0.5)
-        self.dX[3] = radians(1.)
-
-
-    def to3D(self, X):
-        t     = X[0]
-        R     = X[1]
-        theta = X[2]
-        phi   = X[3]
-        return Vector((R*cos(theta), R*sin(theta), t))
-
-
-    # ---------------------------------------------------------------------------
-    # Points
-
-    def f(self, X):
-        t     = X[0]
-        R     = X[1]
-        theta = X[2]
-        phi   = X[3]
-
-        r = R*sin(theta)
-        return np.array( (t, r*cos(phi), r*sin(phi), R*cos(theta)))
-
-    # ---------------------------------------------------------------------------
-    # Le tenseur métrique
-
-    def metric_tensor(self, X, basis=None):
-
-        t     = X[0]
-        r     = X[1]
-        theta = X[2]
-        phi   = X[3]
-
-        rsin = r*sin(theta)
-        K = (1. - self.GM_c2/r)
-
-        g = np.zeros((4, 4))
-        g[0, 0] = -K
-        g[1, 1] = 1/K
-        g[2, 2] = r*r
-        g[3, 3] = rsin*rsin
-
-        return g
 """

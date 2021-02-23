@@ -60,13 +60,14 @@ from .core.interpolation import Interpolation
 
 from .core.bezier import PointsInterpolation
 
-from .core.curspaces import Space
-from .core.curspaces import Sphere
+from .core.curspaces import CurvedSpace
 
 from .core.meshes import arrow, curved_arrow
 
 from .core.meshbuilder import MeshBuilder
 from .core.markers import markers
+
+from .core import d4
 
 from .core.commons import base_error_title
 error_title = base_error_title % "main.%s"
