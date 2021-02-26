@@ -31,17 +31,31 @@ class WStruct():
     def __init__(self, wrapped):
         super().__setattr__("wrapped", wrapped)
 
-
     def __repr__(self):
         return f"[Wrapper {self.__class__.__name__} of {self.class_name} '{self.wrapped}']"
 
     def __getattr__(self, name):
+        try:
+            return getattr(self.wrapped, name)
+        except:
+            print(dir(self))
+            raise RuntimeError(f"Attribute '{name}' doesn't exist for class '{self.__class__.__name__}'")
+
+        # OLD
         if name in dir(self):
             return getattr(self, name)
         else:
             return getattr(self.wrapped, name)
 
     def __setattr__(self, name, value):
+        try:
+            setattr(self.wrapped, name, value)
+        except:
+            super().__setattr__(name, value)
+
+        return
+
+        # OLD
         if name in dir(self.wrapped):
             if not name in dir(self):
                 setattr(self.wrapped, name, value)
@@ -762,6 +776,56 @@ class WMesh(WID):
 
         return source
 
+
+    # ---------------------------------------------------------------------------
+    # Layers
+
+    def get_floats(self, name, create=True):
+        layer = self.wrapped.vertex_layers_float.get(name)
+        if layer is None:
+            if create:
+                layer = self.wrapped.vertex_layers_float.new(name=name)
+            else:
+                return None
+        count = len(layer.data)
+        vals  = np.zeros(count, np.float)
+        layer.data.foreach_get("value", vals)
+
+        return vals
+
+    def set_floats(self, name, vals, create=True):
+        layer = self.wrapped.vertex_layers_float.get(name)
+        if layer is None:
+            if create:
+                layer = self.wrapped.vertex_layers_float.new(name=name)
+            else:
+                return
+        count = len(layer.data)
+        layer.data.foreach_set("value", vals)
+
+    def get_ints(self, name, create=True):
+        layer = self.wrapped.vertex_layers_int.get(name)
+        if layer is None:
+            if create:
+                layer = self.wrapped.vertex_layers_int.new(name=name)
+            else:
+                return None
+        count = len(layer.data)
+        vals  = np.zeros(count, np.int)
+        layer.data.foreach_get("value", vals)
+
+        return vals
+
+    def set_ints(self, name, vals, create=True):
+        layer = self.wrapped.vertex_layers_int.get(name)
+        if layer is None:
+            if create:
+                layer = self.wrapped.vertex_layers_int.new(name=name)
+                print("creation", layer)
+            else:
+                return
+        layer.data.foreach_set("value", vals)
+
 # ---------------------------------------------------------------------------
 # Spline wrapper
 # wrapped : Spline
@@ -1005,6 +1069,10 @@ class WObject(WID):
             return 'Empty'
         else:
             return data.__class__.__name__
+
+    @property
+    def is_mesh(self):
+        return self.object_type == 'Mesh'
 
     @property
     def wdata(self):

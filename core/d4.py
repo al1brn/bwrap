@@ -9,13 +9,16 @@ Author: Alain Bernard
 import numpy as np
 
 import bpy
+
 import bmesh
 from bpy.props import BoolProperty, FloatProperty, EnumProperty, FloatVectorProperty, StringProperty, IntProperty, \
     PointerProperty
-from mathutils import Vector, Matrix, Euler
+from mathutils import Vector, Matrix, Euler, Quaternion
 import collections
 import math
 from math import cos, sin, asin, atan2, radians, degrees, pi, sqrt
+
+from .wrappers import WObject
 
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -25,6 +28,22 @@ ei4 = np.array((1., 0., 0., 0.))
 ej4 = np.array((0., 1., 0., 0.))
 ek4 = np.array((0., 0., 1., 0.))
 el4 = np.array((0., 0., 0., 1.))
+
+
+def find_3dview_space():
+    # Find 3D_View window and its scren space
+    area = None
+    for a in bpy.data.window_managers[0].windows[0].screen.areas:
+        if a.type == 'VIEW_3D':
+            area = a
+            break
+
+    if area:
+        space = area.spaces[0]
+    else:
+        space = bpy.context.space_data
+
+    return space
 
 # ======================================================================================================================================================
 # 4D Geometry
@@ -238,6 +257,50 @@ def matrix_4D_uvw(u, v, w):
         (-cos(w) * cos(u) * sin(v), -sin(w) * cos(u) * sin(v), -sin(u) * sin(v), cos(v))
     ))
 
+# --------------------------------------------------------------------------------------------------
+# Rotation within a plane
+
+def plane_rotation(plane, alpha):
+
+    c = np.cos(alpha)
+    s = np.sin(alpha)
+
+    if plane in ['XY', 'YX']:
+        if plane == 'YX':
+            s = -s
+        return np.array(((c, s, 0, 0), (-s, c, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)))
+    elif plane in ['XZ', 'ZX']:
+        if plane == 'XZ':
+            s = -s
+        return np.array(((c, 0, s, 0), (0, 1, 0, 0), (-s, 0, c, 0), (0, 0, 0, 1)))
+    elif plane in ['YZ', 'ZY']:
+        if plane == 'ZY':
+            s = -s
+        return np.array(((1, 0, 0, 0), (0, c, s, 0), (0, -s, c, 0), (0, 0, 0, 1)))
+
+    elif plane in ['XW', 'WX']:
+        if plane == 'WX':
+            s = -s
+        return np.array(((c, 0, 0, s), (0, 1, 0, 0), (0, 0, 1, 0), (-s, 0, 0, c)))
+    elif plane in ['YW', 'WY']:
+        if plane == 'WY':
+            s = -s
+        return np.array(((1, 0, 0, 0), (0, c, 0, -s), (0, 0, 1, 0), (0, s, 0, c)))
+    elif plane in ['ZW', 'WZ']:
+        if plane == 'WZ':
+            s = -s
+        return np.array(((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, c, s), (0, 0, -s, c)))
+    else:
+        raise RuntimeError(f"plane_rotation matrix: undefined plane '{plane}'")
+
+# --------------------------------------------------------------------------------------------------
+# Rotation matrix from 4D euler
+
+def euler6_to_matrix(euler6):
+    m = np.identity(4, np.float)
+    for i, plane in enumerate(['YZ', 'ZX', 'XY', 'XW', 'YW', 'ZW']):
+        m = m.dot(plane_rotation(plane, euler6[i]))
+    return m
 
 # --------------------------------------------------------------------------------------------------
 # Compute a projection matrix along a 3D axis and an angle
@@ -246,145 +309,782 @@ def matrix_4D_axis3(V, w):
     sph = cart_to_sph3(V)
     return matrix_4D_uvw(sph[1], sph[2], w)
 
-# ======================================================================================================================================================
-# 4D Scene extension settings
+# =============================================================================================================================
+# 4D Object extension
 
-class FourD_settings(bpy.types.PropertyGroup):
+class D4Param(bpy.types.PropertyGroup):
+
+    # ====================================================================================================
+    # Global attributes
+    # - is4D  (True/False)  : The object is a 4D object
+    # - vmode ('3D' / '4D') : Currently in one of the subspace or is projectec
+    # - mapping ('XYZ'...)  : 3 letters among X Y Z W indicating the 4D axis mapped by Blender axis
+    # - type                : How the object is projected
+    #         . POINT   : Location only
+    #         . AXIS    : Location and rotation
+    #         . SURFACE : Location, rotation and vertices (only for meshes)
+    #
+
     # ----------------------------------------------------------------------------------------------------
-    # ----------------------------------------------------------------------------------------------------
-    # Toggle display 4D / 3D
+    # Bool: The object is a 4D object
 
-    fourD_display_: BoolProperty(default=False) = False
+    is4D_: BoolProperty(default=False)
 
-    def fourD_display_get(self):
-        return self.fourD_display_
+    def is4D_get(self):
+        return self.is4D_
 
-    def fourD_display_set(self, value):
-        self.fourD_display_ = value
-        self.update_projection()
-        # Grids
-        bpy.ops.spaceview3d.showgridbutton()
+    def is4D_set(self, value):
+        self.is4D_ = value
+        if self.mesh is not None:
+            self.create_layers(init=True)
+            self.object_type_ = 2 # Surface
 
-    fourD_display: BoolProperty(
-        name="4D display",
-        description="Switch from standard to 4D display",
-        set=fourD_display_set,
-        get=fourD_display_get,
+    is4D: BoolProperty(
+        name        = "4D object",
+        description = "This is a 4D object",
+        get         = is4D_get,
+        set         = is4D_set,
     )
 
     # ----------------------------------------------------------------------------------------------------
-    # Projection of all the objects within the scene
+    # Visu mode
+    # - 3D : the mesh is mapped from 4D space to Blender XYZ according the mapping property
+    # - 4D : the mesh is projected from 4D space to Blender
 
-    def update_projection(self):
+    vmode_: StringProperty(default='3D')
+
+    def vmode_get(self):
+        return self.vmode_
+
+    def vmode_set(self, value):
+        if value == self.vmode_:
+            return
+
+        # --> Pass in projection mode
+
+        if self.vmode_ == '3D':
+            self.object_to_space4D()
+            self.vmode_ = value
+            self.id_data.rotation_euler = (0., 0., 0.)
+
+        # --> Pass in design mode
+
+        else:
+            self.vmode_ = value
+            self.space4D_to_object()
+            self.rotation4D_changed()
+
+    vmode: StringProperty(
+        name        = "vmode",
+        description = "Visualization mode: 3D or 4D projection",
+        get         = vmode_get,
+        set         = vmode_set)
+
+    # ----------------------------------------------------------------------------------------------------
+    # Mapping
+    # Three of the four XYZW axis are mapped on the XYZ blender axis using a triplet such as 'XYW'
+
+    mapping_: StringProperty(default = "XYZ")
+
+    def mapping_get(self):
+        return self.mapping_
+
+    def mapping_set(self, value):
+        if self.mapping_ == value:
+            return
+        self.object_to_space4D()
+        self.mapping_ = value
+        self.space4D_to_object()
+
+    mapping: StringProperty(
+        name        = "Mapping",
+        description = "Mapping of the 3D axis XYZ in the 4D space axis XYZW",
+        get         = mapping_get,
+        set         = mapping_set)
+
+    # ----------------------------------------------------------------------------------------------------
+    # Object type
+
+    object_type_: IntProperty(default = 0)
+
+    def object_type_get(self):
+        return self.object_type_
+
+    def object_type_set(self, value):
+        self.object_type_ = value
+        if self.vmode == '4D':
+            self.projection(None)
+
+    object_type: EnumProperty(
+        items = [
+            ('POINT',   "Point", "The shape of the object is not deformed by the 4D projection, just its location"),
+            ('AXIS',    "Axis",  "The vertical axis, with its Blender 3D rotation, is rotated by the 4D projection without deforming the shape"),
+            ('SURFACE', "Surf",  "The shape is deformed by the 4D projection"),
+                ],
+        name    = "Type",
+        get     = object_type_get,
+        set     = object_type_set,
+    )
+
+    # ====================================================================================================
+    # Axis object parameters
+
+    axis_source: EnumProperty(
+        items = [
+            ('X', 'X', "3D axis X"),
+            ('Y', 'Y', "3D axis Y"),
+            ('Z', 'Z', "3D axis Z"),
+            ],
+        name    = "3D Axis",
+        default = 'Z',
+    )
+
+    # Target as letter mode
+    axis_target: EnumProperty(
+        items = [
+            ('X', 'X', "4D axis X"),
+            ('Y', 'Y', "4D axis Y"),
+            ('Z', 'Z', "4D axis Z"),
+            ('W', 'W', "4D axis W"),
+            ],
+        name    = "4D Axis",
+        default = 'W',
+    )
+
+    # Target as 4D vector (more complex)
+    axis_target4D: FloatVectorProperty(
+        name    = "4D Axis",
+        size    = 4,
+        description = "Axis in 4D space",
+        default = (0., 0., 0., 1.),
+    )
+
+    # ====================================================================================================
+    # 4D location management
+    # Location 4D is stored in the location4D attribute
+    # - GET
+    #       In 3D mode, it reads the Blender true location before returning the value
+    #       In 4D mode, it returns the value without updating from blender
+    # - SET
+    #       In 3D mode, Blender location is updated
+    #       In 4D mode, projection is updated
+
+    # ----------------------------------------------------------------------------------------------------
+    # Location 4D cache
+
+    location4D_: FloatVectorProperty(
+        size        = 4,
+        default     = (0., 0., 0., 0.)
+    )
+
+    # ----------------------------------------------------------------------------------------------------
+    # Getter
+
+    def location4D_get(self):
+
+        if self.vmode == '3D':
+            map = self.mapping
+            for i in range(3):
+                self.location4D_['XYZW'.index(map[i])] = self.id_data.location[i]
+
+        return self.location4D_
+
+    # ----------------------------------------------------------------------------------------------------
+    # Getter
+
+    def location4D_set(self, value):
+
+        self.location4D_ = value
+
+        if self.vmode == '3D':
+            map = self.mapping
+            self.id_data.location = [self.location4D_['XYZW'.index(map[i])] for i in range(3)]
+        else:
+            self.projection(None)
+
+    # ----------------------------------------------------------------------------------------------------
+    # The resulting location 4D
+
+    location4D: FloatVectorProperty(
+        name        = "4D location",
+        description = "4D location",
+        subtype     = 'XYZ_LENGTH',
+        size        = 4,
+        get         = location4D_get,
+        set         = location4D_set
+    )
+
+    # ====================================================================================================
+    # Rotation management
+    # In 3D, Euler is a 3-vector, each angle representing a rotation around one of the 3 axis X, Y
+    # In 4D, Euler is a 6-vector, each angle representing a rotation within one of the 6 planes YZ, ZX, XY, XW, YZ, YW, ZW
+    # - 3 first planes: YZ, ZX, XY map the Euler rotations around the axis
+    # - 3 last planes:  XW, YW, ZW rotation of one 3D axis towards W
+    # For a given mapping triplet, we need to map the 3 angles Euler3 in 3 of the Euler6
+
+    # ----------------------------------------------------------------------------------------------------
+    # The 6 planes array
+
+    @property
+    def euler6_planes(self):
+        return ['YZ', 'ZX', 'XY', 'XW', 'YW', 'ZW']
+
+    # ----------------------------------------------------------------------------------------------------
+    # Return the plane code of a given index
+
+    def euler6_plane_from_3D_axis(self, index):
+        # index is 0, 1 or 2
+        mapping = self.mapping
+        if index == 0:
+            plane = mapping[1:]
+        elif index == 1:
+            plane = mapping[2] + mapping[0]
+        else:
+            plane = mapping[:2]
+
+        return plane
+
+    # ----------------------------------------------------------------------------------------------------
+    # Return plane index in euler6 and orientation of the plane
+
+    def euler6_index(self, plane):
+        planes = self.euler6_planes
+        try:
+            index = planes.index(plane)
+            return index, 1
+        except:
+            pass
+
+        rev_plane = plane[1] + plane[0]
+        return planes.index(rev_plane), -1
+
+    # ----------------------------------------------------------------------------------------------------
+    # To ensure the consistency of the algorithm, write once
+    # direction can be 3_TO_6 or 6_TO_3
+
+    def euler3_euler6_move(self, direction='3_TO_6'):
+        mapping = self.mapping
+        for i in range(3):
+            plane   = self.euler6_plane_from_3D_axis(i)
+            i6, one = self.euler6_index(plane)
+            if direction == '3_TO_6':
+                self.rotation4D_[i6] = one * self.id_data.rotation_euler[i]
+            else:
+                self.id_data.rotation_euler[i] = one * self.rotation4D_[i6]
+
+    # ----------------------------------------------------------------------------------------------------
+    # Rotation 4D cache
+
+    rotation4D_: FloatVectorProperty(
+        size        = 6,
+        default     = (0., 0., 0., 0., 0., 0.)
+    )
+
+    # ----------------------------------------------------------------------------------------------------
+    # Update rotation4D
+
+    def update_rotation4D(self):
+        if self.vmode == '3D':
+            self.euler3_euler6_move(direction='3_TO_6')
+
+    def rotation4D_changed(self):
+        if self.vmode == '3D':
+            self.euler3_euler6_move(direction='6_TO_3')
+        else:
+            self.projection(None)
+
+    # ----------------------------------------------------------------------------------------------------
+    # Rotation 4D get
+
+    def rotation4D_get(self):
+        self.update_rotation4D()
+        return self.rotation4D_
+
+    # ----------------------------------------------------------------------------------------------------
+    # Rotation 4D set
+
+    def rotation4D_set(self, value):
+        self.rotation4D_ = value
+        self.rotation4D_changed()
+
+    # ----------------------------------------------------------------------------------------------------
+    # The resulting rotation4D attribute
+
+    rotation4D: FloatVectorProperty(
+        name        = "4D rotation",
+        description = "4D rotation",
+        subtype     = 'EULER',
+        size        = 6,
+        get         = rotation4D_get,
+        set         = rotation4D_set
+    )
+
+    # ----------------------------------------------------------------------------------------------------
+    # The 6 angles are displayed in two euler3
+
+    def euler6_XYZ_get(self):
+        self.update_rotation4D()
+        return self.rotation4D_[:3]
+
+    def euler6_XYZ_set(self, value):
+        self.rotation4D_[:3] = value
+        self.rotation4D_changed()
+
+    def euler6_W_get(self):
+        self.update_rotation4D()
+        return self.rotation4D_[3:]
+
+    def euler6_W_set(self, value):
+        self.rotation4D_[3:] = value
+        self.rotation4D_changed()
+
+    euler6_XYZ: FloatVectorProperty(
+        name        = "Rotation XYZ",
+        description = "Euler rotation in 3D XYZ space",
+        size        = 3,
+        subtype     = 'EULER',
+        get         = euler6_XYZ_get,
+        set         = euler6_XYZ_set,
+    )
+
+    euler6_W: FloatVectorProperty(
+        name        = "Rotation W",
+        description = "Euler rotation in a plane including axis W",
+        size        = 3,
+        subtype     = 'EULER',
+        get         = euler6_W_get,
+        set         = euler6_W_set,
+    )
+
+    # ====================================================================================================
+    # Mesh methods and properties
+    # 4D coordinates of vertices are stores in 4 layers
+
+    # ----------------------------------------------------------------------------------------------------
+    # Access to mesh
+    # return None if the object is not a MESH
+
+    @property
+    def mesh(self):
+        data = self.id_data.data
+        if data is None:
+            return None
+        if type(data).__name__ != 'Mesh':
+            return None
+
+        return data
+
+    # ----------------------------------------------------------------------------------------------------
+    # Vertices count
+
+    @property
+    def verts_count(self):
+        mesh = self.mesh
+        if mesh is None:
+            return 0
+        else:
+            return len(mesh.vertices)
+
+    # ----------------------------------------------------------------------------------------------------
+    # Access to mesh vertices
+
+    @property
+    def verts3(self):
+        mesh = self.mesh
+        if mesh is None:
+            return None
+
+        count  = self.verts_count
+        verts3 = np.empty(count*3, np.float)
+        mesh.vertices.foreach_get("co", verts3)
+
+        return verts3.reshape((count, 3))
+
+    @verts3.setter
+    def verts3(self, value):
+        mesh = self.mesh
+        if mesh is None:
+            return
+
+        count  = self.verts_count
+        verts3 = np.array(value).reshape(count*3)
+        mesh.vertices.foreach_set("co", verts3)
+
+        self.id_data.update_tag()
+
+    # ----------------------------------------------------------------------------------------------------
+    # 4D vertices are stored in 4 vertex layers
+
+    def create_layers(self, init=True):
+        mesh = self.mesh
+        if mesh is None:
+            return None
+
+        for axis in ['X', 'Y', 'Z', 'W']:
+            mesh.vertex_layers_float.new(name="4D " + axis)
+
+        if init:
+            self.mesh_to_layers()
+
+    # ----------------------------------------------------------------------------------------------------
+    # Get a float layer
+
+    def get_layer(self, axis):
+        mesh = self.mesh
+        if mesh is None:
+            return None
+
+        name = "4D " + axis
+        layer = mesh.vertex_layers_float.get(name)
+
+        return layer
+
+    # ----------------------------------------------------------------------------------------------------
+    # Access to vertex layers floats
+    # Axis : X, Y, Z or W
+
+    def get_floats(self, axis):
+        layer = self.get_layer(axis)
+
+        count = len(layer.data)
+        vals  = np.empty(count, np.float)
+        layer.data.foreach_get("value", vals)
+
+        return vals
+
+    def set_floats(self, axis, value):
+        layer = self.get_layer(axis)
+
+        count = len(layer.data)
+        vals = np.array(value).reshape(count)
+
+        layer.data.foreach_set("value", vals)
+
+    # ----------------------------------------------------------------------------------------------------
+    # mesh <--> layers
+
+    def mesh_to_layers(self):
+        mapping = self.mapping
+        verts3  = self.verts3
+        if verts3 is None:
+            return
+
+        for i in range(3):
+            self.set_floats(mapping[i], verts3[:, i])
+
+    def layers_to_mesh(self):
+        mapping = self.mapping
+        count   = self.verts_count
+        if count == 0:
+            return
+
+        verts3  = np.zeros((count, 3), np.float)
+        for i in range(3):
+            verts3[:, i] = self.get_floats(mapping[i])
+        self.verts3 = verts3
+
+    # ----------------------------------------------------------------------------------------------------
+    # Access to the 4D vertices
+
+    @property
+    def verts4(self):
+        count = self.verts_count
+        if count == 0:
+            return
+
+        verts = np.zeros((count, 4), np.float)
+        if self.vmode == "3D":
+            self.mesh_to_layers()
+
+        verts[:, 0]  = self.get_floats('X')
+        verts[:, 1]  = self.get_floats('Y')
+        verts[:, 2]  = self.get_floats('Z')
+        verts[:, 3]  = self.get_floats('W')
+
+        return verts
+
+    @verts4.setter
+    def verts4(self, value):
+        count = self.verts_count
+        if count == 0:
+            return
+
+        verts = np.array(value).reshape((count, 4))
+
+        self.set_floats('X', verts[:, 0])
+        self.set_floats('Y', verts[:, 1])
+        self.set_floats('Z', verts[:, 2])
+        self.set_floats('W', verts[:, 3])
+
+        if self.vmode == "3D":
+            self.layers_to_mesh()
+
+    # ----------------------------------------------------------------------------------------------------
+    # object <--> space4
+
+    def object_to_space4D(self):
+
+        # Read loc and rot to force the update
+        loc = self.location4D
+        rot = self.rotation4D
+
+        # Mesh to layers
+        self.mesh_to_layers()
+
+    def space4D_to_object(self):
+
+        # Force loc and rot
+        self.location4D = self.location4D_
+        self.rotation4D = self.rotation4D_
+
+        # Layers to mesh
+        self.layers_to_mesh()
+
+    # ====================================================================================================
+    # Projection is given by the scene management
+    # A copy is kept in order to be able to perform updates when location or rotation are changed
+
+    # ----------------------------------------------------------------------------------------------------
+    # Copy of the last projection matrix
+
+    last_projection: FloatVectorProperty(
+        size    = 12,
+        default = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0],
+        )
+
+    # ----------------------------------------------------------------------------------------------------
+    # Projection
+
+    def projection(self, mproj):
+
+        # Pass in 4D mode
+        self.vmode = "4D"
+
+        # ----- Read last projection matrix or save the passed matrix
+
+        if mproj is None:
+            mproj = np.array(self.last_projection).reshape(3, 4)
+        else:
+            self.last_projection = np.array(mproj).reshape(12)
+
+        # ----- Location projection
+
+        loc4D = self.location4D
+        loc3D = mproj.dot(loc4D)
+        self.id_data.location = loc3D
+
+        # ----- AXIS
+
+        if self.object_type == 'AXIS':
+            axis = np.array({'X': (1, 0, 0), 'Y': (0, 1, 0), 'Z': (0, 0, 1)}[self.axis_source], np.float)
+            vector_mode = False
+            if vector_mode:
+                targ4 = np.array(self.axis_target4D)
+            else:
+                targ4 = np.array({'X':(1,0,0,0),'Y':(0,1,0,0),'Z':(0,0,1,0), 'W':(0,0,0,1)}[self.axis_target], np.float)
+
+            if np.linalg.norm(targ4) < 0.001:
+                targ4 = np.array((0, 0, 0, 1), np.float)
+            targ3 = mproj.dot(targ4)
+            targ3 = targ3 / np.linalg.norm(targ3)
+
+            v0 = Vector(axis)
+            v1 = Vector(targ3)
+            ag = v0.angle(v1)
+            if abs(ag) < 0.001:
+                euler = Euler((0, 0, 0))
+            else:
+                quat = Quaternion(v0.cross(v1), ag)
+                euler = quat.to_euler('XYZ')
+
+            self.id_data.rotation_euler = euler
+
+
+        # ----- Mesh projection
+
+        if self.object_type == 'SURFACE':
+
+            # Rotation matrix to be applied before projection
+
+            rot4D = euler6_to_matrix(self.rotation4D)  # 4x4
+            mproj = mproj.dot(rot4D)                   # 3x4
+
+            # Vertices projection
+
+            verts4 = self.verts4 - loc4D
+            self.verts3 = mproj.dot(verts4.transpose()).transpose() - loc3D
+
+
+# ======================================================================================================================================================
+# 4D Scene extension settings
+
+class D4Scene(bpy.types.PropertyGroup):
+
+    # ----------------------------------------------------------------------------------------------------
+    # Toggle display 4D / 3D
+
+    d4_projection_: BoolProperty(default=False) = False
+
+    def d4_projection_get(self):
+        return self.d4_projection_
+
+    def d4_projection_set(self, value):
+        self.d4_projection_ = value
+        self.update_objects()
+        # Grids
+        #bpy.ops.spaceview3d.showgridbutton()
+
+    d4_projection: BoolProperty(
+        name        = "Display 4D",
+        description = "Display 4D projection or 3D slice",
+        set         = d4_projection_set,
+        get         = d4_projection_get,
+    )
+
+    # ----------------------------------------------------------------------------------------------------
+    # Mapping
+    # Three of the four XYZW axis are mapped on the XYZ blender axis using a triplet such as 'XYW'
+
+    mapping_: IntProperty(default=0)
+
+    def mapping_get(self):
+        return self.mapping_
+
+    def mapping_set(self, value):
+        self.mapping_ = value
+        self.update_objects()
+
+    mapping: EnumProperty(
+        items=[
+            ('XYZ', "XYZ", "W as hidden axis"),
+            ('XYW', "XYW", "Z as hidden axis"),
+            ('XWZ', "XWZ", "Y as hidden axis"),
+            ('WYZ', "WYZ", "X as hidden axis"),
+        ],
+        set=mapping_set,
+        get=mapping_get,
+    )
+
+    # ----------------------------------------------------------------------------------------------------
+    # Update the objects of the scene
+
+    def update_objects(self):
         scene = self.id_data
 
-        if self.fourD_display:
-            M_proj = self.M_proj()
-            for obj in scene.objects:
-                obj.fourD_param.projection(M_proj)
-        else:
-            for obj in scene.objects:
-                obj.fourD_param.display_4D = False
+        if self.d4_projection:
+            mproj = self.projection_matrix
+
+        for obj in scene.objects:
+            if obj.d4.is4D:
+                if self.d4_projection:
+                    obj.d4.projection(mproj)
+                    obj.d4.mapping = self.mapping
+                else:
+                    obj.d4.mapping = self.mapping
+                    obj.d4.vmode = '3D'
 
     # ----------------------------------------------------------------------------------------------------
     # Projection mode
 
-    fourD_proj_: IntProperty(default=0) = 0
+    projection_mode_: IntProperty(default=0) = 0
 
-    def fourD_proj_get(self):
-        return self.fourD_proj_
+    def projection_mode_get(self):
+        return self.projection_mode_
 
-    def fourD_proj_set(self, value):
-        self.fourD_proj_ = value
+    def projection_mode_set(self, value):
+        self.projection_mode_ = value
         self.update_projection()
 
-    fourD_proj: EnumProperty(
+    projection_mode: EnumProperty(
         items=[
-            ('ORTH', "Orth", "Orthogonal projection"),
-            ('VECTOR', "Vector", "Along a vector"),
             ('ANGLES', "Angles", "Define 3 angles"),
+            ('VECTOR', "Vector", "Along a vector"),
         ],
-        set=fourD_proj_set,
-        get=fourD_proj_get,
-    )
-
-    # ----------------------------------------------------------------------------------------------------
-    # Orthogonal mode : the orthogonal axis
-
-    orth_axis_: IntProperty(default=3) = 3
-
-    def orth_axis_get(self):
-        return self.orth_axis_
-
-    def orth_axis_set(self, value):
-        self.orth_axis_ = value
-        self.update_projection()
-
-    orth_axis: EnumProperty(
-        items=[
-            ('X', "X", "Orthogonal to X axis"),
-            ('Y', "Y", "Orthogonal to Y axis"),
-            ('Z', "Z", "Orthogonal to Z axis"),
-            ('W', "W", "Orthogonal to W axis"),
-        ],
-        set=orth_axis_set,
-        get=orth_axis_get,
+        set=projection_mode_set,
+        get=projection_mode_get,
     )
 
     # ----------------------------------------------------------------------------------------------------
     # Vector mode : the projection vector
 
-    proj_vector_: FloatVectorProperty(
-        description="Projection axis",
-        default=(10.0, 10.0, 0.0, 10.0),
-        subtype='XYZ',
-        size=4,
+    projection_vector_: FloatVectorProperty(
+        size    = 4,
+        default = (10.0, 10.0, 0.0, 10.0),
     )
 
-    def proj_vector_get(self):
-        return self.proj_vector_
+    def projection_vector_get(self):
+        return self.projection_vector_
 
-    def proj_vector_set(self, value):
-        self.proj_vector_ = value
+    def projection_vector_set(self, value):
+        self.projection_vector_ = value
         self.update_projection()
 
-    proj_vector: FloatVectorProperty(
-        name="Vector",
-        subtype='XYZ',
-        size=4,
-        get=proj_vector_get,
-        set=proj_vector_set,
+    projection_vector: FloatVectorProperty(
+        name        = "Vector",
+        description = "Projection axis",
+        subtype     = 'XYZ',
+        size        = 4,
+        get         = projection_vector_get,
+        set         = projection_vector_set,
     )
 
     # ----------------------------------------------------------------------------------------------------
     # Angles mode : the rotation angles
 
-    proj_angles_: FloatVectorProperty(
-        default=(0.0, 0.0, 0.0),
-        subtype='EULER',
-        size=3,
+    projection_angles_: FloatVectorProperty(
+        size    = 3,
+        default = (0.0, 0.0, 0.0),
     )
 
-    def proj_angles_get(self):
-        return self.proj_angles_
+    def projection_angles_get(self):
+        return self.projection_angles_
 
-    def proj_angles_set(self, value):
-        self.proj_angles_ = value
+    def projection_angles_set(self, value):
+        self.projection_angles_ = value
         self.update_projection()
 
-    proj_angles: FloatVectorProperty(
-        name="Angles",
-        description="Projection angles along XY, YZ, ZW",
-        subtype='EULER',
-        size=3,
-        step=100,
-        get=proj_angles_get,
-        set=proj_angles_set,
+    projection_angles: FloatVectorProperty(
+        name        = "Angles",
+        description = "Projection angles along XY, YZ, ZW",
+        subtype     = 'EULER',
+        size        = 3,
+        step        = 100,
+        get         = projection_angles_get,
+        set         = projection_angles_set,
     )
 
     # ----------------------------------------------------------------------------------------------------
+    # 4D --> 3D projection matrix
+
+    @property
+    def projection_matrix(self):
+
+        # ----- VECTOR projection
+
+        if self.projection_mode == 'VECTOR':
+            return matrix_4D_axis4(self.projection_vector)
+
+        # ---------------------------------------------------------------------------
+        # Projection according angles
+
+        elif self.projection_mode == 'ANGLES':
+            angles = self.projection_angles
+            return matrix_4D_uvw(angles[0], angles[1], angles[2])
+
+        else:
+            print("Unknown projection code : ", self.projection_mode)
+            return None
+
     # ----------------------------------------------------------------------------------------------------
-    # Show grids
+    # Something changed in the projection parameters --> need to update the projection
+
+    def update_projection(self):
+        if not self.d4_projection:
+            return
+        self.update_objects()
+
+    # ====================================================================================================
+    # Grid management
 
     show_grid_XY: BoolProperty(
         name="XY",
@@ -410,155 +1110,97 @@ class FourD_settings(bpy.types.PropertyGroup):
     # ----------------------------------------------------------------------------------------------------
     # Show 4D grids toggle management
 
-    show_floor_3D: BoolProperty(default=True)
+    show_floor_3D:  BoolProperty(default=True)
     show_axis_x_3D: BoolProperty(default=True)
     show_axis_y_3D: BoolProperty(default=True)
     show_axis_z_3D: BoolProperty(default=False)
 
     show_4D_grids_: BoolProperty(default=False)
 
-    def show_4D_grids__get(self):
+    def show_4D_grids_get(self):
         return self.show_4D_grids_
 
-    def show_4D_grids__set(self, value):
+    def show_4D_grids_set(self, value):
         self.show_4D_grids_ = value
         bpy.ops.spaceview3d.showgridbutton()
 
     show_4D_grids: BoolProperty(
         name="4D grids",
-        get=show_4D_grids__get,
-        set=show_4D_grids__set,
+        get=show_4D_grids_get,
+        set=show_4D_grids_set,
         description="Show / hide the 4D grids"
     )
-
-    # ----------------------------------------------------------------------------------------------------
-    # 4D --> 3D projection matrix
-
-    def M_proj(self):
-
-        # ---------------------------------------------------------------------------
-        # Orthogonal projection
-
-        if self.fourD_proj == 'ORTH':
-
-            if self.orth_axis == 'X':
-                return Matrix((
-                    (0., 1., 0., 0.),
-                    (0., 0., 1., 0.),
-                    (0., 0., 0., 1.)
-                ))
-            elif self.orth_axis == 'Y':
-                return Matrix((
-                    (1., 0., 0., 0.),
-                    (0., 0., 1., 0.),
-                    (0., 0., 0., 1.)
-                ))
-            elif self.orth_axis == 'Z':
-                return Matrix((
-                    (1., 0., 0., 0.),
-                    (0., 1., 0., 0.),
-                    (0., 0., 0., 1.)
-                ))
-            else:
-                return Matrix((
-                    (1., 0., 0., 0.),
-                    (0., 1., 0., 0.),
-                    (0., 0., 1., 0.)
-                ))
-
-        # ---------------------------------------------------------------------------
-        # Projection following a 4D vector
-
-        elif self.fourD_proj == 'VECTOR':
-            return matrix_4D_axis4(self.proj_vector)
-
-        # ---------------------------------------------------------------------------
-        # Projection according angles
-
-        elif self.fourD_proj == 'ANGLES':
-            return matrix_4D_uvw(self.proj_angles[0], self.proj_angles[1], self.proj_angles[2])
-
-        else:
-            print("Unknown projection code : ", self.fourD_proj)
-            return None
-
-
-# ======================================================================================================================================================
-# Projection 4D --> 3D operator
-
-class FourDProjectionOperator(bpy.types.Operator):
-    """4D Space"""
-    bl_idname = "scene.fourd_projection"
-    bl_label = "Update 4D"
-
-    def execute(self, context):
-        scene = context.scene
-        scene.fourD_settings.update_projection()
-
-        return {'FINISHED'}
-
 
 # ======================================================================================================================================================
 # 4D settings scene panel
 
-class FourDProjectionPanel(bpy.types.Panel):
+class D4ScenePanel(bpy.types.Panel):
     """4D extension"""
 
-    bl_label = "4D projection"
-    bl_idname = "FOURD_PT_fourd_projection"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = '4D'
-    bl_order = 1
+    bl_label        = "4D projection"
+    bl_idname       = "D4_PT_SCENE"
+    bl_space_type   = 'VIEW_3D'
+    bl_region_type  = 'UI'
+    bl_category     = '4D'
+    bl_order        = 1
 
     def draw(self, context):
 
-        settings = context.scene.fourD_settings
-
         layout = self.layout
+
+        obj = context.active_object
+        if (obj is not None) and (obj.mode == 'EDIT'):
+            layout.label(text="Edit mode")
+            return
+
+        settings = context.scene.d4
 
         # ----- 4D Display switch
 
         # 4D Display switch
         mbox = layout.box()
         row = mbox.row(align=True)
-        row.prop(settings, "fourD_display", toggle=True)
+        row.prop(settings, "d4_projection", toggle=True)
 
-        # 4D Projection parameters
+        # ----- 4D projection parameters
 
-        # Projection mode
-        mbox.label(text="Projection 4D")
-        row = mbox.row(align=True)
-        row.prop_enum(settings, "fourD_proj", 'ORTH')
-        row.prop_enum(settings, "fourD_proj", 'VECTOR')
-        row.prop_enum(settings, "fourD_proj", 'ANGLES')
+        if settings.d4_projection:
 
-        # Modes parameters
-        if settings.fourD_proj == 'ORTH':
+            # Projection parameters
+            mbox.label(text="Projection parameters")
             row = mbox.row(align=True)
-            row.prop_enum(settings, "orth_axis", 'X')
-            row.prop_enum(settings, "orth_axis", 'Y')
-            row.prop_enum(settings, "orth_axis", 'Z')
-            row.prop_enum(settings, "orth_axis", 'W')
+            row.prop_enum(settings, "projection_mode", 'VECTOR')
+            row.prop_enum(settings, "projection_mode", 'ANGLES')
 
-        if settings.fourD_proj == 'VECTOR':
-            row = mbox.column()
-            row.prop(settings, "proj_vector")
+            if settings.projection_mode == 'VECTOR':
+                row = mbox.column()
+                row.prop(settings, "projection_vector")
 
-        if settings.fourD_proj == 'ANGLES':
-            row = mbox.column()
-            row.prop(settings, "proj_angles")
+            if settings.projection_mode == 'ANGLES':
+                row = mbox.column()
+                row.prop(settings, "projection_angles")
 
-        # Update the projection
-        if settings.fourD_display:
-            mbox.operator("scene.fourd_projection")
+            # Update the projection
+            #if settings.d4_display:
+            #    mbox.operator("scene.d4_projection")
+
+        # ----- Mapping
+
+        else:
+            box = layout.box()
+            box.label(text="4D axis mapping")
+            row = box.row(align=True)
+            row.prop_enum(settings, "mapping", 'XYZ')
+            row.prop_enum(settings, "mapping", 'XYW')
+            row.prop_enum(settings, "mapping", 'XWZ')
+            row.prop_enum(settings, "mapping", 'WYZ')
 
         # ----- 4D grids
 
         # show 4D grids switch
         # The button is not used directly but though the toggle boolean
 
-        if settings.fourD_display:
+        if settings.d4_projection:
             mbox = layout.box()
 
             row = mbox.row(align=True)
@@ -571,712 +1213,71 @@ class FourDProjectionPanel(bpy.types.Panel):
             row.prop(settings, "show_grid_ZW", toggle=True)
             row.prop(settings, "show_grid_WX", toggle=True)
 
-
-# ======================================================================================================================================================
-# Create the 4D layer to store the 4th coordinate
-
-def get_4D_layer(bm):
-    id4D = bm.verts.layers.float.get('4D coord')
-    if id4D is None:
-        id4D = bm.verts.layers.float.new('4D coord')
-    return id4D
-
-
-# ======================================================================================================================================================
-# 4D object extension
-# The fourth coordinates is stored in an additional layer named '4D coord'
-# The object is plunged in one of the four sub spaces: XYZ, XYW, XWY, WYZ
-
-class SubSpace():
-    modes = ['XYZ', 'XYW', 'WYZ', 'XWZ']
-    perps = ['W', 'Z', 'W', 'Y']
-
-    def __init__(self, mode='XYZ'):
-        if type(mode) is int:
-            mode = SubSpace.modes[mode]
-        if not mode in SubSpace.modes:
-            raise NameError("Unknow, sub space mode: '{}'".format(mode))
-        self.mode = mode
-
-    def vector_4D(self, V3D, fourth):
-        if self.mode == 'XYZ':
-            return Vector((V3D[0], V3D[1], V3D[2], fourth))
-        if self.mode == 'XYW':
-            return Vector((V3D[0], V3D[1], fourth, V3D[2]))
-        if self.mode == 'WYZ':
-            return Vector((fourth, V3D[1], V3D[2], V3D[0]))
-        if self.mode == 'XWZ':
-            return Vector((V3D[0], fourth, V3D[2], V3D[1]))
-
-    def vector_3D(self, V4D):
-        if self.mode == 'XYZ':
-            return Vector((V4D[0], V4D[1], V4D[2])), V4D[3]
-        if self.mode == 'XYW':
-            return Vector((V4D[0], V4D[1], V4D[3])), V4D[2]
-        if self.mode == 'WYZ':
-            return Vector((V4D[3], V4D[1], V4D[2])), V4D[0]
-        if self.mode == 'XWZ':
-            return Vector((V4D[0], V4D[3], V4D[2])), V4D[1]
-
-    def get_fourth_axis_name(self):
-        return SubSpace.perps[SubSpace.modes.index(self.mode)]
-
-    def get_fourth_axis_index(self):
-        return ['X', 'Y', 'Z', 'W'].index(self.get_fourth_axis_name())
-
-    # Axis perpendicular to the 3D sub space
-    def get_perp(self):
-        return get_axis(self.get_fourth_axis_name())
-
-    # Get the 4D axis mapped in the 3D XYZ space
-    def get_mapped_axis(self, axis='Z'):
-        return self.mode[['X', 'Y', 'Z'].index(axis)]
-
+# ============================================================================================================================
+# 4D settings object panel
 
 # -----------------------------------------------------------------------------------------------------------------------------
-# 4D object extension
+# Drawing 4D location in Item > Transform panel
 
-class FourD_Param(bpy.types.PropertyGroup):
+def draw_location4D(self, context):
+    obj = context.object
+    if obj is None:
+        return
 
-    # ----------------------------------------------------------------------------------------------------
-    # Utility: bmesh handling
-
-    def bmesh_begin(self):
-        obj = self.id_data
-        if obj.mode == 'EDIT':
-            bm = bmesh.from_edit_mesh(obj.data)
-        else:
-            bm = bmesh.new()
-            bm.from_mesh(obj.data)
-        return bm
-
-    def bmesh_end(self, bm):
-        obj = self.id_data
-        if obj.mode == 'EDIT':
-            bmesh.update_edit_mesh(obj.data, True)
-        else:
-            bm.to_mesh(obj.data)
-            bm.free()
-
-    # ----------------------------------------------------------------------------------------------------
-    # The object is a 4D object
-
-    is4D: BoolProperty(
-        name="4D object",
-        description="This is a 4D object",
-        default=False
-    )
-
-    # 4D type
-
-    type: EnumProperty(
-        items=[
-            ('POINT', "Point", "The shape of the object is not deformed by the 4D projection, just its location"),
-            ('AXIS', "Axis",
-             "The vertical axis, with its Blender 3D rotation, is rotated by the 4D projection without deforming the shape"),
-            ('SURFACE', "Surface", "The shape is deformed by the 4D projection"),
-        ],
-        default="SURFACE",
-    )
-
-    # Modelling space
-
-    modelling_space_: IntProperty(default=0)
-
-    # Change the modelling space
-
-    def modelling_space_set(self, value):
-
-        # ----- Change the subspace
-
-        oldsubs = SubSpace(self.modelling_space_)
-        newsubs = SubSpace(value)
-
-        self.modelling_space_ = value
-
-        # ----- Object location
-
-        self.id_data.location, self.fourD_loc = newsubs.vector_3D(
-            oldsubs.vector_4D(self.id_data.location, self.fourD_loc))
-
-        # ----- Vertices
-
-        if self.type == 'SURFACE':
-
-            bm = self.bmesh_begin()
-            id4D = get_4D_layer(bm)
-
-            for v in bm.verts:
-                v.co, v[id4D] = newsubs.vector_3D(oldsubs.vector_4D(v.co, v[id4D]))
-
-            self.bmesh_end(bm)
-
-    def modelling_space_get(self):
-        return self.modelling_space_
-
-    modelling_space: EnumProperty(
-        items=[
-            ('XYZ', "XYZ", "3D modelling is made in hyperspace XYZ"),
-            ('XYW', "XYW", "3D modelling is made in hyperspace XYW (Z is used as W)"),
-            ('WYZ', "WYZ", "3D modelling is made in hyperspace WYZ (X is used as W)"),
-            ('XWZ', "XWZ", "3D modelling is made in hyperspace XWZ (Y is used as W)"),
-        ],
-        default="XYZ",
-        set=modelling_space_set,
-        get=modelling_space_get,
-    )
-
-    # Additional coordinate
-
-    fourD_loc: FloatProperty(
-        name="Coordinate",
-        description="Coordinate of the modelling space along the fourth dimension",
-        default=0.0,
-    )
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Set / Get the 4D Vector
-
-    store_location_4D: FloatVectorProperty(size=4)
-    store_location_3D: FloatVectorProperty(size=3)
-    store_rotation_euler: FloatVectorProperty(size=3)
-    store_rotation_mode: StringProperty()
-
-    def location_4D_get(self):
-
-        if self.display_4D:
-            return Vector(self.store_location_4D)
-
-        loc = self.id_data.location
-        loc_w = self.fourD_loc
-
-        return SubSpace(self.modelling_space_).vector_4D(loc, loc_w)
-
-    def location_4D_set(self, loc4D):
-        o = self.id_data
-        o.location, self.fourD_loc = SubSpace(self.modelling_space_).vector_3D(loc4D)
-        # self.vector_3D(loc4D)
-
-    # The 4D location
-
-    location_4D: FloatVectorProperty(
-        name="4D location",
-        description="4D location",
-        subtype='XYZ',
-        size=4,
-        get=location_4D_get,
-        set=location_4D_set
-    )
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Get the 4D coordinates of a vertex from 3D coordinates relative to the center
-
-    def get_4D_coordinates(self, coord_3D):
-
-        # Center in 3D space
-
-        if self.display_4D:
-            center_3D = Vector(self.store_location_3D)
-        else:
-            center_3D = Vector(self.id_data.location)
-
-        # Absolute coordinate
-
-        loc = center_3D + coord_3D
-
-        # Transformation
-
-        # return self.vector_4D(loc, self.fourD_loc)
-        return SubSpace(self.modelling_space_).vector_4D(loc, self.fourD_loc)
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Utilities
-
-    def vector_4D(self, V3D, fourth):
-        return SubSpace(self.modelling_space).vector_4D(V3D, fourth)
-
-    def vector_3D(self, V4D):
-        return SubSpace(self.modelling_space).vector_3D(V4D)
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Toggle 4D / 3D display
-
-    display_4D_: BoolProperty(default=False)
-
-    def display_4D_get(self):
-        return self.display_4D_
-
-    def display_4D_set(self, value):
-
-        if self.display_4D_ == value:
-            return
-
-        loc4D = Vector(self.location_4D)
-
-        self.display_4D_ = value
-        if self.display_4D_:
-            self.store_location_4D = loc4D
-            self.store_location_3D = self.id_data.location
-            self.store_rotation_euler = self.id_data.rotation_euler
-            self.store_rotation_mode = self.id_data.rotation_mode
-
-            if self.type == 'SURFACE':
-                self.shape_key_4D(True)
-        else:
-            self.location_4D = loc4D
-            self.id_data.rotation_euler = self.store_rotation_euler
-            self.id_data.rotation_mode = self.store_rotation_mode
-
-            if self.type == 'SURFACE':
-                self.shape_key_4D(False)
-
-    display_4D: BoolProperty(
-        set=display_4D_set,
-        get=display_4D_get,
-    )
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Object rotation
-
-    rotation0_: FloatVectorProperty(
-        default=(0.0, 0.0),
-        unit='ROTATION',
-        size=2,
-    )
-    rotation1_: FloatVectorProperty(
-        default=(0.0, 0.0),
-        unit='ROTATION',
-        size=2,
-    )
-
-    def rotation0_get(self):
-        return self.rotation0_
-
-    def rotation0_set(self, value):
-        self.rotation0_ = value
-        if self.display_4D:
-            bpy.context.scene.fourD_settings.update_projection()
-
-    def rotation1_get(self):
-        return self.rotation1_
-
-    def rotation1_set(self, value):
-        self.rotation1_ = value
-        if self.display_4D:
-            bpy.context.scene.fourD_settings.update_projection()
-
-    rotation0: FloatVectorProperty(
-        name="XY-ZW rotation",
-        description="Projection angles along planes XY and ZW",
-        unit='ROTATION',
-        step=100,
-        size=2,
-        get=rotation0_get,
-        set=rotation0_set,
-    )
-
-    rotation1: FloatVectorProperty(
-        name="XZ-YW rotation",
-        description="Projection angles along planes XZ and YW",
-        unit='ROTATION',
-        step=100,
-        size=2,
-        get=rotation1_get,
-        set=rotation1_set,
-    )
-
-    def get_rotation_matrix(self):
-
-        def mrot(angle, i, j):
-            c = cos(angle)
-            s = sin(angle)
-            M = Matrix.Identity(4)
-            M[i][i] = c
-            M[j][j] = c
-            M[i][j] = -s
-            M[j][i] = s
-            return M
-
-        M0 = mrot(self.rotation0[0], 0, 1)
-        M1 = mrot(self.rotation0[1], 2, 3)
-        M2 = mrot(self.rotation1[0], 0, 3)
-        M3 = mrot(self.rotation1[1], 1, 2)
-
-        return (M3 @ (M2 @ M1)) @ M0
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Shape key
-
-    def get_shape_key(self, fourD=False):
-
-        obj = self.id_data
-
-        if obj.data.shape_keys is None:
-            base = obj.shape_key_add()
-            base.name = "3D"
-            obj.data.shape_keys.use_relative = False
-
-        name = "4D" if fourD else "3D"
-        sk = obj.data.shape_keys.key_blocks.get(name)
-
-        if sk is None:
-            sk = obj.shape_key_add()
-            sk.name = name
-
-        return sk
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Shape key in 4D mode
-
-    def shape_key_4D(self, fourD=False):
-
-        obj = self.id_data
-
-        if obj.data.shape_keys is None:
-            if not fourD:
-                return
-
-        sk = self.get_shape_key(fourD)
-        obj.data.shape_keys.eval_time = sk.frame
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Projection
-
-    def projection(self, MProj=None):
-
-        if not self.is4D:
-            return
-
-        if MProj is None:
-            MProj = bpy.context.scene.fourD_settings.M_proj()
-
-        obj = self.id_data
-
-        self.display_4D = True
-        obj.location = MProj @ self.location_4D
-
-        # ----------------------------------------------------------------------------------------------------
-        # Axis object: change the orientation
-
-        if self.type == 'AXIS':
-            # Z Oriented axis by default with the object euler rotation
-            base_axis = Vector((0., 0., 1.))
-            axis = base_axis.copy()
-            axis.rotate(Euler(self.store_rotation_euler, obj.rotation_mode))
-
-            # Transform in the mapping sub space
-            axis4D = SubSpace(self.modelling_space).vector_4D(axis, 0.)
-
-            # Project in the 3D space
-            target = MProj @ axis4D
-
-            # Compute the new rotation of the axis
-            q = base_axis.rotation_difference(target)
-            obj.rotation_euler = q.to_euler(obj.rotation_mode)
-
-        # ----------------------------------------------------------------------------------------------------
-        # Surface object: deform the shape
-
-        if self.type == 'SURFACE':
-
-            self.shape_key_4D(True)  # Ensure 4D shape key exists
-            bm = self.bmesh_begin()  # bmesh object
-            id4D = get_4D_layer(bm)  # 4th dimension layer
-            sh = bm.verts.layers.shape.get("4D")  # Shape key layer
-
-            center = Vector(self.location_4D)  # Location 4D of the object
-            M_rot = self.get_rotation_matrix()  # Local rotation matrix
-
-            # Loop on the vertice
-
-            for v in bm.verts:
-                v4d = self.vector_4D(v.co, v[id4D])  # The local 4D position of the vertex
-                co = center + (M_rot @ v4d)  # Rotation and world location
-                v[sh] = MProj @ co - obj.location  # Shape vertex
-
-            self.bmesh_end(bm)
-
-    # ----------------------------------------------------------------------------------------------------
-    # Count the number of selected vertices
-
-    def selected_count(self):
-
-        obj = self.id_data
-        if obj.mode != 'EDIT':
-            return 0
-
-        bm = bmesh.from_edit_mesh(obj.data)
-
-        n = 0
-        for v in bm.verts:
-            if v.select:
-                n += 1
-
-        return n
-
-    # ----------------------------------------------------------------------------------------------------
-    # Get the 4D location of vertice in edit mode
-
-    def vertex_4D_location_get(self):
-
-        obj = self.id_data
-        if obj.mode != 'EDIT':
-            return None
-
-        bm = bmesh.from_edit_mesh(obj.data)
-        id4D = get_4D_layer(bm)
-
-        loc = Vector((0., 0., 0., 0.))
-        n = 0
-        for v in bm.verts:
-            if v.select:
-                loc = loc + self.vector_4D(v.co, v[id4D])
-                n += 1
-
-        if n == 0:
-            return None
-
-        return loc / n
-
-    def vertex_4D_location_set(self, value):
-
-        obj = self.id_data
-        if obj.mode != 'EDIT':
-            return
-
-        # Get the current value
-
-        cur_loc = self.vertex_4D_location_get()
-
-        # Uses the difference
-
-        print(value)
-
-        diff = Vector(value) - cur_loc
-
-        # Loop on the vertice
-
-        bm = bmesh.from_edit_mesh(obj.data)
-        id4D = get_4D_layer(bm)
-
-        for v in bm.verts:
-            if v.select:
-                loc = self.vector_4D(v.co, v[id4D])
-                loc = loc + diff
-                v.co, v[id4D] = self.vector_3D(loc)
-
-        bmesh.update_edit_mesh(obj.data, True)
-
-    # The 4D vertice location property (edit mode only)
-
-    vertex_4D_location: FloatVectorProperty(
-        name="Vertex",
-        size=4,
-        subtype='XYZ',
-        step=1,
-        get=vertex_4D_location_get,
-        set=vertex_4D_location_set)
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Extrusion along the perpendicular axis
-
-    def extrude_4D(self, w_min=-1., w_max=1., slices=9):
-
-        # ----- The object is used as a model
-        bm_ref = self.bmesh_begin()
-
-        bm_ref.verts.index_update()
-        bm_ref.verts.ensure_lookup_table()
-        count = len(bm_ref.verts)
-
-        bm_ref.faces.index_update()
-        bm_ref.faces.ensure_lookup_table()
-        faces_count = len(bm_ref.faces)
-
-        uv_ref = bm_ref.loops.layers.uv.active
-
-        # ----- Create a new object
-        # mesh = bpy.data.meshes.new("4D Object")
-        # mesh.fourD_param.is4D = True
-        # mesh.fourD_param.modelling_space = self.modelling_space
-
-        # The bmesh to work with
-        bm = bmesh.new()
-        id4D = get_4D_layer(bm)
-
-        if uv_ref is not None:
-            uv_layer = bm.loops.layers.uv.new()
-
-            # ----- Loop on the slices
-        for isl in range(slices):
-            w = w_min + (w_max - w_min) / (slices - 1) * isl
-            scale = 1.
-
-            # Copy the vertices at w
-            for vx in bm_ref.verts:
-                v = scale * Vector(vx.co)
-                bm.verts.new(v)
-
-            # Create the faces
-            bm.verts.ensure_lookup_table()
-            for face in bm_ref.faces:
-                new_f = [bm.verts[isl * count + vx.index] for vx in face.verts]
-                bm.faces.new(new_f)
-
-            # Copy the uv map
-            if uv_ref is not None:
-                bm.faces.ensure_lookup_table()
-
-                for iface, face_ref in enumerate(bm_ref.faces):
-                    face = bm.faces[isl * faces_count + iface]
-
-                    for iloop, loop in enumerate(face.loops):
-                        loop_ref = face_ref.loops[iloop]
-                        loop[uv_layer].uv = Vector(loop_ref[uv_ref].uv)
-
-            # 4D Layer
-            for i in range(count):
-                bm.verts[isl * count + i][id4D] = w
-
-        # ----- Create the object
-        bm_ref.free()
-
-        bpy.ops.mesh.primitive_cube_add()
-        obj = bpy.context.object
-        obj.name = "4D Object"
-
-        obj.fourD_param.is4D = True
-        obj.fourD_param.modelling_space = self.modelling_space
-
-        bm.to_mesh(obj.data)
-        obj.data.update()
-
-        bm.free()
-
-
-# ======================================================================================================================================================
-# Display the 4th coordinate panel
-
-class VIEW3D_PT_4d_coord(bpy.types.Panel):
-    """4D extension"""
-
-    bl_label = "4D vertex"
-    bl_idname = "FOURD_PT_fourth_dimension"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = '4D'
-    bl_order = 20
-
-    @classmethod
-    def poll(cls, context):
-        # Only allow in edit mode for a selected mesh.
-        return context.mode == "EDIT_MESH" and context.object is not None and context.object.type == "MESH"
-
-    def draw(self, context):
-
-        obj = context.object
-        prm = obj.fourD_param
-
+    if obj.mode != 'EDIT':
         layout = self.layout
+        layout.prop(obj.d4, "is4D")
 
-        n = prm.selected_count()
+        if not obj.d4.is4D:
+            return
+
+        # Object type
+        box = layout.box()
+        row = box.row(align=True)
+        row.prop(obj.d4, "object_type", expand=True)
+
+        if (obj.d4.vmode == '3D') and (obj.d4.object_type == 'AXIS'):
+            #box.label(text="Axis orientation")
+            row = box.row()
+            row.prop(obj.d4, "axis_source", expand=True)
+
+            row = box.row()
+            row.prop(obj.d4, "axis_target", expand=True)
+
+            #box.prop(obj.d4, "axis_target4D")
+
+        # ----- Location
+
         col = layout.column()
-        if n == 0:
-            col.label(text="No selection")
-        else:
-            txt = "Vertex" if n == 1 else "Median"
-            col.prop(prm, "vertex_4D_location", text=txt)
-            if n == 1:
-                v = prm.vertex_4D_location
-                col.label(text="Length: {}".format(v.length))
+        col.prop(obj.d4, "location4D")
 
-
-# ======================================================================================================================================================
-# 4D Object param panel
-
-class FourDParamPanel(bpy.types.Panel):
-    """4D extension"""
-
-    bl_label = "4D parameters"
-    bl_idname = "FOURD_PT_Settings"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = '4D'
-    bl_order = 10
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-        # Panel is always displayed with limited content in order to avoid unwanted visual effects
-        obj = context.active_object
-        if obj is None:
-            return False
-        return obj.type == 'MESH'
-
-    def draw(self, context):
-
-        layout = self.layout
-
-        # Not a mesh: display a simple information
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            layout.label(text="4D Object parameters")
-            return
-
-        # 4D Parameters
-        param = obj.fourD_param
-
-        # Is the 4D projection currently active
-        active = param.display_4D
-
-        if active:
+        # ----- Rotation
+        if obj.d4.object_type == 'SURFACE':
             box = layout.box()
-            box.label(text="4D display is active")
-            return
+            box.label(text="Rotation 4D")
+            col = box.column()
+            col.prop(obj.d4, "euler6_XYZ", text="3D")
+            col.prop(obj.d4, "euler6_W", text="W_")
 
-        # 4D projection is not active, we can change de parameters
+# -----------------------------------------------------------------------------------------------------------------------------
+# Dedicated Object 4D panel
 
-        # 4D switch
-        row = layout.row(align=True)
-        row.prop(param, "is4D")
+class D4ObjectPanel(bpy.types.Panel):
+    """Creates a 4D Panel in the Object properties window"""
+    bl_label       = "4D parameters"
+    bl_idname      = "OBJECT_PT_D4"
+    bl_space_type  = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context     = "object"
 
-        # Not a 4D object, let's stop here
-        if not param.is4D:
-            return
-
-        # 4D Object type
-        layout.label(text="4D type")
-        row = layout.row(align=True)
-        row.prop_enum(param, "type", 'POINT')
-        row.prop_enum(param, "type", 'AXIS')
-        row.prop_enum(param, "type", 'SURFACE')
-
-        # Modelling space
-        layout.label(text="Modelling space")
-        row = layout.row(align=True)
-        row.prop_enum(param, "modelling_space", 'XYZ')
-        row.prop_enum(param, "modelling_space", 'XYW')
-        row.prop_enum(param, "modelling_space", 'WYZ')
-        row.prop_enum(param, "modelling_space", 'XWZ')
-
-        col = layout.column()
-        col.prop(param, "location_4D")
-
-        # Rotation
-        if param.type == 'SURFACE':
-            split = layout.split()
-            col = split.column()
-            col.prop(param, "rotation0")
-            col = split.column()
-            col.prop(param, "rotation1")
+    def draw(self, context):
+        draw_location4D(self, context)
 
 
 # ======================================================================================================================================================
 # Dessin du view port en 4D
 
 viewport_shader = gpu.shader.from_builtin('3D_SMOOTH_COLOR')
-
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Drawing hook
@@ -1294,9 +1295,9 @@ def draw_callback_3d(self, context):
         return [c * alpha for c in col]
 
     # Projection matrix
-    settings = context.scene.fourD_settings
-    overlay = context.space_data.overlay
-    M = settings.M_proj()
+    settings = context.scene.d4
+    overlay  = context.space_data.overlay
+    mproj    = settings.projection_matrix
 
     # Lines & colors of the grid
     # Lines are couples of 4D vertices
@@ -1323,11 +1324,11 @@ def draw_callback_3d(self, context):
             else:
                 v = (x, y, 0., 0.)
 
-            return M @ Vector(v)
+            return Vector(mproj.dot(v))
 
         verts = []
-        cols = []
-        col = get_color(plane[1], 0.5)
+        cols  = []
+        col   = get_color(plane[1], 0.5)
         for i in range(count + 1):
             verts.extend([vert(i, 0), vert(i, count)])
             cols.extend([col, col])
@@ -1382,7 +1383,7 @@ def draw_callback_3d(self, context):
     for axis in ['X', 'Y', 'Z', 'W']:
         P1 = axis_length * space * get_axis(axis)
         P0 = -P1
-        verts.extend([M @ P0, M @ P1])
+        verts.extend([Vector(mproj.dot(P0)), Vector(mproj.dot(P1))])
 
         col = get_color(axis)
         cols.extend([col, col])
@@ -1399,11 +1400,11 @@ def draw_callback_3d(self, context):
 
     return
 
-
 # -----------------------------------------------------------------------------------------------------------------------------
 # Defines button for enable/disable the 4D display
 
 class ShowGridButton(bpy.types.Operator):
+
     bl_idname = "spaceview3d.showgridbutton"
     bl_label = "4D grids"
     bl_description = "Show 4D grids and axis"
@@ -1417,9 +1418,9 @@ class ShowGridButton(bpy.types.Operator):
     @staticmethod
     def handle_add(self, context):
         if ShowGridButton._handle is None:
-            ShowGridButton._handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback_3d, (self, context), 'WINDOW',
-                                                                            'POST_VIEW')
-            # context.scene.fourD_settings.show_4D_grids = True
+            ShowGridButton._handle = bpy.types.SpaceView3D.draw_handler_add(
+                draw_callback_3d, (self, context), 'WINDOW', 'POST_VIEW')
+            # context.scene.d4_settings.show_4D_grids = True
 
     # ------------------------------------
     # Disable gl drawing removing handler
@@ -1430,7 +1431,7 @@ class ShowGridButton(bpy.types.Operator):
         if ShowGridButton._handle is not None:
             bpy.types.SpaceView3D.draw_handler_remove(ShowGridButton._handle, 'WINDOW')
         ShowGridButton._handle = None
-        # context.scene.fourD_settings.show_4D_grids = False
+        # context.scene.d4_settings.show_4D_grids = False
 
     # ------------------------------
     # Execute button action
@@ -1438,19 +1439,19 @@ class ShowGridButton(bpy.types.Operator):
 
     def execute(self, context):
         if context.area.type == 'VIEW_3D':
-            overlay = context.space_data.overlay
-            settings = context.scene.fourD_settings
+            overlay  = context.space_data.overlay
+            settings = context.scene.d4
 
-            if settings.fourD_display and settings.show_4D_grids:
+            if settings.d4_projection and settings.show_4D_grids:
 
                 # Save 3D display options
-                settings.show_floor_3D = overlay.show_floor
+                settings.show_floor_3D  = overlay.show_floor
                 settings.show_axis_x_3D = overlay.show_axis_x
                 settings.show_axis_y_3D = overlay.show_axis_y
                 settings.show_axis_z_3D = overlay.show_axis_z
 
                 # Hide the standard grids
-                overlay.show_floor = False
+                overlay.show_floor  = False
                 overlay.show_axis_x = False
                 overlay.show_axis_y = False
                 overlay.show_axis_z = False
@@ -1463,7 +1464,7 @@ class ShowGridButton(bpy.types.Operator):
                 self.handle_remove(self, context)
 
                 # Restore 3D display options
-                overlay.show_floor = settings.show_floor_3D
+                overlay.show_floor  = settings.show_floor_3D
                 overlay.show_axis_x = settings.show_axis_x_3D
                 overlay.show_axis_y = settings.show_axis_y_3D
                 overlay.show_axis_z = settings.show_axis_z_3D
@@ -1477,6 +1478,29 @@ class ShowGridButton(bpy.types.Operator):
 
         return {'CANCELLED'}
 
+# ======================================================================================================================================================
+# Enable 4D
+
+def enable_4D():
+    bpy.utils.register_class(D4Param)
+    bpy.utils.register_class(D4Scene)
+
+    bpy.types.Scene.d4  = PointerProperty(type=D4Scene)
+    bpy.types.Object.d4 = PointerProperty(type=D4Param)
+
+    bpy.utils.register_class(ShowGridButton)
+
+   # Panels
+    bpy.utils.register_class(D4ScenePanel)
+    bpy.utils.register_class(D4ObjectPanel)
+
+    try:
+        bpy.types.VIEW3D_PT_context_properties.remove(draw_location4D)
+    except:
+        pass
+    bpy.types.VIEW3D_PT_context_properties.append(draw_location4D)
+
+
 
 # ======================================================================================================================================================
 # Add a new 4D object
@@ -1485,7 +1509,7 @@ class ShowGridButton(bpy.types.Operator):
 #    """4D extension"""
 #
 #    bl_label        = "4D parameters"
-#    bl_idname       = "FOURD_PT_Settings"
+#    bl_idname       = "d4_PT_Settings"
 #    bl_space_type   = 'VIEW_3D'
 #    bl_region_type  = 'UI'
 #    bl_category     = '4D'
@@ -1551,12 +1575,12 @@ class Object4DAdd(bpy.types.Operator):
 
         # ----- TEMPORATY IMPLEMENTATION
 
-        model.fourD_param.extrude_4D(w_min=-1., w_max=1., slices=self.slices)
+        model.d4_param.extrude_4D(w_min=-1., w_max=1., slices=self.slices)
 
         # Update 4D display
 
-        if scene.fourD_settings.fourD_display:
-            scene.fourD_settings.update_projection()
+        if scene.d4_settings.d4_display:
+            scene.d4_settings.update_projection()
 
         return {'FINISHED'}
 
@@ -1571,18 +1595,18 @@ class Object4DAdd(bpy.types.Operator):
             slice.animation_data_clear()
             scene.objects.link(slice)
 
-            prm = slice.fourD_param
+            prm = slice.d4_param
             prm.is4D = True
             prm.type = 'SURFACE'
 
             if s is not None:
-                bms = slice.fourD_param.bmesh_begin()
+                bms = slice.d4_param.bmesh_begin()
                 id4Ds = get_4D_layer(bms)
 
                 for v in bms.verts:
                     v[id4Ds] += s
 
-                slice.fourD_param.bmesh_end(bms)
+                slice.d4_param.bmesh_end(bms)
 
             slice.scale *= scale * self.scale
 
@@ -1673,8 +1697,8 @@ class Object4DAdd(bpy.types.Operator):
 
         # Update 4D display
 
-        if scene.fourD_settings.fourD_display:
-            scene.fourD_settings.update_projection()
+        if scene.d4_settings.d4_display:
+            scene.d4_settings.update_projection()
 
         return {'FINISHED'}
 
@@ -1690,7 +1714,7 @@ def view3D_Draw_Extension(self, context):
 
 class FourDPanel(bpy.types.Panel):
     bl_label = "4D Panel"
-    bl_idname = "FOURD_PT_Config"
+    bl_idname = "d4_PT_Config"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = '4D'
@@ -1806,7 +1830,7 @@ class Builder():
         bpy.context.view_layer.objects.active = obj
 
         # 4D !
-        obj.fourD_param.is4D = True
+        obj.d4_param.is4D = True
 
         return obj
 
@@ -1992,8 +2016,8 @@ class HypershereAdd(bpy.types.Operator):
         hyper_icosphere(divisions=self.divisions)
 
         # Update 4D display
-        if scene.fourD_settings.fourD_display:
-            scene.fourD_settings.update_projection()
+        if scene.d4_settings.d4_display:
+            scene.d4_settings.update_projection()
 
         return {'FINISHED'}
 
@@ -2010,16 +2034,16 @@ def register():
     print("\n4D Registering 4D addon")
 
     # Extension classes
-    bpy.utils.register_class(FourD_settings)
-    bpy.utils.register_class(FourD_Param)
+    bpy.utils.register_class(d4_settings)
+    bpy.utils.register_class(d4_Param)
 
     # Operators
     bpy.utils.register_class(ShowGridButton)
     bpy.utils.register_class(FourDProjectionOperator)
 
     # Type extensions
-    bpy.types.Scene.fourD_settings = PointerProperty(type=FourD_settings)
-    bpy.types.Object.fourD_param = PointerProperty(type=FourD_Param)
+    bpy.types.Scene.d4_settings = PointerProperty(type=d4_settings)
+    bpy.types.Object.d4_param = PointerProperty(type=d4_Param)
 
     # Panels
     bpy.utils.register_class(VIEW3D_PT_4d_coord)
@@ -2041,9 +2065,9 @@ def unregister():
     bpy.utils.unregister_class(Object4DAdd)
     bpy.utils.unregister_class(FourDProjectionOperator)
     bpy.utils.unregister_class(ShowGridButton)
-    bpy.utils.unregister_class(FourD_settings)
+    bpy.utils.unregister_class(d4_settings)
     bpy.utils.unregister_class(FourDProjectionPanel)
-    bpy.utils.unregister_class(FourD_Param)
+    bpy.utils.unregister_class(d4_Param)
     bpy.utils.unregister_class(FourDParamPanel)
 
     bpy.types.VIEW3D_PT_view3d_properties.remove(view3D_Draw_Extension)
