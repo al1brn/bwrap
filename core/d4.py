@@ -10,16 +10,19 @@ import numpy as np
 
 import bpy
 
-import bmesh
 from bpy.props import BoolProperty, FloatProperty, EnumProperty, FloatVectorProperty, StringProperty, IntProperty, \
     PointerProperty, IntVectorProperty
+
 from mathutils import Vector, Matrix, Euler, Quaternion
-import collections
-import math
+
+from .bezier import from_points
+
+# ---- Evaluating the expression
+
 from math import * # CAUTION : keep it for custom function eval
 import sys
 
-from .wrappers import WObject
+# ----- Writing the grids
 
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -519,7 +522,7 @@ class D4Param(bpy.types.PropertyGroup):
         default = 'W',
     )
 
-    # Target as 4D vector (more complex)
+    # Target as 4D vector : NOT USED (more complex)
     axis_target4D: FloatVectorProperty(
         name    = "4D Axis",
         size    = 4,
@@ -894,60 +897,37 @@ class D4Param(bpy.types.PropertyGroup):
     def fourth_floats(self, value):
         self.set_floats(self.fourth_axis, np.array(value).reshape(np.size(value)))
 
-    # ----------------------------------------------------------------------------------------------------
-    # object <--> space4
-
-    def object_to_space4D(self):
-
-        # Read loc and rot to force the update
-        loc = self.location4D
-        rot = self.rotation4D
-
-        # Mesh to layers
-        self.mesh_to_layers()
-
-    def space4D_to_object(self):
-
-        self.lock_update()
-
-        # Force loc and rot
-        self.location4D = self.location4D_
-        self.rotation4D = self.rotation4D_
-
-        self.unlock_update()
-
-    # ----------------------------------------------------------------------------------------------------
-    # Need an update
-    # After 3D and 4D are synchronized
-
-    update_stack = 0
-    def lock_update(self):
-        self.update_stack += 1
-
-    def unlock_update(self):
-        self.update_stack -= 1
-        if self.update_stack < 0:
-            raise RuntimeError("Severe programmation error when managing updates!!!! >:(E(")
-
-        if self.update_stack == 0:
-            self.object_update()
-
-    def object_update(self):
-
-        if self.update_stack != 0:
-            return
-
-        if self.vmode == '3D':
-            # Mesh update
-            self.layers_to_mesh()
-
-            # Curve update
-            self.curve_update()
-        else:
-            self.projection()
 
     # ====================================================================================================
     # Curve methods and property
+    #
+    # A curve is not edited in Blender, it is computed
+    # - Either by an expression
+    # - Or externally by setting the curve_verts4 array
+
+    # ----------------------------------------------------------------------------------------------------
+    # How the vertices are defined
+    # return None if the object is not a CURVE
+
+    curve_source_: IntProperty(default=0)
+
+    def curve_source_get(self):
+        return self.curve_source_
+
+    def curve_source_set(self, value):
+        self.curve_source_ = value
+        self.curve_update()
+
+    curve_source: EnumProperty(
+        name        = "Source",
+        items       = [
+            ('EXPRESSION', "Expression", "Curve is computed with the provided python expression."),
+            ('EXTERN',     "Extern",     "4D vertices are set externally by setting the property object.d4.curve_verts4"),
+        ],
+        description = "Define how the curve points are set.",
+        get         = curve_source_get,
+        set         = curve_source_set,
+        )
 
     # ----------------------------------------------------------------------------------------------------
     # Access to curve
@@ -979,6 +959,7 @@ class D4Param(bpy.types.PropertyGroup):
     def curve_function_error(self):
 
         def f(t):
+            frame = bpy.context.scene.frame_current
             return np.array(eval(self.curve_function))
 
         try:
@@ -987,7 +968,7 @@ class D4Param(bpy.types.PropertyGroup):
                 return f"Must return 4 floats, not '{np.array(v).shape}'"
 
         except:
-            return sys.exc_info()[1]
+            return str(sys.exc_info()[1])
 
         return None
 
@@ -1004,54 +985,107 @@ class D4Param(bpy.types.PropertyGroup):
         description = "Ending value for t parameter",
         default     = 1.,
     )
+
+    curve_count_: IntProperty(default = 100)
+
+    def curve_count_get(self):
+        if self.curve_source == 'EXPRESSION':
+            return self.curve_count_
+        else:
+            return len(self.get_sk(self.sk_names[0]).data)
+
+    def curve_count_set(self, value):
+        self.curve_count_ = value
+
     curve_count: IntProperty(
         name        = "Points",
         description = "Number of points on the curve",
-        default     = 100,
         min         = 2,
         max         = 10000,
+        get         = curve_count_get,
+        set         = curve_count_set,
     )
 
     # ----------------------------------------------------------------------------------------------------
-    # Cache for curve 4D vertices
+    # The 4D coordinates of the vertices are stored in two shape key
+    #
+    # If the source is EXPRESSION, use of shape keys is optional
 
-    curve_verts4_ = None
+    # ------ Define is shape keys are used
+
+    use_shape_keys_: BoolProperty(default=True)
+
+    def use_shape_keys_get(self):
+        if self.curve_source == 'EXTERN':
+            return True
+        else:
+            return self.use_shape_keys_
+
+    def use_shape_keys_set(self, value):
+        self.use_shape_keys_ = value
+        if not self.use_shape_keys_:
+            self.id_data.shape_key_clear()
+
+    use_shape_keys: BoolProperty(
+        name        = "Use SK",
+        description = "Use shape keys as cache for 4D vertices.",
+        get         = use_shape_keys_get,
+        set         = use_shape_keys_set,
+    )
+
+    # ------ The 3 necessary names
+
+    sk_names = ["4D Curve", "4D XYZ", "4D W"]
+
+    # ------ The shape keys are available
 
     @property
-    def curve_verts4(self):
+    def sk_ok(self):
+        sks = self.curve.shape_keys
+        if sks is None:
+            return False
 
-        if self.curve_verts4_ is not None:
-            if len(self.curve_verts4_) == self.curve_count:
-                return self.curve_verts4_
+        for name in self.sk_names:
+            if self.curve.shape_keys.key_blocks.get(name) is None:
+                return False
 
-        if self.curve_function_error is not None:
-            return np.ones((self.curve_count, 4), np.float)/self.curve_count
+        return True
 
-        def f(t):
-            return np.array(eval(self.curve_function))
+    # ----- Clear the shape keys when the number of points change
 
-        self.curve_verts4_ = np.empty((self.curve_count, 4), np.float)
-        ts = np.linspace(self.curve_t0, self.curve_t1, self.curve_count)
-        for i in range(self.curve_count):
-            self.curve_verts4_[i] = f(ts[i])
+    def sk_clear(self):
+        self.id_data.shape_key_clear()
+        return
 
-        return self.curve_verts4_
-
-    # ----------------------------------------------------------------------------------------------------
-    # set curve 3D vertices
-
-    def set_curve_verts(self, verts3):
-        curve = self.curve
-        if curve is None:
+        sks = self.curve.shape_keys
+        if sks is None:
             return
 
-        spline = curve.splines[0]
+        for name in self.sk_names:
+            sk = self.curve.shape_keys.key_blocks.get(name)
+            if sk is not None:
+                self.id_data.shape_key_remove(sk)
+
+    # ----------------------------------------------------------------------------------------------------
+    # Adjust the number of vertices
+    # To be done when having the verts4 available
+
+    def curve_adjust_count(self, count):
+
+        spline = self.curve.splines[0]
         bezier = spline.type == 'BEZIER'
 
         points = spline.bezier_points if bezier else spline.points
 
-        # Adjust the number of points
+        # The current count
         cur = len(points)
+
+        # Ok: nothing to do
+        if cur == count:
+            return
+
+        # Adjust the number of points
+        curve = self.curve
         if cur > self.curve_count:
             curve.splines.new('BEZIER' if bezier else 'NURBS')
             curve.splines.remove(spline)
@@ -1062,21 +1096,179 @@ class D4Param(bpy.types.PropertyGroup):
         if cur < self.curve_count:
             points.add(self.curve_count - cur)
 
-        if bezier:
-           spline.bezier_points.foreach_set("co", verts3.reshape(self.curve_count * 3))
+        # Invalidate the shape keys
+        self.sk_clear()
+
+    # ----------------------------------------------------------------------------------------------------
+    # Get a shape key by its name
+
+    def get_sk(self, name):
+        curve = self.curve
+        if curve is None:
+            return None
+
+        sks = curve.shape_keys
+        if sks is None:
+            for nm in self.sk_names:
+                sk = self.id_data.shape_key_add(name=nm)
+                sk.mute = nm != self.sk_names[0]
+
+        curve.shape_keys.use_relative = False
+
+        sk = curve.shape_keys.key_blocks.get(name)
+        if sk is None:
+            sks.shape_key.add(name)
+            sk = curve.shape_keys.key_blocks.get(name=name)
+
+        return sk
+
+    # ----------------------------------------------------------------------------------------------------
+    # Get / set the vertices from the shapes keys
+
+    def get_sk_verts3(self, name):
+        sk = self.get_sk(name)
+        count = len(sk.data)
+        verts = np.empty(count*3, np.float)
+        sk.data.foreach_get("co", verts)
+        return verts.reshape(count, 3)
+
+    def set_sk_verts3(self, name, verts):
+        sk = self.get_sk(name)
+        count = len(sk.data)
+
+        # When setting the display curve, need do compute the handles for bezier curvers
+
+        if (name == self.sk_names[0]) and (self.curve.splines[0].type == 'BEZIER'):
+            vs, ls, rs = from_points(count, verts)
+            sk.data.foreach_set("co", vs.reshape(count*3))
+            sk.data.foreach_set("handle_left", ls.reshape(count*3))
+            sk.data.foreach_set("handle_right", rs.reshape(count*3))
         else:
-            vs = np.resize(verts3.transpose(), (4, self.curve_count)).transpose()
-            vs[:, 3] = 1.
-            spline.points.foreach_set("co", vs.reshape(self.curve_count * 4))
+            sk.data.foreach_set("co", verts.reshape(count*3))
+
+    # ----------------------------------------------------------------------------------------------------
+    # Get the 4D vertices from the shape keys
+
+    def get_sk_verts4(self):
+        vertsw        = self.get_sk_verts3(self.sk_names[2])
+        count         = len(vertsw)
+        verts4        = np.zeros((count, 4), np.float)
+        verts4[:, 3]  = vertsw[:, 0]
+        verts4[:, :3] = self.get_sk_verts3(self.sk_names[1])
+        return verts4
+
+    # ----------------------------------------------------------------------------------------------------
+    # Set the 4D vertices to the shape keys
+
+    def set_sk_verts4(self, verts4):
+
+        count  = len(verts4)
+
+        # Ensure the number of vertices is ok
+        self.curve_count = count
+        self.curve_adjust_count(count)
+
+        # Set the vertices in the layers
+        self.set_sk_verts3(self.sk_names[1], verts4[:, :3]) # 4D XYZ
+
+        vertsw       = np.zeros((count, 3), np.float)
+        vertsw[:, 0] = verts4[:, 3]
+        self.set_sk_verts3(self.sk_names[2], vertsw)  # 4D W
+
+    # ----------------------------------------------------------------------------------------------------
+    # Get the 4D vertices
+    # If the shape_keys are ok, read from the vertices
+
+    @property
+    def curve_verts4(self):
+
+        # ----- Read from cache in shape keys
+        if self.use_shape_keys:
+            if self.sk_ok:
+                return self.get_sk_verts4()
+
+        # ----- Function error
+        if self.curve_function_error is not None:
+            return np.ones((self.curve_count, 4), np.float)/self.curve_count
+
+        # ----- Compute the vertices
+        def f(t):
+            # 'frame' is a possible value in the expression
+            frame = bpy.context.scene.frame_current
+            return np.array(eval(self.curve_function))
+
+        verts4 = np.empty((self.curve_count, 4), np.float)
+        ts = np.linspace(self.curve_t0, self.curve_t1, self.curve_count)
+        for i in range(self.curve_count):
+            verts4[i] = f(ts[i])
+
+        # ----- Write to cache
+        if self.use_shape_keys:
+            self.set_sk_verts4(verts4)
+
+        # ----- return the vertices
+        return verts4
+
+    # ----------------------------------------------------------------------------------------------------
+    # Set the 4D vertices
+    # Can be used externally to compute the vertices externally
+
+    @curve_verts4.setter
+    def curve_verts4(self, value):
+        verts4 = np.array(value)
+        count  = verts4.size // 4
+        self.set_sk_verts4(np.array(verts4).reshape(count, 4))
+        self.object_update()
+
+    # ----------------------------------------------------------------------------------------------------
+    # set curve 3D vertices
+
+    def set_curve_verts(self, verts3):
+
+        # ---- If shape keys, simply use the curve method
+
+        if self.use_shape_keys:
+            self.set_sk_verts3(self.sk_names[0], verts3)
+
+        # ---- Otherwise write the splines points
+
+        else:
+            curve = self.curve
+            if curve is None:
+                return
+
+            spline = curve.splines[0]
+            bezier = spline.type == 'BEZIER'
+
+            points = spline.bezier_points if bezier else spline.points
+
+            # The number of points must be adjusted before calling !!
+            count = len(verts3)
+
+            if bezier:
+                vs, ls, rs = from_points(count, verts3)
+                spline.bezier_points.foreach_set("co", vs.reshape(count*3))
+                spline.bezier_points.foreach_set("handle_left", ls.reshape(count*3))
+                spline.bezier_points.foreach_set("handle_right", rs.reshape(count*3))
+            else:
+                vs = np.resize(verts3.transpose(), (4, count)).transpose()
+                vs[:, 3] = 1.
+                spline.points.foreach_set("co", vs.reshape(count * 4))
+
+        # ----- Mark update
 
         self.id_data.update_tag()
 
     # ----------------------------------------------------------------------------------------------------
     # Update the curve after changes
 
-    def curve_update(self):
+    def curve_update(self, force_compute=False):
         if self.curve is None:
             return
+
+        # Force the computation of the vertices
+        if force_compute and (self.curve_source == 'EXPRESSION'):
+            self.sk_clear()
 
         if self.vmode == '3D':
             verts4 = self.curve_verts4
@@ -1088,6 +1280,63 @@ class D4Param(bpy.types.PropertyGroup):
                 verts3[:, i] = verts4[:, i4]
 
             self.set_curve_verts(verts3)
+        else:
+            self.projection()
+
+    # ====================================================================================================
+    # Update
+
+    # ----------------------------------------------------------------------------------------------------
+    # object <--> space4
+
+    def object_to_space4D(self):
+
+        # Read loc and rot to force the update
+        loc = self.location4D
+        rot = self.rotation4D
+
+        # Mesh to layers
+        self.mesh_to_layers()
+
+    def space4D_to_object(self):
+
+        self.lock_update()
+
+        # Force loc and rot
+        self.location4D = self.location4D_
+        self.rotation4D = self.rotation4D_
+
+        self.unlock_update()
+
+    # ----------------------------------------------------------------------------------------------------
+    # Need an update
+    # After 3D and 4D are synchronized
+
+    update_stack = 0
+
+    def lock_update(self):
+        self.update_stack += 1
+
+    def unlock_update(self):
+        self.update_stack -= 1
+        if self.update_stack < 0:
+            raise RuntimeError("Severe programmation error when managing updates!!!! >:(E(")
+
+        if self.update_stack == 0:
+            self.object_update()
+
+    def object_update(self):
+
+        if self.update_stack != 0:
+            return
+
+        if self.vmode == '3D':
+            # Mesh update
+            self.layers_to_mesh()
+
+            # Curve update
+            self.curve_update()
+
         else:
             self.projection()
 
@@ -1152,6 +1401,8 @@ class D4Param(bpy.types.PropertyGroup):
 
         # ----- Mesh projection
 
+        print("projection", self.object_type)
+
         if self.object_type == 'SHAPE':
 
             # Rotation matrix to be applied before projection
@@ -1166,6 +1417,7 @@ class D4Param(bpy.types.PropertyGroup):
 
             # A curve
             if self.curve is not None:
+
                 # Vertices projection
                 verts4 = self.curve_verts4 - loc4D
                 verts3 = mproj.dot(verts4.transpose()).transpose() - loc3D
@@ -1440,10 +1692,6 @@ class D4ScenePanel(bpy.types.Panel):
                 row = mbox.column()
                 row.prop(settings, "projection_angles")
 
-            # Update the projection
-            #if settings.d4_display:
-            #    mbox.operator("scene.d4_projection")
-
         # ----- Mapping
 
         else:
@@ -1475,6 +1723,26 @@ class D4ScenePanel(bpy.types.Panel):
 
 # ============================================================================================================================
 # 4D settings object panel
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# Button to refresh the 4D curve vertices
+
+class CurveComputeOperator(bpy.types.Operator):
+    """Compute the 4D vertices of curve"""
+    bl_idname = "object.curve_compute_operator"
+    bl_label = "Compute the vertices of the 4D curve"
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_object is not None
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is not None:
+            obj.d4.curve_update(True)
+
+        return {'FINISHED'}
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Drawing 4D location in Item > Transform panel
@@ -1538,19 +1806,35 @@ class D4ObjectPanel(bpy.types.Panel):
 
         if (obj.d4.curve is not None) and (obj.d4.object_type == 'SHAPE'):
             row = layout.row()
-            row.label(text="Curve function")
-            row = layout.row()
-            row.prop(obj.d4, "curve_function")
-            msg = obj.d4.curve_function_error
-            if msg is not None:
-                box = layout.box()
-                box.label(text="Expression not valid:")
-                box.label(text=msg)
-            else:
-                layout.prop(obj.d4, "curve_count")
-                layout.prop(obj.d4, "curve_t0")
-                layout.prop(obj.d4, "curve_t1")
+            row.prop(obj.d4, "curve_source", expand=True)
 
+            if obj.d4.curve_source == 'EXTERN':
+                box = layout.box()
+
+                row = box.row(align=True)
+                row.alignment = 'EXPAND'
+                row.label(text="Use python to set the vertices:")
+
+                row = box.row(align=True)
+                row.alignment = 'EXPAND'
+                row.label(text="object.d4.curve_verts4 = array of shape (n, 4)")
+
+            else:
+                row = layout.row()
+                row.label(text="Curve expression")
+                row = layout.row()
+                row.prop(obj.d4, "curve_function")
+                msg = obj.d4.curve_function_error
+                if msg is not None:
+                    box = layout.box()
+                    box.label(text="Expression not valid:")
+                    box.label(text=msg)
+                else:
+                    layout.prop(obj.d4, "curve_count")
+                    layout.prop(obj.d4, "curve_t0")
+                    layout.prop(obj.d4, "curve_t1")
+                    layout.prop(obj.d4, "use_shape_keys")
+                    layout.operator(CurveComputeOperator.bl_idname, text="Compute")
 
 # ======================================================================================================================================================
 # Dessin du view port en 4D
@@ -1785,6 +2069,8 @@ class D4():
         bpy.utils.register_class(ShowGridButton)
 
         # Panels
+        bpy.utils.register_class(CurveComputeOperator)
+
         bpy.utils.register_class(D4ScenePanel)
         bpy.utils.register_class(D4ObjectPanel)
 
@@ -1817,13 +2103,12 @@ class D4():
         bpy.utils.unregister_class(ShowGridButton)
 
         # Panels
+        bpy.utils.unregister_class(CurveComputeOperator)
+
         bpy.utils.unregister_class(D4ScenePanel)
         bpy.utils.unregister_class(D4ObjectPanel)
 
         # Properties panel extension with Object 4D params
         bpy.types.VIEW3D_PT_context_properties.remove(draw_location4D)
 
-def menu_func(self, context):
-    # self.layout.operator(Object4DAdd.bl_idname,   icon='MESH_CUBE')
-    self.layout.operator(HypershereAdd.bl_idname, icon='MESH_CUBE')
 
