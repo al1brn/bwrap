@@ -18,18 +18,26 @@ from .bezier import  control_points, PointsInterpolation
 
 from .geometry import q_tracker
 
-from .commons import base_error_title
+from .commons import base_error_title, get_chained_attr, set_chained_attr
 error_title = base_error_title % "wrappers.%s"
 
 # =============================================================================================================================
 # bpy_struct wrapper
 # wrapped : bpy_struct
 
-
 class WStruct():
 
-    def __init__(self, wrapped):
-        super().__setattr__("wrapped", wrapped)
+    def __init__(self, wrapped=None, name=None, coll=None):
+        super().__setattr__("wrapped_", wrapped)
+        super().__setattr__("name_",    name)
+        super().__setattr__("coll_",    coll)
+
+    @property
+    def wrapped(self):
+        if self.wrapped_ is None:
+            return self.coll_[self.name_]
+        else:
+            return self.wrapped_
 
     def __repr__(self):
         return f"[Wrapper {self.__class__.__name__} of {self.class_name} '{self.wrapped}']"
@@ -38,7 +46,7 @@ class WStruct():
         try:
             return getattr(self.wrapped, name)
         except:
-            print(dir(self))
+            #print(dir(self))
             raise RuntimeError(f"Attribute '{name}' doesn't exist for class '{self.__class__.__name__}'")
 
         # OLD
@@ -73,6 +81,16 @@ class WStruct():
         #self.wrapped.id_data.update_tag(refresh={'OBJECT', 'DATA', 'TIME'})
         #self.wrapped.id_data.update_tag(refresh={'TIME'})
         self.wrapped.id_data.update_tag()
+
+    # ----------------------------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------------
+    # Chained attrs
+
+    def get_attr(self, attribute):
+        return get_chained_attr(self, attribute)
+
+    def set_attr(self, attribute, value):
+        set_chained_attr(self, attribute, value)
 
     # ----------------------------------------------------------------------------------------------------
     # ----------------------------------------------------------------------------------------------------
@@ -553,6 +571,9 @@ class WShapekey(WStruct):
 
 class WMesh(WID):
 
+    def __init__(self, wrapped):
+        super().__init__(name=wrapped.name, coll=bpy.data.meshes)
+
     @property
     def owner(self):
         for obj in bpy.data.objects:
@@ -903,7 +924,7 @@ class WSpline(WStruct):
         return PointsInterpolation(points, lefts, rights)
 
     # ---------------------------------------------------------------------------
-    # Set the points and possibly handles for bezeir curves
+    # Set the points and possibly handles for bezier curves
 
     def set_bezier_verts(self, vectors, lefts=None, rights=None):
 
@@ -980,6 +1001,32 @@ class WSpline(WStruct):
             pts[:, 3] = 1.
             self.spline_verts = pts
 
+    # ---------------------------------------------------------------------------
+    # Save and restore points when changing the number of vertices
+
+    def save(self):
+        if self.use_bezier:
+            verts, lefts, rights = self.handles
+            return {"type": 'BEZIER', "verts": verts, "lefts": lefts, "rights": rights}
+        else:
+            return {"type": 'NURBS',  "verts": self.spline_verts}
+
+    def restore(self, data, count=None):
+
+        if count is None:
+            count = len(data["verts"])
+
+        if data["type"] == 'BEZIER':
+            points = np.resize(data["verts"],  (count, 3))
+            lefts = data.get("lefts")
+            if lefts is not None:
+                lefts  = np.resize(lefts,  (count, 3))
+            rights = data.get("rights")
+            if rights is not None:
+                rights = np.resize(rights, (count, 3))
+            self.set_verts(points, lefts, rights)
+        else:
+            self.spline_verts = np.resize(data["verts"], (count, 4))
 
     # ---------------------------------------------------------------------------
     # Geometry from points
@@ -1000,18 +1047,88 @@ class WSpline(WStruct):
         self.set_verts(verts, lefts, rights)
 
 
-
 # ---------------------------------------------------------------------------
 # Curve wrapper
 # wrapped : Curve
 
 class WCurve(WID):
 
+    def __init__(self, wrapped):
+        super().__init__(name=wrapped.name, coll=bpy.data.curves)
+
+    # ---------------------------------------------------------------------------
+    # WCurve is a collection of splines
+
     def __len__(self):
         return len(self.wrapped.splines)
 
     def __getitem__(self, index):
         return WSpline(self.wrapped.splines[index])
+
+    # ---------------------------------------------------------------------------
+    # Add a spline
+
+    def new(self, spline_type='BEZIER'):
+        splines = self.wrapped.splines
+        spline  = WSpline(splines.new(spline_type))
+        self.wrapped.id_data.update_tag()
+        return spline
+
+    # ---------------------------------------------------------------------------
+    # Delete a spline
+
+    def delete(self, index):
+        splines = self.wrapped.splines
+        if index <= len(splines)-1:
+            splines.remove(splines[index])
+        self.wrapped.id_data.update_tag()
+        return
+
+    # ---------------------------------------------------------------------------
+    # Return the number of vertices per spline
+
+    @property
+    def verts_count(self):
+        return [spline.count for spline in self]
+
+    # ---------------------------------------------------------------------------
+    # Set a number of vertices per spline
+    # value is an array of integers:
+    # - len(value) = number of splines
+    # - value[i]   = number of vertices of spline number i
+
+    @verts_count.setter
+    def verts_count(self, value):
+
+        # ---- Value must be an array of integers
+        try:
+            splines_count = len(value)
+            lengths = value
+        except:
+            splines_count = 1
+            lengths = [value]
+
+        # ----- Save the existing splines
+        save = [spline.save() for spline in self]
+
+        # ----- Clear
+        self.wrapped.splines.clear()
+
+        # ----- Rebuild the splines
+        for i in range(splines_count):
+            n = lengths[i]
+            if i < len(save):
+                spline = self.new(save[i]["type"])
+                spline.restore(save[i], n)
+            else:
+                spline = self.new('BEZIER')
+                spline.set_verts(np.resize(np.linspace(0, 3., n), (3, n)).transpose())
+
+        # ---- OK :-)
+        self.wrapped.id_data.update_tag()
+
+    # ---------------------------------------------------------------------------
+    # Set the number of splines
 
     def set_length(self, length, spline_type='BEZIER'):
 
@@ -1029,18 +1146,34 @@ class WCurve(WID):
 
         self.wrapped.id_data.update_tag()
 
+    # ---------------------------------------------------------------------------
+    # verts property is an array of spline 'save':
+    # - type  : BEZIER or NURBS
+    # - verts : vertices copy (points, lefts, rights) or (verts x, y, z, w)
+    # - count : vertices count
+
     @property
     def verts(self):
-        verts = []
-        for spline in self:
-            verts.append(spline.verts)
-        return verts
+        return [spline.save() for spline in self]
+
+    @verts.setter
+    def verts(self, data):
+        self.wrapped.splines.clear()
+        for save in data:
+            spline = self.new(save["type"])
+            spline.restore(save)
+        self.wrapped.id_data.update_tag()
+
+
 
 # ---------------------------------------------------------------------------
 # Text wrapper
 # wrapped : TextCurve
 
 class WText(WID):
+
+    def __init__(self, wrapped):
+        super().__init__(name=wrapped.name, coll=bpy.data.curves)
 
     @property
     def text(self):
@@ -1057,7 +1190,7 @@ class WText(WID):
 class WObject(WID):
 
     def __init__(self, wrapped):
-        super().__init__(wrapped)
+        super().__init__(name=wrapped.name, coll=bpy.data.objects)
 
     # ---------------------------------------------------------------------------
     # Data

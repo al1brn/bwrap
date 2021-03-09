@@ -12,13 +12,8 @@ import numpy as np
 import bpy
 
 from .blender import get_frame
+from .wrappers import wrap
 
-"""
-
-def get_frame(f):
-    return f
-
-#"""
 
 # =============================================================================================================================
 # Used to compare the current frame to a given interval
@@ -444,8 +439,25 @@ class Engine():
 
     SETUP     = [] # Setup functions (called once)
     FUNCTIONS = [] # Animations (called at frame change)
+    VARIABLES = {} # Variables mapped on objects properties
 
     verbose   = False
+
+    # ---------------------------------------------------------------------------
+    # Variables
+
+    @staticmethod
+    def map_variable(name, object, attribute):
+        wo = wrap(object)
+        Engine.VARIABLES[name] = (wo, attribute)
+
+    @staticmethod
+    def variable(name):
+        woa = Engine.VARIABLES.get(name)
+        if woa is None:
+            raise RuntimeError(f"Engine variable error: the variable named '{name}' is not mapped to an object property!")
+
+        return woa[0].get_attr(woa[1])
 
     # ---------------------------------------------------------------------------
     # Lists management
@@ -480,8 +492,8 @@ class Engine():
     # Animation is submitted to global var
 
     @staticmethod
-    def animate():
-        frame = bpy.context.scene.frame_current
+    def animate(scene):
+        frame = scene.frame_current
 
         if Engine.verbose:
             print(f"Engine animation at frame {frame:6.1f}")
@@ -496,26 +508,30 @@ class Engine():
     def run(go=True):
         bpy.context.scene.bw_engine_animate = go
         if go:
-            Engine.animate()
+            Engine.animate(bpy.context.scene)
 
 # =============================================================================================================================
 # Execution of an action during an interval on a list of objects
 
 def engine_handler(scene):
-    if  bpy.context.scene.bw_engine_animate:
-        Engine.animate()
+    if  scene.bw_engine_animate:
+        Engine.animate(scene)
 
 # =============================================================================================================================
 # Registering the module
 
 def register():
     print("Registering animation")
+    if hasattr(bpy.context.scene, "bw_engine_animate"):
+        print("Alreay registered...")
+        return
 
     bpy.types.Scene.bw_engine_animate = bpy.props.BoolProperty(description="Animate at frame change")
     bpy.types.Scene.bw_hide_viewport  = bpy.props.BoolProperty(description="Hide in viewport when hiding render")
 
     bpy.app.handlers.frame_change_pre.clear()
     bpy.app.handlers.frame_change_pre.append(engine_handler)
+    print("Animation registered.")
 
 
 def unregister():

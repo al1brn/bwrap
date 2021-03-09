@@ -1401,8 +1401,6 @@ class D4Param(bpy.types.PropertyGroup):
 
         # ----- Mesh projection
 
-        print("projection", self.object_type)
-
         if self.object_type == 'SHAPE':
 
             # Rotation matrix to be applied before projection
@@ -2045,70 +2043,64 @@ class ShowGridButton(bpy.types.Operator):
 # ======================================================================================================================================================
 # Enable 4D
 
-class D4():
+def d4_enabled():
+    return hasattr(bpy.context.scene, "d4")
 
-    ENABLED = False
+def enable_4D(force=False):
 
-    @staticmethod
-    def enable(force=False):
-
-        if D4.ENABLED and (not force):
-            return
-
-        D4.ENABLED = True
-
-        # Extension classes
-        bpy.utils.register_class(D4Param)
-        bpy.utils.register_class(D4Scene)
-
-        # Extend Scene and Object types
-        bpy.types.Scene.d4  = PointerProperty(type=D4Scene)
-        bpy.types.Object.d4 = PointerProperty(type=D4Param)
-
-        # 4D grids drawing
-        bpy.utils.register_class(ShowGridButton)
-
-        # Panels
-        bpy.utils.register_class(CurveComputeOperator)
-
-        bpy.utils.register_class(D4ScenePanel)
-        bpy.utils.register_class(D4ObjectPanel)
-
-        # Properties panel extension with Object 4D params
-        bpy.types.VIEW3D_PT_context_properties.append(draw_location4D)
-
+    if d4_enabled() and (not force):
         return
 
-        # Menus extension
-        bpy.utils.register_class(Object4DAdd)
-        bpy.utils.register_class(HypershereAdd)
-        bpy.types.VIEW3D_MT_mesh_add.append(menu_func)
+    # Extension classes
+    bpy.utils.register_class(D4Param)
+    bpy.utils.register_class(D4Scene)
 
-    @staticmethod
-    def disable():
-        if not D4.ENABLED:
-            return
+    # Extend Scene and Object types
+    bpy.types.Scene.d4  = PointerProperty(type=D4Scene)
+    bpy.types.Object.d4 = PointerProperty(type=D4Param)
 
-        D4.ENABLED = False
+    # 4D grids drawing
+    bpy.utils.register_class(ShowGridButton)
 
-        # Extension classes
-        bpy.utils.unregister_class(D4Param)
-        bpy.utils.unregister_class(D4Scene)
+    # Panels
+    bpy.utils.register_class(CurveComputeOperator)
 
-        # Extend Scene and Object types
-        #bpy.types.Scene.d4  = PointerProperty(type=D4Scene)
-        #bpy.types.Object.d4 = PointerProperty(type=D4Param)
+    bpy.utils.register_class(D4ScenePanel)
+    bpy.utils.register_class(D4ObjectPanel)
 
-        # 4D grids drawing
-        bpy.utils.unregister_class(ShowGridButton)
+    # Properties panel extension with Object 4D params
+    bpy.types.VIEW3D_PT_context_properties.append(draw_location4D)
 
-        # Panels
-        bpy.utils.unregister_class(CurveComputeOperator)
+    return
 
-        bpy.utils.unregister_class(D4ScenePanel)
-        bpy.utils.unregister_class(D4ObjectPanel)
+    # Menus extension
+    bpy.utils.register_class(Object4DAdd)
+    bpy.utils.register_class(HypershereAdd)
+    bpy.types.VIEW3D_MT_mesh_add.append(menu_func)
 
-        # Properties panel extension with Object 4D params
-        bpy.types.VIEW3D_PT_context_properties.remove(draw_location4D)
+def disable_4D():
+
+    if not d4_enabled():
+        return
+
+    # Extension classes
+    bpy.utils.unregister_class(D4Param)
+    bpy.utils.unregister_class(D4Scene)
+
+    # Extend Scene and Object types
+    #bpy.types.Scene.d4  = PointerProperty(type=D4Scene)
+    #bpy.types.Object.d4 = PointerProperty(type=D4Param)
+
+    # 4D grids drawing
+    bpy.utils.unregister_class(ShowGridButton)
+
+    # Panels
+    bpy.utils.unregister_class(CurveComputeOperator)
+
+    bpy.utils.unregister_class(D4ScenePanel)
+    bpy.utils.unregister_class(D4ObjectPanel)
+
+    # Properties panel extension with Object 4D params
+    bpy.types.VIEW3D_PT_context_properties.remove(draw_location4D)
 
 

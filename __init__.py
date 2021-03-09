@@ -51,10 +51,8 @@ from .core.blender import set_material
 
 from .core.duplicator import Duplicator
 
-from .core.animation import register as animation_register
-from .core.animation import unregister as animation_unregister
-from .core.animation import Interval
-from .core.animation import Engine
+from .core import animation
+from .core.animation import Interval, Engine
 
 from .core.interpolation import Interpolation
 
@@ -67,11 +65,12 @@ from .core.meshes import arrow, curved_arrow
 from .core.meshbuilder import MeshBuilder
 from .core.markers import markers
 
-from .core import d4
+from .core.d4 import enable_4D, disable_4D
+
+from .core.astrodb import Planets
 
 from .core.commons import base_error_title
 error_title = base_error_title % "main.%s"
-
 
 # ==========================================================================================
 # UI
@@ -231,8 +230,6 @@ class WAMainPanel(bpy.types.Panel):
 
         layout.operator("wrap.clear_params", icon='CANCEL')
 
-
-
 class WAControlPanel(bpy.types.Panel):
 
     """User parameters to control animation"""
@@ -279,8 +276,9 @@ def menu_func(self, context):
 
 
 def register():
+    print("Registering Blender Wrap...")
 
-    animation_register()
+    animation.register()
 
     bpy.utils.register_class(ClearParamsOperator)
     bpy.utils.register_class(SetupOperator)
@@ -291,6 +289,8 @@ def register():
 
 
 def unregister():
+    print("Unregistering Blender Wrap...")
+
     bpy.utils.unregister_class(WAControlPanel)
     bpy.utils.unregister_class(WAMainPanel)
 
@@ -298,7 +298,7 @@ def unregister():
     bpy.utils.unregister_class(SetupOperator)
     bpy.utils.unregister_class(ClearParamsOperator)
 
-    animation_register()
+    animation.unregister()
 
 if __name__ == "__main__":
     register()
