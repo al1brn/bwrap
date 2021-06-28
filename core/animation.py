@@ -442,6 +442,7 @@ class Engine():
     VARIABLES = {} # Variables mapped on objects properties
 
     verbose   = False
+    scene     = None # Risky algorithm !!!
 
     # ---------------------------------------------------------------------------
     # Variables
@@ -449,15 +450,21 @@ class Engine():
     @staticmethod
     def map_variable(name, object, attribute):
         wo = wrap(object)
-        Engine.VARIABLES[name] = (wo, attribute)
+        Engine.VARIABLES[name] = (wo.name, attribute)
 
     @staticmethod
-    def variable(name):
+    def variable(name, scene=None):
         woa = Engine.VARIABLES.get(name)
         if woa is None:
             raise RuntimeError(f"Engine variable error: the variable named '{name}' is not mapped to an object property!")
 
-        return woa[0].get_attr(woa[1])
+        if scene is None:
+            scene = Engine.scene
+        if scene is None:
+            scene = bpy.context.scene
+
+        wo = wrap(scene.objects[woa[0]])
+        return wo.get_attr(woa[1])
 
     # ---------------------------------------------------------------------------
     # Lists management
@@ -498,8 +505,10 @@ class Engine():
         if Engine.verbose:
             print(f"Engine animation at frame {frame:6.1f}")
 
+        Engine.scene = scene
         for f in Engine.FUNCTIONS:
             f(frame)
+        Engine.scene = None
 
     # ---------------------------------------------------------------------------
     # Set the animation global var

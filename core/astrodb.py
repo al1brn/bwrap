@@ -21,8 +21,8 @@
 # Neptune	30.0611	164.79	5.4     0.010	1.77	0.718	29.6
 
 
-from math import radians, pi, cos, sin, sqrt
-from mathutils import Vector, Matrix, Euler
+from math import radians, pi, sqrt
+from mathutils import Euler
 
 import numpy as np
 
@@ -188,21 +188,21 @@ def np_rotation(angle, axis='Z'):
 
     if axis.upper() == 'X':
         return np.array((
-            (_1, _0, _0),
-            (_0, cs, sn),
+            (_1,  _0, _0),
+            (_0,  cs, sn),
             (_0, -sn, cs))).transpose()
 
     elif axis.upper() == 'Y':
         return np.array((
             (cs, _0, -sn),
-            (_0, _1, _0),
-            (sn, _0, cs))).transpose()
+            (_0, _1,  _0),
+            (sn, _0,  cs))).transpose()
 
     elif axis.upper() == 'Z':
         return np.array((
-            (cs, sn, _0),
+            ( cs, sn, _0),
             (-sn, cs, _0),
-            (_0, _0, _1))).transpose()
+            ( _0, _0, _1))).transpose()
 
     else:
         raise RuntimeError(f"numpy rotation matrix: axis must be in (X, Y, Z), not '{axis}'")
@@ -259,8 +259,7 @@ class Planet():
     def orbit_unit(self, value):
         self.orbit_unit_ = value
         self.motion_compute()
-        
-        
+
     @property
     def radius_unit(self):
         return self.radius_unit_
@@ -269,8 +268,7 @@ class Planet():
     def radius_unit(self, value):
         self.radius_unit_ = value
         self.motion_compute()
-        
-        
+
     @property
     def rotation_time(self):
         return self.rotation_time_
@@ -279,8 +277,7 @@ class Planet():
     def rotation_time(self, value):
         self.rotation_time_ = value
         self.motion_compute()
-        
-        
+
     @property
     def revolution_time(self):
         return self.revolution_time_
@@ -337,23 +334,9 @@ class Planet():
         
         # Inclination matrix (around 'X' axis)
         self.incl_mat = np_rotation(self.inclination, 'X')
-        """
-        self.incl_mat = np.array((
-            (1., 0., 0.),
-            (0., cos(self.inclination), -sin(self.inclination)),
-            (0., sin(self.inclination),  cos(self.inclination))
-        ))
-        """
 
         # Obliquity matrix (around 'X' axis)
         self.obl_mat = np_rotation(self.obliquity, 'X')
-        """
-        self.obl_mat = np.array((
-            (1., 0., 0.),
-            (0., cos(self.obliquity), -sin(self.obliquity)),
-            (0., sin(self.obliquity),  cos(self.obliquity))
-        ))
-        """
 
     # ------------------------------------------------------------------------------------------
     # Polar coordinates
@@ -374,14 +357,12 @@ class Planet():
     # Location
     
     def location(self, t):
-        
         # Location on the ellipsis
         r, theta = self.polar(t)
         loc = r*np.array((np.cos(theta), np.sin(theta), np.zeros_like(theta)))
         
         # Return the result
         return self.rev_center(t) + (self.incl_mat @ loc).transpose()
-
 
     # ------------------------------------------------------------------------------------------
     # z rotation of the planet
@@ -401,35 +382,8 @@ class Planet():
     def rotation_matrix(self, t):
         return self.obl_mat @ np_rotation(self.z_rotation(t), 'Z')
 
-
-        # OLD ALGORITHM - CAN BE DELETED
-        
-        # ----- Only one value, let's compute it with Euler
-        
-        count = np.size(t)
-        if count == 1:
-            return np.array(self.rotation_euler(t).to_matrix())
-        
-        # ----- Several values are given
-        
-        z_rot = self.z_rotation(t)
-        
-        zero  = np.zeros_like(z_rot)
-        cs    = np.cos(z_rot)
-        sn    = np.sin(z_rot)
-        one   = np.ones_like(z_rot)
-        
-        m = np.array((
-            ( cs,   sn,   zero),
-            (-sn,   cs,   zero),
-            ( zero, zero, one)
-        ))
-        
-        return self.obl_mat.dot(m).transpose((2, 0, 1))
-
     # ------------------------------------------------------------------------------------------
     # Inverted rotation of the planet - Matrix
-
 
     def inverted_rotation_matrix(self, t):
         return np_rotation(-self.z_rotation(t), 'Z') @ (-self.obl_mat)
@@ -442,23 +396,6 @@ class Planet():
         mrot = self.inverted_rotation_matrix(t)
         return np.einsum('kij,kj->ki', mrot, loc)
 
-        # OLD - CAN BE DELETED
-        
-        # ----- Only one value, let's compute it quickly
-        
-        count = np.size(t)
-        if count == 1:
-            loc  = other.location(t) - self.location(t)
-            mrot = Matrix(self.rotation_matrix(t)).inverted()
-            return mrot @ loc
-        
-        # ----- Several times in t
-        
-        loc  = other.location(t) - self.location(t)
-        mrot = self.rotation_matrix(t)
-        mrot = np.linalg.inv(mrot)
-        return np.einsum('kij,kj->ki', mrot, loc)
-    
     # ------------------------------------------------------------------------------------------
     # Trajectory
     
@@ -470,21 +407,7 @@ class Planet():
             return self.location(t)
         else:
             return view_point.local_view(t, self)
-        
-        
-        # OLD
-        verts = np.zeros((count, 3), np.float)
-        ts    = np.linspace(t0, t1, count)
-        for i in range(count):
-            t = ts[i]
-            if view_point is None:
-                verts[i] = self.location(t)
-            else:
-                verts[i] = view_point.local_view(t, self)
-                
-        return verts
-    
-    
+
 
 # ============================================================================================================
 # The planets

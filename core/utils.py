@@ -9,21 +9,52 @@ Created on Tue Jan 26 21:41:34 2021
 import numpy as np
 
 
+# ---------------------------------------------------------------------------
 # Dichotomy solver
 
 def dicho(f, value, t0=0., t1=1., zero=0.001):
+    """Solves an equation by dicchotomy
+    
+    The equation is a function of shape f(x) = y. We try to find
+    x such as f(x) = v
+    
+    Parameters
+    ----------
+    f : function, template: f(x) = y
+        Equation to solve
+        
+    value : float
+        Target value
+        
+    t0 : float
+        Beginning of search interval
+        
+    t1 : float
+        End of search interval
+        
+    zero : float, default = 0.001
+        Precision
+        
+    Results
+    -------
+    float
+        Equation solution 
+    """
 
     v0   = f(t0)
     v1   = f(t1)
-
+    
+    # Algorithm only fo growing functions
     if v1 < v0:
         return dicho(lambda t: -f(t), -value, t0, t1, zero)
-
+    
+    # Solution is one of the bounds
     if value <= v0 + zero:
         return t0
     if value >= v1 - zero:
         return t1
-
+    
+    # Solving loop
     for i in range(20):
         t = (t0+t1)/2
         v = f(t)
@@ -38,7 +69,37 @@ def dicho(f, value, t0=0., t1=1., zero=0.001):
 
     return (t0+t1)/2
 
+# ---------------------------------------------------------------------------
+# Vectorized version of the dichotomy solver
+
 def npdicho(f, values, t0=1., t1=0., zero=0.001):
+    """Solve an equations for an array of target values
+    
+    The equation is a function of shape f(x) = y. We try to find
+    x such as f(x) = v for several v values
+    
+    Parameters
+    ----------
+    f : function, template: f(x) = y
+        Equation to solve
+        
+    values : array of floats
+        Target values
+        
+    t0 : float
+        Beginning of search interval
+        
+    t1 : float
+        End of search interval
+        
+    zero : float, default = 0.001
+        Precision
+        
+    Results
+    -------
+    array of floats
+        Equation solutions 
+    """
 
     vals = np.array(values)
 
@@ -74,7 +135,7 @@ def npdicho(f, values, t0=1., t1=0., zero=0.001):
     # Let's remove the values outside the bounds
 
     # Result array
-    res = np.empty(count, np.float)
+    res = np.zeros(count, np.float)
 
     i_bef = np.where(vals <= vs0 + zero)[0]
     i_aft = np.where(vals >= vs1 - zero)[0]
@@ -87,14 +148,20 @@ def npdicho(f, values, t0=1., t1=0., zero=0.001):
     # Bounds can be limited to the useful values@
     ts0 = ts0[inds]
     ts1 = ts1[inds]
-
+    
     # Loop
-    for i in range(20):
-        if len(inds) == 0:
-            break
+    loops = 20
+    for i in range(loops):
 
         # Step
         ts = (ts0 + ts1)/2
+        
+        # End of the story ?
+        if len(inds) == 0:
+            break
+        else:
+            # For last loop
+            res[inds] = ts
 
         # Compute the values
         vs = vf(ts)
@@ -118,29 +185,39 @@ def npdicho(f, values, t0=1., t1=0., zero=0.001):
         ts0    = ts0[i_keep]
         ts1    = ts1[i_keep]
         inds   = inds[i_keep]
+        
+        # For last loop
+            
 
     # At last !
     return res
 
+# ---------------------------------------------------------------------------
+# Demo
 
+def demo(f= lambda x: np.sin(x), t0=-np.pi/2, t1=np.pi/2, count=50):
+    
+    # The target values
+    ys = np.random.uniform(f(t0), f(t1), max(1, count))
+    if count <= 1:
+        ys = ys[0]
+    
+    # Solvers
+    xs = npdicho(f, ys, t0, t1)
+    
+    # Draw the results
+    
+    import matplotlib.pyplot as plt
+    
+    fig, ax = plt.subplots()
+    
+    # The curve
+    x = np.linspace(t0, t1, 100)
+    ax.plot(x, f(x))
+    
+    # The points
+    ax.plot(xs, ys, 's')
+    
+    # Show
+    plt.show()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    zero = 0.001

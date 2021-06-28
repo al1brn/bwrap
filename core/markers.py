@@ -8,7 +8,20 @@ Created on Tue Jan 26 21:41:34 2021
 
 import bpy
 
-def markers(text, clear=True, start=0, end=True):
+def markers(text, clear=True, start=0):
+    """Create markers from a list frame, label
+    
+    Parameters
+    ----------
+    text : string
+        \n separted lines of shape "frame, label". Possible separators are ',' ';' and '\t'
+        
+    clear : bool, default = True
+        Delete the existing markers
+        
+    start : int, default = 0
+        Starting frame
+    """
 
     print('-'*10)
     print("Markers...")

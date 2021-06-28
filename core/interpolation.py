@@ -28,9 +28,6 @@ from .commons import base_error_title
 
 error_title = base_error_title % "interpolation.%s"
 
-# FOR DEV
-#import matplotlib.pyplot as plt
-#
 
 
 # =============================================================================================================================
@@ -377,8 +374,8 @@ class Interpolation():
     @classmethod
     def Bezier(cls, easing='AUTO', input=(0., 1.), output=(0., 1.), P1=(1/3, 0.), P2=(2/3, 1.)):
         interp = Interpolation('BEZIER', easing, input=input, output=output)
-        interp.P1 = (self.x0 + P1[0]*(self.x1-self.x0), self.y0 + P1[1]*(self.y1-self.y0))
-        interp.P2 = (self.x0 + P2[0]*(self.x1-self.x0), self.y0 + P2[1]*(self.y1-self.y0))
+        interp.P1 = (interp.x0 + P1[0]*(interp.x1-interp.x0), interp.y0 + P1[1]*(interp.y1-interp.y0))
+        interp.P2 = (interp.x0 + P2[0]*(interp.x1-interp.x0), interp.y0 + P2[1]*(interp.y1-interp.y0))
         return interp
 
     @classmethod
@@ -793,6 +790,8 @@ class Interpolation():
     # _plot for development
 
     def _plot(self, count=100, margin=0., fcomp=None, integ=False):
+        
+        import matplotlib.pyplot as plt
 
         x0 = self.x0
         x1 = self.x1
@@ -1208,6 +1207,8 @@ class Interpolations():
     # Call
 
     def _plot(self, count=100, margin=0., fcomp=None, integ=False):
+        
+        import matplotlib.pyplot as plt
 
         x0 = self.x0
         x1 = self.x1

@@ -57,6 +57,8 @@ from .core.animation import Interval, Engine
 from .core.interpolation import Interpolation
 
 from .core.bezier import PointsInterpolation
+from .core.bezier import from_points
+from .core.bezier import from_function
 
 from .core.curspaces import CurvedSpace
 

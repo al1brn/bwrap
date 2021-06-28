@@ -17,6 +17,29 @@ error_title = base_error_title % "plural.%s"
 # Resize an array to a given shape, possibly by broadcasting the passed array
 
 def to_shape(a, shape):
+    """Resize an array to a given shape
+    
+    Broadcast can occur to match the target shape.
+    
+    If the length of the array is equal to the length of the shape,
+    the array is simply reshaped.
+    Otherwise, the array is broadcasted to the target shape when possible.
+    If not possible, a fatal error is raised.
+    
+    Parameters
+    ----------
+    a : float or array of floats
+        The base array to reshape
+        
+    shape : tuple
+        The target shape
+        
+    Returns
+    -------
+    array of floats
+        Array's shape is the target shape
+    """
+        
     
     size = np.product(shape)
             
@@ -37,13 +60,28 @@ def to_shape(a, shape):
 # - (2, 3) --> (count, 2, 3)
 
 def target_shape(count, shape):
+    """Compute the target shape for an array of arrays
+    
+    Parameters
+    ----------
+    count : int
+        The number of entries in the targett array
+        
+    shape : tuple
+        The shape of each entry
+        
+    Returns
+    -------
+    array of floats
+        Shape is (count, shape)
+    """
     
     size  = np.product(shape)
     
     if size == 1:
         return count
     
-    dims =  np.size(shape)
+    dims = np.size(shape)
     
     if dims == 1:
         return (count, shape)
@@ -62,6 +100,25 @@ def target_shape(count, shape):
 # Otherwise loop on the items in the collection
 
 def getattrs(coll, name, shape, nptype=np.float):
+    """Get attrs from items of a Blender collection
+    
+    The method foreach_get is used when available,
+    otherwise a loop on the array items is made.
+    
+    Parameters
+    ----------
+    coll : Blender collection
+        The colleciton of items
+        
+    name : str
+        Attribute name
+        
+    shape : tuple
+        The shape of the attribute
+        
+    nptype : np.type
+        The type of the values
+    """
     
     count = len(coll)
     size  = np.product(shape)
@@ -99,6 +156,30 @@ def getattrs(coll, name, shape, nptype=np.float):
 # As for plural getter
         
 def setattrs(coll, name, value, shape):
+    """Set attrs tom items in a Blender collection
+    
+    The method foreach_set is used when available,
+    otherwise a loop on the array items is made.
+    
+    Broadcast can occur:
+        - The same value is broadcasted to the array
+        - A float is braodcasted to each vector component
+    
+    Parameters
+    ----------
+    coll : Blender collection
+        The colleciton of items
+        
+    name : str
+        Attribute name
+        
+    value : float or array of floats
+        
+    shape : tuple
+        The shape of the attribute
+        
+    """
+    
     
     count  = len(coll)
     size   = np.product(shape)    
