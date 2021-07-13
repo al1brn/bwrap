@@ -24,11 +24,9 @@ __status__     = "Production"
 import numpy as np
 from math import pi
 
-from .commons import base_error_title
-
-error_title = base_error_title % "interpolation.%s"
-
-
+if True:
+    from .commons import base_error_title
+    error_title = base_error_title % "interpolation.%s"
 
 # =============================================================================================================================
 # Useful constants
@@ -38,454 +36,537 @@ twopi = pi*2
 hlfpi = pi/2
 
 # =============================================================================================================================
-# Easings canonic functions
-# Parameter is betwwen 0 and 1. Return from 0 to 1
+# Rectangle 
 
-def f_constant(t):
-    y = np.ones_like(t)
-    try:
-        y[np.where(t<1)[0]] = 1.
-    except:
-        return 0. if t < 1 else 1.
-    return y
-
-def f_linear(t):
-    return t
-
-def f_bezier(t):
-    return f_linear(t)
-
-def f_sine(t):
-    return 1 - np.cos(t * hlfpi)
-
-def f_quadratic(t):
-    return t*t
-
-def f_cubic(t):
-    return t*t*t
-
-def f_quartic(t):
-    t2 = t*t
-    return t2*t
-
-def f_quintic(t):
-    t2 = t*t
-    t3 = t2*t
-    return t3*t2
-
-def f_exponential(t):
-    return 1. - np.power(2, -10 * t)
-
-def f_circular(t):
-    return 1 - np.sqrt(1 - t*t)
-
-def f_back(t, factor):
-    return t*t*((factor + 1)*t - factor)
-
-def f_elastic(t):
-    amplitude    = 0.
-    period       = 0.
-
-    if period == 0:
-        period = .3
-
-    if (amplitude == 0) or (amplitude < 1.):
-        amplitude = 1.
-        s         = period/4
-    else:
-        s = period / twopi * np.sin(1/amplitude)
-
-    t -= 1
-
-    return -amplitude * np.power(2, 10*t) * np.sin((t-s)*twopi / period)
-
-
-def f_bounce(t, a, xi, di, ci):
-    """Compute bounces based on xi, di and ci params
-
-    Let's name n the number of bounces after the half initial one.
-    Each bounces is half of the previouse one. Let's note q the length
-    of bounce 0 (the half one).
-    The total length is L = q + q/2 + q/4 + ... -q/2
-    Hence: L/q = (1-q/2^(n+1))/(1-1/2) - 1/2 = 3/2 - 1/2^n
-    We want L = 1, hence 1/q = 3/2 - 1/2^n
-
-    Let's note: d = q/2
-
-    The equation of the initial parabola (half one) is: y = a(d^2 - x^2)
-    At x= 0, y = 1, hence: a = 4/q^2
-
-    Each xi is given by: xi = q(3/2-1/2^i)
-
-    The parameters are the following:
-        - a  : float -> used to compute the parabola a*(t^2 - ??)
-        - xi : [0, q/2, q, ... 3/2 - 1/2^i ... 1]
-        - di : [q/2, q/2,  ... xi+1 - xi]
-        - ci : [0.,  3/2q, ... xi + di/2]
-
-    These parameters are computed at initialization time
-
-    NOTE that the ease in falls from right to left !
-    The parameters must be initialized in consequence :-)
-"""
-    # Number of bounces
-
-    n = len(di)
-
-    # Duplicaton of the t for each of the intervals starting abscissa
-    # NOTE: 1-t because the computation is made on falling from 1 to 0
-    # but the default ease in is time reversed from 0 to 1
-
-    ats = np.full((n, len(t)), 1-t).transpose()
-
-    # Distances to the parabola centers
-    y = ats - ci
-
-    # Parabola equation
-    # a and di are supposed to be correctly initialized :-)
-    y = a*y*y + di
-
-    # Return the max values (normally, only one positive value per line)
-
-    return np.max(y, axis=1)
-
-
-# =============================================================================================================================
-# Interpolation
-
-class Interpolation():
-    """Interpolation function from an interval towards another interval.
-
-    Interpolated values are computed depending upon an interpolation code.
-
-    Parameters
-    ----------
-    x0: float
-        User min x value
-    x1: float
-        User max x value
-    y0: float
-        User min y value
-    y1: float
-        User max y value
-    interpolation: str
-        A valid code for interpolation in
-    mode: str
-        A valid code for easing mode in [AUTO', 'EASE_IN', 'EASE_OUT', 'EASE_IN_OUT'
+class Rect():
+    """A rectangular zone.
+    
+    Initialized witn two points. Give simple access to x, y locations and amplitudes.
+    Provides conversion to and from square (0, 0) (1, 1)
     """
+    
+    def __init__(self, P0=(0., 0.), P1=(1., 1.)):
+        """Rectangular zone
+        
 
-    RESOL  = 0.01
+        Parameters
+        ----------
+        P0 : couple of floats, optional
+            The low left corner. The default is (0., 0.).
+        P1 : couple of floats, optional
+            The upper right corner. The default is (1., 1.).
 
-    EASINGS = ['AUTO', 'EASE_IN', 'EASE_OUT', 'EASE_IN_OUT']
-
-    INTERPS = {
-        'CONSTANT'  : {'func': f_constant,    'auto': 'EASE_IN', 'tangents': [0, 0]},
-        'LINEAR'    : {'func': f_linear,      'auto': 'EASE_IN',  'tangents': [1, 1]},
-        'BEZIER'    : {'func': f_bezier,      'auto': 'EASE_IN',  'tangents': [0, 0]},
-        'SINE'      : {'func': f_sine,        'auto': 'EASE_IN',  'tangents': [0, 1]},
-        'QUAD'      : {'func': f_quadratic,   'auto': 'EASE_IN',  'tangents': [0, 1]},
-        'CUBIC'     : {'func': f_cubic,       'auto': 'EASE_IN',  'tangents': [0, 1]},
-        'QUART'     : {'func': f_quartic,     'auto': 'EASE_IN',  'tangents': [0, 1]},
-        'QUINT'     : {'func': f_quintic,     'auto': 'EASE_IN',  'tangents': [0, 1]},
-        'EXPO'      : {'func': f_exponential, 'auto': 'EASE_IN',  'tangents': [10*np.log(2), 0]},
-        'CIRC'      : {'func': f_circular,    'auto': 'EASE_IN',  'tangents': [0, 0]},
-        'BACK'      : {'func': f_back,        'auto': 'EASE_IN',  'tangents': [0, 0]},
-        'BOUNCE'    : {'func': f_bounce,      'auto': 'EASE_OUT', 'tangents': [0, 0]},
-        'ELASTIC'   : {'func': f_elastic,     'auto': 'EASE_OUT', 'tangents': [0, 0]},
-        }
-
-    def __init__(self, interpolation='BEZIER', easing='AUTO', input=(0., 1.), output=(0., 1.)):
-    #x0=0., x1=1., y0=0., y1=1.):
-
-        x0 = input[0]
-        x1 = max(x0+self.RESOL, input[1])
-        y0 = output[0]
-        y1 = output[1]
-
-        Dx3 = (x1-x0)/3
-        self._bpoints   = np.array(((x0, y0), (x0+Dx3, y0), (x1-Dx3, y1), (x1, y1)))
-
-        # The control points can be managed by the curve
-        self.curve        = None
-        self.curve_index  = None
-
-        # Specific Parameters
-        self.amplitude = 0.
-        self.back      = 0.
-        self.period    = 0.
-        self.factor    = 1.70158
-
-        # Interpolation
-        self._interpolation = ""
-        self.interpolation  = interpolation
-
-        # Easing
-        self._auto     = self.INTERPS[interpolation]['auto']
-        self.easing    = easing
-
-    # ---------------------------------------------------------------------------
-    # Bezier points
-
-    @property
-    def bpoints(self):
-        if self.curve is None:
-            return self._bpoints
-        else:
-            return self.curve.bpoints[self.curve_index: self.curve_index + 4]
-
-    @bpoints.setter
-    def bpoints(self, value):
-        if self.curve is None:
-            self._bpoints = value
-        else:
-            self.curve.bpoints[self.curve_index:self.curve_index + 4] = value
-
-    def capture_bpoints(self, curve, index):
-        curve.bpoints[index:index + 4] = self._bpoints
-        self.curve       = curve
-        self.curve_index = index
-
-    # ---------------------------------------------------------------------------
-    # Amplitudes
-
-    @property
-    def x0(self):
-        return self.bpoints[0, 0]
-
-    @x0.setter
-    def x0(self, value):
-        dx = value - self.x0
-        self.bpoints[:, 0] += dx
-
-    @property
-    def y0(self):
-        return self.bpoints[0, 1]
-
-    @y0.setter
-    def y0(self, value):
-        dy = value - self.y0
-        self.bpoints[:, 1] += dy
-
-    @property
-    def x1(self):
-        return self.bpoints[3, 0]
-
-    @x1.setter
-    def x1(self, value):
-        self.delta = value - self.x0
-
-    @property
-    def y1(self):
-        return self.bpoints[3, 1]
-
-    @y1.setter
-    def y1(self, value):
-        dy = value - self.y1
-        self.bpoints[2:, 1] += dy
-
-    @property
-    def delta(self):
-        return self.bpoints[3, 0] - self.bpoints[0, 0]
-
-    @delta.setter
-    def delta(self, value):
-        v = max(self.RESOL, value)
-        a = (self.bpoints[1:, 0] - self.bpoints[0, 0]) * v / self.delta
-        self.bpoints[1:, 0] = a
-
-    @property
-    def y_delta(self):
-        return self.bpoints[3, 1] - self.bpoints[0, 1]
-
-    # ---------------------------------------------------------------------------
-    # Bezier points
-
+        Returns
+        -------
+        None.
+        """
+        self.x0 = P0[0]
+        self.y0 = P0[1]
+        self.x1 = P1[0]
+        self.y1 = P1[1]
+        
+    def __repr__(self):
+        return f"Rect[P0 ({self.x0:.2f} {self.y0:.2f}) P1 ({self.x1:.2f} {self.y1:.2f})]"
+        
     @property
     def P0(self):
-        return self.bpoints[0]
+        """The low left corner.
+        """
+        return np.array((self.x0, self.y0))
+    
+    @P0.setter
+    def P0(self, P):
+        self.x0 = P[0]
+        self.y0 = P[1]
 
     @property
     def P1(self):
-        return self.bpoints[1]
-
-    @property
-    def P2(self):
-        return self.bpoints[2]
-
-    @property
-    def P3(self):
-        return self.bpoints[3]
-
-    @P0.setter
-    def P0(self, value):
-        self.x0 = value[0]
-        self.y0 = value[1]
+        """The upper right corner.
+        """
+        
+        return np.array((self.x1, self.y1))
 
     @P1.setter
-    def P1(self, value):
-        self.bpoints[1] = (max(self.x0, value[0]), value[1])
-
-    @P2.setter
-    def P2(self, value):
-        self.bpoints[2] = (min(self.x1, value[0]), value[1])
-
-    @P3.setter
-    def P3(self, value):
-        self.x1 = value[0]
-        self.y1 = value[1]
-
-    # ---------------------------------------------------------------------------
-    # A user friendly representation
-
-    def __repr__(self):
-        easing = f"{self.easing}"
-        if easing == 'AUTO':
-            easing += f" {self.easing_mode}"
-        return f"Interpolation({self.interpolation}) [{self.x0:.2f} {self.x1:.2f}] -> [{self.y0:.2f} {self.y1:.2f} {easing}]"
-
-    # ---------------------------------------------------------------------------
-    # Initialize from two Blender KeyFrame points
-
-    @classmethod
-    def FromKFPoints(cls, kf0, kf1):
-        interp = Interpolation(
-            kf0.co.x, kf1.co.x, kf0.co.y, kf1.co.y,
-            interpolation=kf0.interpolation, easing=kf0.easing)
-        interp.P1 = kf0.handle_right
-        interp.P2 = kf1.handle_left
-
-        interp.amplitude = kf0.amplitude
-        interp.back      = kf0.back
-        interp.period    = kf0.period
-        interp.comp_bounces()
-        return interp
-
-    # ---------------------------------------------------------------------------
-    # Initializers
-
-    @classmethod
-    def Constant(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('CONSTANT', easing, input=input, output=output)
-
-    @classmethod
-    def Linear(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('LINEAR', easing, input=input, output=output)
-
-    @classmethod
-    def Bezier(cls, easing='AUTO', input=(0., 1.), output=(0., 1.), P1=(1/3, 0.), P2=(2/3, 1.)):
-        interp = Interpolation('BEZIER', easing, input=input, output=output)
-        interp.P1 = (interp.x0 + P1[0]*(interp.x1-interp.x0), interp.y0 + P1[1]*(interp.y1-interp.y0))
-        interp.P2 = (interp.x0 + P2[0]*(interp.x1-interp.x0), interp.y0 + P2[1]*(interp.y1-interp.y0))
-        return interp
-
-    @classmethod
-    def Sine(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('SINE', easing, input=input, output=output)
-
-    @classmethod
-    def Quadratic(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('QUAD', easing, input=input, output=output)
-
-    @classmethod
-    def Cubic(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('CUBIC', easing, input=input, output=output)
-
-    @classmethod
-    def Quartic(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('QUART', easing, input=input, output=output)
-
-    @classmethod
-    def Quintic(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('QUINT', easing, input=input, output=output)
-
-    @classmethod
-    def Exponential(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('EXPO', easing, input=input, output=output)
-
-    @classmethod
-    def Circular(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('CIRC', easing, input=input, output=output)
-
-    @classmethod
-    def Back(cls, easing='AUTO', factor=1.70158, input=(0., 1.), output=(0., 1.)):
-        interp = Interpolation('BACK', easing, input=input, output=output)
-        interp.factor = factor
-        return interp
-
-    @classmethod
-    def Bounce(cls, easing='AUTO', n=3, input=(0., 1.), output=(0., 1.)):
-        interp = Interpolation('BOUNCE', easing, input=input, output=output)
-        interp.comp_bounces(n)
-        return interp
-
-    @classmethod
-    def Elastic(cls, easing='AUTO', input=(0., 1.), output=(0., 1.)):
-        return Interpolation('ELASTIC', easing, input=input, output=output)
-
-    # ---------------------------------------------------------------------------
-    # Interpolation property
-
+    def P1(self, P):
+        self.x1 = P[0]
+        self.y1 = P[1]
+        
     @property
-    def interpolation(self):
-        return self._interpolation
-
-    @interpolation.setter
-    def interpolation(self, value):
-        if not value in self.INTERPS.keys():
-            raise RuntimeError(
-                error_title % "interpolation" +
-                f"Interpolation initialization error: invalid interpolation {value}." +
-                f"Valid codes are {self.INTERPS.keys()}"
-                )
-
-        self._interpolation = value
-        self._canonic  = self.INTERPS[value]['func']
-        self._auto     = self.INTERPS[value]['auto']
-        self._tangents = self.INTERPS[value]['tangents']
-
-        self.comp_bounces()
-
-    # ---------------------------------------------------------------------------
-    # Easing property
-
+    def x_amp(self):
+        """The x amplitude of the rectangle.
+        """
+        
+        return self.x1 - self.x0
+    
     @property
-    def easing(self):
-        return self._easing
-
-    @easing.setter
-    def easing(self, value):
-        if not value in self.EASINGS:
-            raise RuntimeError(
-                error_title % "easing" +
-                f"Easing initialization error: invalid easing mode {value}. Valid modes are {self.EASINGS}"
-                )
-
-        self._easing = value
-
-    # ---------------------------------------------------------------------------
-    # Easing mode
-
+    def y_amp(self):
+        """The y amplitude of the rectangle.
+        """
+        
+        return self.y1 - self.y0
+    
     @property
-    def easing_mode(self):
-        return self._auto if self._easing == 'AUTO' else self._easing
+    def A(self):
+        """The 2-D amplitude of the rectangle.
+        """
+        
+        return np.array((self.x1 - self.x0, self.y1 - self.y0))
+    
+    def norm_x(self, x, clip=True):
+        """Convert a x value into the [0, 1] interval.
 
-    # ---------------------------------------------------------------------------
-    # Canonic computation
-    # Can be overriden for custom easings
+        Parameters
+        ----------
+        x : float
+            The x value to convert.
+        clip : bool, optional
+            If true, the returne value is clipped in [0, 1]. The default is True.
 
-    def canonic(self, t):
-        if self.interpolation == 'BOUNCE':
-            return f_bounce(t, self.a, self.xi, self.di, self.ci)
-        elif self.interpolation == 'BACK':
-            return f_back(t, self.factor)
+        Returns
+        -------
+        float
+            Converted value.
+        """
+        
+        r = (x - self.x0)/self.x_amp
+        if clip:
+            return np.clip(r, 0, 1)
         else:
-            return self._canonic(t)
+            return r
+        
+    def norm_y(self, y, clip=True):
+        """Convert a y value into the [0, 1] interval.
 
+        Parameters
+        ----------
+        y : float
+            The y value to convert.
+        clip : bool, optional
+            If true, the returne value is clipped in [0, 1]. The default is True.
+
+        Returns
+        -------
+        float
+            Converted value.
+        """
+        
+        r = (y - self.y0)/self.y_amp
+        if clip:
+            return np.clip(r, 0, 1)
+        else:
+            return r
+    
+    def exp_x(self, x):
+        """Convert a x value from [0, 1] to rectangular interval [x0, x1].
+
+        Parameters
+        ----------
+        x : float
+            The x value to expand.
+
+        Returns
+        -------
+        float
+            Converted value.
+        """
+        
+        return self.x0 + x*self.x_amp
+    
+    def exp_y(self, y):
+        """Convert a y value from [0, 1] to rectangular interval [y0, x1].
+
+        Parameters
+        ----------
+        y : float
+            The y value to expand.
+
+        Returns
+        -------
+        float
+            Converted value.
+        """
+
+        return self.y0 + y*self.y_amp
+    
+    def normalize(self, P, clip=True):
+        """Convert a point into the unitary square.
+
+        Parameters
+        ----------
+        P : couple of floats
+            The point to convert.
+        clip : bool, optional
+            If true, the returne value is clipped in the unitary square. The default is True.
+
+        Returns
+        -------
+        array of floats
+            Converted point.
+        """
+        
+        r = (np.array(P) - self.P0)/self.A
+        if clip:
+            return np.clip(r, 0, 1)
+        else:
+            return r
+    
+    def expand(self, P):
+        """Convert a point from the unitary from to the rectangle.
+
+        Parameters
+        ----------
+        P : couple of floats
+            The point to convert.
+
+        Returns
+        -------
+        array of floats
+            Converted point.
+        """
+        
+        return self.P0 + P*self.A
+
+# =============================================================================================================================
+# Interpolation function = function such as f(0) = 0 and f(1) = 1
+# Immplemented interpolation functions
+#
+#        'CONSTANT'  : 'tangents': [0, 0]},
+#        'LINEAR'    : 'tangents': [1, 1]},
+#        'BEZIER'    : 'tangents': [0, 0]},
+#        'SINE'      : 'tangents': [0, 1]},
+#        'QUAD'      : 'tangents': [0, 1]},
+#        'CUBIC'     : 'tangents': [0, 1]},
+#        'QUART'     : 'tangents': [0, 1]},
+#        'QUINT'     : 'tangents': [0, 1]},
+#        'EXPO'      : 'tangents': [10*np.log(2), 0]},
+#        'CIRC'      : 'tangents': [0, 0]},
+#        'BACK'      : 'EASE_IN',  'tangents': [0, 0]},
+#        'BOUNCE'    : 'EASE_OUT', 'tangents': [0, 0]},
+#        'ELASTIC'   : 'tangents': [0, 0]},
+
+# ----------------------------------------------------------------------------------------------------
+# Interpolation function
+
+class Easing():
+    """A standard easing function.
+    
+    The Easing class from and to the unitary square. The __call__ function
+    can be called with a np.array.
+    """
+    
+    EASINGS = {
+            'CONSTANT'  : {'can': 'constant',   'left': 0.,   'right': 0.,   'auto':'EASE_IN'}, 
+            'LINEAR'    : {'can': 'linear',     'left': 1.,   'right': 1.,   'auto':'EASE_IN'},
+            'BEZIER'    : {'can': 'bezier',     'left': None, 'right': None, 'auto':'EASE_IN'},
+            'SINE'      : {'can': 'sine',       'left': 0.,   'right': 1.,   'auto':'EASE_IN'},
+            'QUAD'      : {'can': 'quadratic',  'left': 0.,   'right': 2.,   'auto':'EASE_IN'},
+            'CUBIC'     : {'can': 'cubic',      'left': 0.,   'right': 3.,   'auto':'EASE_IN'},
+            'QUART'     : {'can': 'quartic',    'left': 0.,   'right': 4.,   'auto':'EASE_IN'},
+            'QUINT'     : {'can': 'quintic',    'left': 0.,   'right': 5.,   'auto':'EASE_IN'},
+            'EXPO'      : {'can': 'exponential','left': 0.,   'right': None, 'auto':'EASE_IN'},
+            'CIRC'      : {'can': 'circular',   'left': 0.,   'right': 0.,   'auto':'EASE_IN'},
+            
+            'BACK'      : {'can': 'back',       'left': 0.,   'right': None, 'auto':'EASE_OUT'},
+            'BOUNCE'    : {'can': 'bounce',     'left': 0.,   'right': 0.,   'auto':'EASE_OUT'},
+            'ELASTIC'   : {'can': 'elastic',    'left': 0.,   'right': None, 'auto':'EASE_OUT'},
+           }
+    
+    def __init__(self, name='LINEAR', ease='AUTO'):
+        """A standard Eassing.
+        
+        Parameters
+        ----------
+        name : str, optional
+            A valid Easing code. The default is 'LINEAR'.
+        ease : str, optional
+            A valid ease code. The default is 'AUTO'.
+
+        Returns
+        -------
+        None.
+
+        """
+        
+        self.name = name
+        self.ease = ease
+        
+        # Easing parameters
+        self.factor    = 10       # Exponential
+        self.back      = 1.70158  # Back
+        self.bounces   = 3        # Bounce
+        self.period    = 0.3      # Elastic
+        self.amplitude = 0.4      # Elastic
+        self.P1        = np.array((1/3, 0.)) # Bezier
+        self.P2        = np.array((2/3, 1.)) # Bezier
+        
+    @property
+    def name(self):
+        """The easing code.
+
+        Returns
+        -------
+        str
+            The easing code.
+        """
+        
+        return self.name_
+    
+    @name.setter
+    def name(self, value):
+        
+        synos = {
+            'QUADRATIC':   'QUAD',
+            'QUARTIC':     'QUART',
+            'QUINTIC':     'QUINT',
+            'EXPONENTIAL': 'EXPO',
+            'CIRCULAR':    'CIRC'
+            }
+        syno = synos.get(value)
+        
+        self.name_ = value if syno is None else syno
+        
+        easing = self.EASINGS.get(self.name_)
+        if easing is None:
+            raise RuntimeError(f"Easing: Unkwnow easing name: {value}")
+            
+        setattr(self, 'canonic', getattr(self, '_' + easing['can']))
+        self.left_     = easing['left']
+        self.right_    = easing['right']
+        self.auto_ease = easing['auto']
+        
+    def __repr__(self):
+        return f"<Easing {self.name} {self.auto_ease}>"
+        
+    # ----- Left and right tangents
+    
+    @property
+    def tangents(self):
+        """Compute left and right tangents.
+        
+        Left and right tangents are used for extrapolation.
+
+        Returns
+        -------
+        float
+            The left tangent.
+        float
+            The right tangent.
+
+        """
+        
+        # ----- Bezier curve dont use left_ & right_ attributes
+        
+        if self.name == 'BEZIER':
+            left  = 0.
+            right = 0.
+            if abs(self.P1[0]) > 0.001: left  = self.P1[1]/self.P1[0]
+            if abs(1 - self.P2[0]) > 0.001: right = (1 - self.P2[1]) / (1 - self.P2[0])
+            
+            return left, right
+        
+        # ----- Non Bezier
+            
+        ease = self.auto_ease if self.ease == 'AUTO' else self.ease
+        
+        left = self.left_
+        right = self.right_
+
+        if left is None:  left  = (self(0.01) - self(0.))*100
+        if right is None: right = (self(1.) - self(0.99))*100
+        
+        if ease == 'EASE_IN':
+            return left, right
+        elif ease == 'EASE_OUT':
+            return right, left
+        else:
+            return left, left
+        
+    @property
+    def left(self):
+        """The left tangent.
+        """
+        
+        left, right = self.tangents
+        return left
+    
+    @property
+    def right(self):
+        """The right tangent.
+        """
+        
+        left, right = self.tangents
+        return right
+    
+    # ----- The call to the function
+    
+    def __call__(self, t):
+        """Compute the easing function.
+        
+        Parameters
+        ----------
+        t : float or array of floats
+            The x values where to compute the easing.
+
+        Returns
+        -------
+        float or array of floats
+            The computed values.
+        """
+
+        if not hasattr(t, '__len__'):
+            return self(np.array([t]))[0]
+        
+        t = np.array(t)
+        
+        ease = self.auto_ease if self.ease == 'AUTO' else self.ease
+
+        if (ease == 'EASE_IN') or (self.name == 'BEZIER'):
+            return self.canonic(t)
+        
+        elif ease == 'EASE_OUT':
+            return 1 - self.canonic(1 - t)
+        
+        else:
+            y = np.zeros(len(t), np.float)
+                
+            idx = t < 0.5
+            y[idx] = self.canonic(t[idx]*2)/2
+            
+            idx = np.logical_not(idx)
+            y[idx] = 1 - self.canonic(2 - t[idx]*2)/2
+                
+            return y
+        
+    # ===========================================================================
+    # The easing functions
+    # EASE_IN implementation
+    # Argument must be a np.array
+    
+    # ---------------------------------------------------------------------------
+    # Linear
+
+    def _linear(self, t):
+        return t
 
     # ---------------------------------------------------------------------------
-    # Initialization specific to bounces
+    # Constant interpolation
+    
+    def _constant(self, t):
+        y = np.zeros_like(t)
+        y[t == 1.] = 1
+        return y
 
-    def comp_bounces(self, n=3):
+    # ---------------------------------------------------------------------------
+    # Sine interpolation
+    
+    def _sine(self, t):
+        return 1 - np.cos(t * hlfpi)
+
+    # ---------------------------------------------------------------------------
+    # Quadratic interpolation
+    
+    def _quadratic(self, t):
+        return t*t
+    
+    # ---------------------------------------------------------------------------
+    # Cubic interpolation
+    
+    def _cubic(self, t):
+        return t*t*t
+    
+    # ---------------------------------------------------------------------------
+    # Quartic interpolation
+    
+    def _quartic(self, t):
+        t2 = t*t
+        return t2*t2
+
+    # ---------------------------------------------------------------------------
+    # Quintic interpolation
+    
+    def _quintic(self, t):
+        t2 = t*t
+        return t2*t2*t
+    
+    # ---------------------------------------------------------------------------
+    # Exponential interpolation
+    
+    def _exponential(self, t):
+        return np.power(2, -self.factor * (1. - t))
+    
+    # ---------------------------------------------------------------------------
+    # Circular interpolation
+    
+    def _circular(self, t):
+        return 1 - np.sqrt(1 - t*t)
+
+    # ---------------------------------------------------------------------------
+    # Back interpolation
+    
+    def _back(self, t):
+        return t*t*((self.back + 1)*t - self.back)
+    
+    # ---------------------------------------------------------------------------
+    # Bounce interpolation
+    
+    def _bounce(self, t):
+
+        # Number of bounces
+        n = len(self.di)
+    
+        # Duplicaton of the t for each of the intervals starting abscissa
+        # NOTE: 1-t because the computation is made on falling from 1 to 0
+        # but the default ease in is time reversed from 0 to 1
+    
+        ats = np.full((n, len(t)), 1 - t).transpose()
+    
+        # Distances to the parabola centers
+        y = ats - self.ci
+    
+        # Parabola equation
+        # a and di are supposed to be correctly initialized :-)
+        y = self.a*y*y + self.di
+    
+        # Return the max values (normally, only one positive value per line)
+    
+        return np.max(y, axis=1)  
+    
+    # ---------------------------------------------------------------------------
+    # Bounce utilities
+    
+    @property
+    def bounces(self):
+        return len(self.di)
+    
+    @bounces.setter
+    def bounces(self, n):
+        """Compute bounces based on xi, di and ci params
+    
+        Let's name n the number of bounces after the half initial one.
+        Each bounces is half of the previouse one. Let's note q the length
+        of bounce 0 (the half one).
+        The total length is L = q + q/2 + q/4 + ... -q/2
+        Hence: L/q = (1-q/2^(n+1))/(1-1/2) - 1/2 = 3/2 - 1/2^n
+        We want L = 1, hence 1/q = 3/2 - 1/2^n
+    
+        Let's note: d = q/2
+    
+        The equation of the initial parabola (half one) is: y = a(d^2 - x^2)
+        At x= 0, y = 1, hence: a = 4/q^2
+    
+        Each xi is given by: xi = q(3/2-1/2^i)
+    
+        The parameters are the following:
+            - a  : float -> used to compute the parabola a*(t^2 - ??)
+            - xi : [0, q/2, q, ... 3/2 - 1/2^i ... 1]
+            - di : [q/2, q/2,  ... xi+1 - xi]
+            - ci : [0.,  3/2q, ... xi + di/2]
+    
+        These parameters are computed at initialization time
+    
+        NOTE that the ease in falls from right to left !
+        The parameters must be initialized in consequence :-)
+        """        
 
         r = 2 # Default
 
@@ -501,773 +582,660 @@ class Interpolation():
         a      = 4*qinv*qinv
 
         self.a  = -a
-        self.xi = np.insert(xi[:-1], 0, 0)                # 0, q/2, q, ...
+        self.xi = np.insert(xi[:-1], 0, 0)          # 0, q/2, q, ...
         self.di = np.insert(a * di * di / 4, 0, 1)  # Parabola equation : a*x*x + di
-        self.ci = np.insert(xi[:-1] + di/2, 0, 0)
+        self.ci = np.insert(xi[:-1] + di/2, 0, 0)            
 
     # ---------------------------------------------------------------------------
-    # Bezier computation
-    # Call only after ensuring x is within the [x0, x1] interval
+    # Elastic interpolation
+    
+    def _elastic(self, t):
 
-    def bezier(self, x):
+        period    = .3 if self.period < 0.0001 else self.period
+        amplitude = self.amplitude
+        
+        # t = -np.array(t)  # OUT
+        t = -np.array(1-t)  # IN
+        f = np.ones_like(t)
+        
+        if period < 0.0001:
+            period = .3
+            
+        if amplitude < 1:
+            
+            s = period / 4
+            f *= amplitude
+                
+            ids = np.where(abs(t) < s)[0]
+            l = abs(t[ids])/s
+            f[ids] = (f[ids]*l) + (1. - l)
+            
+            amplitude = 1.
+            
+        else:
+            
+            s = period / twopi * np.arcsin(1/amplitude)
+            
+        # return (f * (amplitude * np.power(2, 10*ts) * np.sin((t - s) * twopi / period))) + 1 # OUT
+        return -(f * (amplitude * np.power(2, 10*t) * np.sin((t - s) * twopi / period)))      # IN
 
-        xs = np.array(x)
-        single = len(xs.shape) == 0
-        if single:
-            xs = np.array([xs])
-        count = len(xs)
+    # ---------------------------------------------------------------------------
+    # Elastic utilities
+        
+    def set_peramp(self, rect, period=None, amplitude=None):
+        if period is not None:
+            self.period = period/rect.x_amp
+        if amplitude is not None:
+            self.amplitude= amplitude/rect.y_amp
+            
+    def get_peramp(self, rect):
+        return self.period*rect.x_amp, self.amplitude*rect.y_amp
+    
+    # ---------------------------------------------------------------------------
+    # Bezier interpolation
+    
+    def _bezier(self, t):
+        
+        # Bounds of dychotomy computation
+        t0 = np.zeros(len(t), np.float)
+        t1 = np.ones(len(t), np.float)
+        
+        # t --> (x, y) points
+        # Loop until x = t with a certain precision
 
-        t0 = np.zeros((count, 2), np.float)
-        t1 = np.ones( (count, 2), np.float)
-
-        P0 = np.resize(self.P0, (count, 2))
-        P1 = np.resize(self.P1, (count, 2))
-        P2 = np.resize(self.P2, (count, 2))
-        P3 = np.resize(self.P3, (count, 2))
-
-        P  = np.empty((count, 2), np.float)
-        ix = np.arange(count)
-
-        # Start with t close to the location of x in the interval
-
-        alpha = (xs - P0[:, 0])/(P3[:, 0] - P0[:, 0])
-        t     = t1 * np.resize(alpha, (2, count)).transpose()
-
+        # ----- Bezier computation        
+        # P = _u3*P0 + 3*_u2*u*P1 + 3*_u*u2*P2 +  u3*P3
+        # P0 = (0, 0) -> No term in P0
+        # P# = (1, 1) -> Non P3
+        
+        u = np.array(t)
+        x1 = self.P1[0]
+        x2 = self.P2[0]
+        
+        zero = 0.001
+        
         for i in range(15):
 
-            #print(f"step {i}: {len(ix)} --> {ix}")
+            u2   = u*u
+            u3   = u2*u
 
-            # Compute the current bezier point for t
-            # t0 and t1 have the length of ix
+            _u  = 1 - u
+            _u2 = _u*_u
 
-            t2   = t*t
-            t3   = t2*t
-
-            umt  = 1-t
-            umt2 = umt*umt
-            umt3 = umt2*umt
-
-            P[ix] = umt3*P0[ix] + 3*umt2*t*P1[ix] + 3*umt*t2*P2[ix] +  t3*P3[ix]
-            #print(f"t: {t[:, 0]}, x: {P[ix, 0]}, gap: {P[ix, 0]-xs[ix]}")
-
-            # Dichotomy step
-
-            zeros  = np.where(np.abs(P[ix, 0] - xs[ix]) < 1e-4)[0]
-            new_ix = np.delete(ix, zeros)
-
-            # Done for all the t values
-            if len(new_ix) == 0:
+            x = 3*_u2*u*x1 +  3*_u*u2*x2 + u3
+            ds = x - t
+            if max(abs(ds)) < zero:
                 break
+            
+            ineg = ds < -zero
+            t0[ineg] = u[ineg] 
+            
+            ipos = ds > zero
+            t1[ipos] = u[ipos] 
+            
+            ich = np.logical_or(ineg, ipos)
+            u[ich] = (t0[ich] + t1[ich])/2
 
-            # Update t0 and t1
-
-            imin = np.where(P[ix, 0] < xs[ix])[0]
-            imax = np.delete(np.arange(len(ix)), imin)
-
-            t0[imin] = t[imin]
-            t1[imax] = t[imax]
-
-            # reduce the size of the arrays
-
-            nzs = np.delete(np.arange(len(ix)), zeros)
-            t0 = t0[nzs]
-            t1 = t1[nzs]
-            t  = (t0 + t1)/2
-
-            ix = new_ix
-
-        if single:
-            return P[0, 1]
-        else:
-            return P[:, 1]
-
+        return 3*_u2*u*self.P1[1] +  3*_u*u2*self.P2[1] + u3
+    
     # ---------------------------------------------------------------------------
-    # x factors: position of x in [0 - 1]
+    # Bezier utilities
+    
+    def get_bpoints(self, rect=Rect((0., 0.), (1., 1.))):
+        return rect.expand(((0., 0.), self.P1, self.P2, (1., 1.)))
+    
+    def set_bpoints(self, bp):
+        rect = Rect(bp[0], bp[3])
+        self.P1 = rect.normalize(bp[1])
+        self.P2 = rect.normalize(bp[2])
 
-    def xfactors(self, x):
-
-        xs = np.array(x)
-        if len(xs.shape) == 0:
-            return min(1., max(0., (x-self.x0)/(self.x1-self.x0)))
-
-        return np.minimum(1., np.maximum(0., (xs-self.x0)/(self.x1-self.x0)))
-
-    # ---------------------------------------------------------------------------
-    # y factors: position of f(x) in [0 - 1]
-
-    def yfactors(self, x):
-
-        y = self(x)
-
-        ys = np.array(y)
-        if len(ys.shape) == 0:
-            return min(1., max(0., (y-self.y0)/(self.y1-self.y0)))
-
-        return np.minimum(1., np.maximum(0., (ys-self.y0)/(self.y1-self.y0)))
-
-    # ---------------------------------------------------------------------------
-    # Interpolation
-
-    def __call__(self, x):
-
-        # Work only with arrays
-        xs = np.array(x)
-
-        # A single value
-        single = len(xs.shape) == 0
-        if single:
-            xs = np.array([xs])
-
-        # Normalized the abscissa between 0 and 1
-        ts = (xs - self.x0)/self.delta
-
-        single = len(ts.shape) == 0
-        if single:
-            ts = np.array([ts])
-
-        # Points outside the interval
-        i_inf = np.where(ts <= 0)[0]
-        i_sup = np.where(ts >= 1)[0]
-
-        # Abscissas exist outside
-        idx     = np.arange(len(ts))
-        outside = (len(i_inf) + len(i_sup)) > 0
-        if outside:
-            ys = np.empty_like(ts)
-
-            ys[i_inf] = self.y0
-            ys[i_sup] = self.y1
-
-            idx = np.delete(idx, np.concatenate((i_inf, i_sup)))
-
-        t = ts[idx]
-
-        # Compute on the required abscissa
-        if self.interpolation == 'BEZIER':
-
-            vals = self.bezier(xs[idx])
-
+    # ===========================================================================
+    # From / to blender keyframe
+    
+    def from_keyframes(self, kf0, kf1):
+        """Create an Interpolation from two Blender key frame structure
+        
+        Parameters
+        ----------
+        kf0 : Blender Keyframe
+            The first key frame
+            
+        hf1 : Blender Keyframe
+            The second key frame
+        """
+        
+        self.name = kf0.interpolation
+        
+        rect = Rect(kf0.co, kf1.co)
+        if self.name == 'BEZIER':
+            
+            self.P1 = rect.normalize(kf0.handle_right)
+            self.P2 = rect.normalize(kf1.handle_left)
+            
         else:
-            mode = self.easing_mode
-
-            if mode == 'EASE_IN':
-                vals = self.y0 + self.y_delta*self.canonic(t)
-
-            elif mode == 'EASE_OUT':
-                vals = self.y0 + self.y_delta*(1-self.canonic(1-t))
-
-            else:
-                t *= 2
-
-                if len(t.shape) > 0:
-                    y = np.empty_like(t)
-
-                    inf = np.where(t<=1)[0]
-                    sup = np.delete(np.arange(len(t)), inf)
-
-                    y[inf] = self.canonic(t[inf])/2
-                    y[sup] = 1 - self.canonic(2-t[sup])/2
-
-                    vals = self.y0 + self.y_delta*y
-
-                else:
-                    if t <= 1:
-                        vals = self.y0 + self.y_delta*self.canonic(t)/2
-                    else:
-                        vals = self.y0 + self.y_delta*(1 - self.canonic(2-t))/2
-
-        # The results
-        if outside:
-            ys[idx] = vals
-        else:
-            ys = vals
-
-        # Single result
-        if single:
-            return ys[0]
-        else:
-            return ys
-
+            #self.factor    = 10
+            self.back      = kf0.back
+            #self.bounces   = 3
+            self.set_peramp(rect, kf0.period, kf0.amplitude)
+        
+    # ===========================================================================
+    # Develop
+    
     # ---------------------------------------------------------------------------
-    # Integral
-    # The values y is interpretated as the speed relative to x
-    # The integral method returns the value integrated at a given value x
-
-    def integral(self, x=None):
-
-        if x is None:
-            x = self.x1
-
-        xs = np.array(x)
-        single = len(xs.shape) == 0
-
-        # Array of values
-
-        if not single:
-            r = np.zeros(len(xs), np.float)
-            for i in range(len(xs)):
-                r[i] = self.integral(xs[i])
-            return r
-
-        # Below initial value of the interval
-
-        if x <= self.x0:
-            return 0.
-
-        # Full integration
-
-        xamp = self.x1 - self.x0
-        count = max(20, int(xamp + 1))
-        dx = xamp / count
-        vs = self.x0 + np.arange(count)*dx
-        ys = self(vs)
-
-        # After x1: full integration on the interval
-
-        if x >= self.x1:
-            return np.sum(ys)*dx
-
-        # x is in the middle
-
-        idx = len(np.where(vs <= x)[0])-1
-        y = np.sum(ys[np.arange(idx)])*dx
-
-        y += (x-vs[idx]) * ys[idx]
-
-        return y
-
-
-    # ---------------------------------------------------------------------------
-    # Tangents
-
-    @property
-    def left_tangent(self):
-        if self.interpolation == 'BEZIER':
-            dx = self.bpoints[1, 0] - self.bpoints[0, 0]
-            dy = self.bpoints[1, 1] - self.bpoints[0, 1]
-            if abs(dx) < zero:
-                return 0.
-            else:
-                return dy/dx
-        else:
-            tg = self.y_delta/self.delta
-
-            mode = self.easing_mode
-
-            if mode == 'EASE_IN':
-                return tg*self._tangents[0]
-            elif mode == 'EASE_OUT':
-                return tg*(1-self._tangents[0])
-            if mode == 'EASE_IN_OUT':
-                return tg*self._tangents[0]/2
-
-        return 0.
-
-    @property
-    def right_tangent(self):
-        if self.interpolation == 'BEZIER':
-            dx = self.bpoints[3, 0] - self.bpoints[2, 0]
-            dy = self.bpoints[3, 1] - self.bpoints[2, 1]
-            if abs(dx) < zero:
-                return 0.
-            else:
-                return dy/dx
-        else:
-            tg = self.y_delta/self.delta
-
-            mode = self.easing_mode
-
-            if mode == 'EASE_IN':
-                return tg*self._tangents[1]
-            elif mode == 'EASE_OUT':
-                return tg*(1-self._tangents[1])
-            if mode == 'EASE_IN_OUT':
-                return tg*self._tangents[1]/2
-
-        return 0.
-
-    # ---------------------------------------------------------------------------
-    # _plot for development
-
-    def _plot(self, count=100, margin=0., fcomp=None, integ=False):
+    # Plot
+    
+    def plot(self, ease='AUTO', xax=None, count=100):
         
         import matplotlib.pyplot as plt
-
-        x0 = self.x0
-        x1 = self.x1
-        amp = x1-x0
-
-        x0 -= margin*amp
-        x1 += margin*amp
-        dx = (x1-x0)/(count-1)
-
-        xs = np.arange(x0, x1+dx, dx, dtype=np.float)
-
+        
+        if xax is None:
+            fig, ax = plt.subplots()
+        else:
+            ax = xax
+            
+        x = np.linspace(0., 1., count)
+        ax.plot(x, self(x, ease=ease))
+        ax.set(title=self.name + '- ' + ease)
+        
+        if xax is None:
+            plt.show()
+            
+    @classmethod
+    def plot_all(cls, ease='AUTO', codes=None, count=100):
+        
+        import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
-
-        def splot(mode):
-            mmode = self.easing
-            self.easing = mode
-            ys = self(xs)
-            self.easing = mmode
-
-            ax.plot(xs, ys)
-
-        splot('EASE_OUT')
-
-        if fcomp is not None:
-            ax.plot(xs, [fcomp(x) for x in xs])
-
-        if integ:
-            ax.plot(xs, [self.integral(x) for x in xs])
-
-        ax.set(xlabel='x', ylabel='easing',
-               title=f"{self}")
-        ax.grid()
-
-        fig.savefig("test.png")
+        
+        for name in cls.EASINGS:
+            if codes is None or name in codes:
+                easing = Easing(name)
+                easing.plot(ease=ease, xax=ax, count=count)
+                print(easing(0.25))
+            
         plt.show()
-
-
+        
 # =============================================================================================================================
-# A curve
+# Interpolation
 
-class Interpolations():
-    """A fcurve Blender compatible.
-
-    The Fcurve is a series of successive interpolations. Each interpolation
-    occupies an interval
-
-    Parameters
-    ----------
-    bpoints: array(n, 3, 2) of float
-        The bpoints of the fcurve
-    params:
-        Parameters
-    funcs
-    modes
+class BCurve():
+    """A collection of easing functions mapped on intervals.
     """
-
+    
     def __init__(self, extrapolation='CONSTANT'):
-        self.interpolations = []
-        self.extrapolation  = extrapolation
-        self.bpoints        = None
+        """A collection of easing functions mapped on intervals.        
 
+        Parameters
+        ----------
+        extrapolation : str, optional
+            A valid extrapolation code. The default is 'CONSTANT'.
+
+        Returns
+        -------
+        None.
+        """
+        
+        self.easings = []
+        self.points  = np.zeros((0, 2), np.float)
+        self.extrapolation = extrapolation
+        
     def __repr__(self):
-        s = ""
-        for interp in self.interpolations:
-            s += f"{interp.x0:.2f} '{interp.interpolation}' "
-        s = "[" + s + f"{self.x1:.2f}]"
-
-        return f"Interpolations({len(self)})\n{s}"
-
+        s = f"<BCurve {len(self.easings)} easing(s)"
+        if len(self.points) == 0:
+            s += " no points"
+        elif len(self.points) == 1:
+            s += f" single point: ({self.points[0][0]:.1f} {self.points[0][1]:.1f})]"
+        else:
+            s += f" into points:\n{self.points}"
+        return s + ">"
+        
     # ---------------------------------------------------------------------------
-    # Initialize from a Blender fcurve
+    # A simple easing
+    
+    @classmethod
+    def Single(cls, P0, P1, name='LINEAR', ease='AUTO', extrapolation='CONSTANT'):
+        """Initialize a new BCurve with a unique easing function.        
 
+        Parameters
+        ----------
+        P0 : point
+            The low left corner of the function rectangle.
+        P1 : point
+            The high right corner of the function rectangle.
+        name : str, optional
+            The code of the easing function to use. The default is 'LINEAR'.
+        ease : str, optional
+            The ease ease to use. The default is 'AUTO'.
+        extrapolation : str, optional
+            The extrapolation outside the input interval. The default is 'CONSTANT'.
+
+        Returns
+        -------
+        BCurve
+            A BCurve instance.
+        """
+        
+        bc = BCurve(extrapolation=extrapolation)
+        bc.points = np.array((P0, P1))
+        bc.easings = [Easing(name, ease)]
+        return bc
+        
+    # ---------------------------------------------------------------------------
+    # Build from a Blender fcurve
+        
     @classmethod
     def FromFCurve(cls, fcurve):
+        """Generate a BCurve from a Blender fcuruve.        
 
-        wfc = cls()
-        wfc.extrapolation = fcurve.extrapolation
+        Parameters
+        ----------
+        fcurve : Blender fcurbe
+            The fcurve to copy.
 
-        for i in range(len(fcurve.keyframe_points)-1):
+        Returns
+        -------
+        BCurve
+            A Bcurve instance.
+        """
+
+        bcurve = cls()
+        bcurve.extrapolation = fcurve.extrapolation
+        
+        # ----- Load the points
+        
+        count = len(fcurve.keyframe_points)
+        
+        bcurve.points = np.zeros(count*2, np.float)
+        fcurve.keyframe_points.foreach_get('co', bcurve.points)
+        bcurve.points = bcurve.points.reshape(count, 2)
+        
+        # ---- Create the easings
+        
+        for i in range(count-1):
             kf0 = fcurve.keyframe_points[i]
             kf1 = fcurve.keyframe_points[i+1]
-            wfc.append(Interpolation.FromKFPoints(kf0, kf1))
+            bcurve.easings.append(Easing.FromKFPoints(kf0, kf1))
 
-        wfc.capture_bpoints()
-
-        return wfc
-
+        return bcurve
+    
     # ---------------------------------------------------------------------------
     # To fcurve
     # Not a true fcurve but an array of keyframe like
 
     @property
     def keyframe_points(self):
+        """Convert the BCurve into an array of Blender keyframes.        
+
+        Returns
+        -------
+        array of keyframes
+            Each item contains attributes required to initialze a valid Blender keyframe.
+        """
 
         class Kf():
             pass
 
         kfs = []
-        for i in range(len(self)+1):
-            itp = self[min(i, len(self)-1)]
+        for i in range(len(self)):
+            easing = self[i]
+            rect   = self.easing_rect(i)
+            
             kf = Kf()
+            
+            if i > 0:
+                kf.handle_left = self.easing_rect(i-1).expand(self[i-1].P2)
+                
+            kf.co            = rect.P0
+            kf.handle_right  = rect.expand(self.P2)
 
-            index = self.interp_index(i)
-            kf.handle_left   = np.array(self.bpoints[index-1])
-            kf.co            = np.array(self.bpoints[index])
-            kf.handle_right  = np.array(self.bpoints[index+1])
-
-            kf.interpolation = itp.interpolation
-            kf.amplitude     = itp.amplitude
-            kf.back          = itp.back
-            kf.easing        = itp.easing
-            kf.period        = itp.period
+            kf.interpolation = easing.name
+            kf.easing        = easing.ease
+            
+            p, a = easing.get_peramp(rect, easing.perdio, easing.amplitude)
+            kf.amplitude     = a
+            kf.period        = p
+            
+            kf.back          = easing.back
 
             kfs.append(kf)
 
         return kfs
-
-
+    
     # ---------------------------------------------------------------------------
-    # As an array of interpolations
-
+    # Intervals access
+    
     def __len__(self):
-        return len(self.interpolations)
-
+        return len(self.easings)
+    
     def __getitem__(self, index):
-        return self.interpolations[index]
+        return self.easings[index]
+    
+    @property
+    def rect(self):
+        """The full rectangle of the BCurve.        
 
-    def __setitem__(self, index, value):
-        self.interpolations[index] = value
+        Returns
+        -------
+        Rect
+            Starting ending points of the curve.
+        """
+        
+        if len(self.points) < 2:
+            return Rect((0, 0), (1, 1))
+        else:
+            return Rect(self.points[0], self.points[-1])
+        
+    def easing_rect(self, index):
+        """The rect of a given easing function.        
 
+        Parameters
+        ----------
+        index : int
+            Index of the curve.
+
+        Returns
+        -------
+        Rect
+            The rect used to compute the easing function.
+        """
+        
+        if len(self.points) < 2:
+            return Rect((0, 0), (1, 1))
+        
+        if index is None:
+            return Rect(self.points[0], self.points[-1])
+        else:
+            return Rect(self.points[index], self.points[index+1])
+        
     # ---------------------------------------------------------------------------
-    # Capture the control of the bezier points from the interpolations
+    # Starting point
+    
+    def set_start_point(self, point):
+        """Initialize the BCurve with a starting point.
 
-    def capture_bpoints(self):
-        if self.bpoints is not None:
-            return
+        Note that this function reset the full BCurve to an empty curve.        
 
-        self.bpoints = np.zeros( ((len(self)+1)*3, 2), np.float)
+        Parameters
+        ----------
+        point : point
+            The starting point.
+
+        Returns
+        -------
+        None.
+        """
+        
+        self.easings = []
+        #self.points = np.expand_dims(np.array(point, np.float), axis=0)
+        self.points = np.array(point).reshape(1, 2)
+        
+    # ---------------------------------------------------------------------------
+    # Add a curve
+    # End point is used as start point if it is located before the first existing one
+    
+    def add(self, end_point, easing=Easing('LINEAR', 'AUTO')):
+        """Add and easing to the curve.
+
+        Typical use is to append a new easing at the end of existing ones,
+        but if the end point is not after the current end point, the easing
+        is insert within the existing ones.
+
+        Parameters
+        ----------
+        end_point : point
+            End of the easing.
+        easing : Easing, optional
+            The easing to use. The default is Easing('LINEAR', 'AUTO').
+
+        Returns
+        -------
+        int
+            The index of the created easing with the BCurve.
+        """
+        
+        zero = 0.0001
+        point = np.array(end_point, np.float)
+        xp = point[0]
+        
+        # ----- First point : no easing
+        
+        if len(self.points) == 0:
+            self.points = np.array((point)).reshape((1, 2))
+            print(self.points)
+            return 0
+        
+        # ---- First easing
+        
+        if len(self.points) == 1:
+            self.easings = [easing]
+            if xp < self.points[0, 0]:
+                self.points = np.array((point, self.points[0]))
+            else:
+                self.points = np.array((self.points[0], point))
+            return 0
+        
+        # ---- Easings exist: let's see if the abscissa is too close 
+        # of an existing abscissa
+        
+        for i, x in enumerate(self.points[:-1, 0]):
+            if abs(xp-x) < zero:
+                return i
+            
+        # Equal to the last x
+        if abs(self.points[-1, 0] - xp ) < zero:
+            return len(self)-1
+        
+        # ----- So, there is something to insert
+        
         for i in range(len(self)):
-            self.interpolations[i].capture_bpoints(self, 1 + i*3)
-
+            if xp < self.points[i, 0]:
+                self.easings.append(i, easing)
+                self.points = np.insert(self.points, point)
+                return i
+        
+        # ----- Append
+        
+        self.easings.append(easing)
+        self.points = np.append(self.points, [point], axis=0)
+        return len(self)-1
+    
     # ---------------------------------------------------------------------------
-    # Adjust the size of the bpoints array
+    # Compute
+    
+    def __call__(self, t, xbounds=None, ybounds=None):
+        """Compute the blender curve on a array of values.
+        
+        xBounds and yBounds can provide bounds per value in t.
+        This allow to use a curve on various intervals
+        
+        Parameters
+        ----------
+        t : array of floats
+            The abscissa of the curve
+            
+        xbounds : array of couple of floats, optional
+            One interval per value to use as the replacement of the default interval.
+            
+        ybounds : array of couple of floats, optional
+            One interval per value to use as the replacement of the default y interval.
+            
+        Returns
+        -------
+        array of float
+            The curve values
+        """
+        
+        if not hasattr(t, '__len__'):
+            return self(np.array([t]))[0]
 
-    def adjust_bpoints(self, length):
-        target = ((length-1)//10 + 1) * 10
-        size = (1+target)*3
-        if self.bpoints is not None:
-            if len(self.bpoints) >= size:
-                return
+        # Make sure is an array        
+        t = np.array(t, np.float)
+        y = np.zeros_like(t)
+        
+        # No curve
+        if len(self) == 0:
+            return y
 
-        if self.bpoints is None:
-            self.bpoints = np.zeros((size, 2), np.float)
+        # Default bounds
+        bounds = self.rect
+        
+        # ----- if xbounds exists: convert to default bounds
+        if xbounds is not None:
+            t = bounds.x0 + (t - xbounds[:, 0]) / (xbounds[:, 1] - xbounds[:, 0]) * bounds.x_amp
+
+        # ----- Periodic
+        if self.extrapolation == 'PERIODIC':
+            t = bounds.x0 + ((t - bounds.x0) % bounds.x_amp)
+        
+        # ----- Loop on the easings
+        
+        for i in range(len(self.easings)):
+            rect = self.easing_rect(i)
+            ts = rect.norm_x(t, clip=False)
+            idx = np.logical_and(ts >= 0, ts <= 1)
+            if np.any(idx):
+                y[idx] = rect.exp_y(self[i](ts[idx]))
+                
+        # ----- Extrapolation
+        
+        if self.extrapolation == 'CONSTANT':
+            y[t<bounds.x0] = bounds.y0
+            y[t>bounds.x1] = bounds.y1
+            
         else:
-            self.bpoints = np.resize(self.bpoints, (size, 2))
-
-    def interp_index(self, index):
-        return 1 + index*3
-
+            tg = bounds.y_amp/bounds.x_amp
+            
+            idx = t < bounds.x0
+            y[idx] = bounds.y0 + (t[idx] - bounds.x0)*self[0].left*tg
+            
+            idx = t > bounds.x1
+            y[idx] = bounds.y1 + (t[idx] - bounds.x1)*self[-1].right*tg
+                
+        # ----- if ybounds exists: convert to target bounds
+        
+        if ybounds is None:
+            return y
+        else:
+            return ybounds[:, 0] + (y - bounds.y0) / bounds.y_amp * (ybounds[:, 1] - ybounds[:, 0])
+        
     # ---------------------------------------------------------------------------
-    # Append a new interpolation
-
-    def append(self, interp):
-
-        self.adjust_bpoints(len(self)+1)
-
-        if len(self) == 0:
-            self.interpolations = [interp]
-            interp.capture_bpoints(self, 1)
-            return interp
-
-        if abs(interp.x0 - self.x1) > Interpolation.RESOL:
-            raise RuntimeError(
-                error_title % "append" +
-                "Interpolations append error: the x0 of a new interpolation must equal the x1 to the last one." +
-                f"Interpolations: {self}" +
-                f"Interpolation to insert: {interp}" +
-                f"Interpolations.x1 = {self.x1:.2f}, Interpolation.x0 = {interp.x0:.2f}"
-                )
-
-        interp.x0 = self.x1
-        interp.y0 = self.y1
-        self.interpolations.append(interp)
-
-        interp.capture_bpoints(self, self.interp_index(len(self)-1))
-
-        return interp
-
-
-    @property
-    def x0(self):
-        """Starting x value of the function."""
-        if len(self) == 0:
-            return 0.
-        return self.bpoints[1, 0]
-        #return self[0].x0
-
-    @property
-    def x1(self):
-        """Ending x value of the function."""
-        if len(self) == 0:
-            return 1.
-        return self.bpoints[self.interp_index(len(self)), 0]
-        #return self[-1].x1
-
-    @property
-    def y0(self):
-        """Starting y value of the function."""
-        if len(self) == 0:
-            return 0.
-        return self.bpoints[1, 1]
-        #return self[0].y0
-
-    @property
-    def y1(self):
-        """Ending y value of the function."""
-        if len(self) == 0:
-            return 1.
-        return self.bpoints[self.interp_index(len(self)), 1]
-        #return self[-1].y1
-
-    @property
-    def deltas(self):
-        return np.array([itp.delta for itp in self.interpolations])
-
-    @property
-    def x0s(self):
-        return np.array([itp.x0 for itp in self.interpolations])
-
-    @property
-    def x1s(self):
-        return np.array([itp.x1 for itp in self.interpolations])
-
-    # ====================================================================================================
-    # Call
-
-    def __call__(self, x):
-
-        # ---------------------------------------------------------------------------
-        # Empty curve
-
-        if len(self) == 0:
-            return np.array(x)
-
-        # ---------------------------------------------------------------------------
-        # A single value
-
-        if np.array(x).size == 1:
-
-            if self.extrapolation == 'CYCLIC':
-                x = self.x0 + (x-self.x0)%(self.x1 - self.x0)
-
-            if self.extrapolation == 'CONSTANT':
-                if x <= self.x0:
-                    return self.y0
-                if x >= self.x1:
-                    return self.y1
-            else:
-                if x <= self.x0:
-                    return self.y0 + (x-self.x0)*self[0].left_tangent
-                if x >= self.x1:
-                    return self.y1 + (x-self.x1)*self[-1].right_tangent
-
-            for interp in self.interpolations:
-                if interp.x0 + interp.delta >= x:
-                    return interp(x)
-
-        # ---------------------------------------------------------------------------
-        # Not that many values
-
-        if len(x) < 100:
-            return [self(X) for X in x]
-
-        # ---------------------------------------------------------------------------
-        # Vectorisation
-
-        # Cyclic extrapolation
-        if self.extrapolation == 'CYCLIC':
-            xs = self.x0 + (np.array(x) - self.x0)%(self.x1 - self.x0)
-        else:
-            xs = np.array(x)
-
-        # The resulting array
-        ys = np.full(len(xs), 9., np.float)
-
-        # ----- Points which are below the definition interval
-
-        i_inf = np.where(xs <= self.x0)[0]
-        if self.extrapolation == 'CONSTANT':
-            ys[i_inf] = self.y0
-        else:
-            ys[i_inf] = self.y0 + (xs[i_inf]-self.x0)*self.interpolations[0].left_tangent
-
-        # ----- Points which are above the definition interval
-
-        i_sup = np.where(xs >= self.x1)[0]
-        if self.extrapolation == 'CONSTANT':
-            ys[i_sup] = self.y1
-        else:
-            ys[i_sup] = self.y1 + (xs[i_sup]-self.x1)*self.interpolations[-1].right_tangent
-
-        # ----- Remaining points are within the definition interval
-
-        idx = np.delete(np.arange(len(xs)), np.concatenate((i_inf, i_sup)))
-
-        # Duplicaton of the xs for each of the bezier points
-        axs = np.full((len(self), len(idx)), xs[idx]).transpose()
-
-        # Deltas
-        deltas = np.full((len(idx), len(self)), self.deltas)
-
-        # Differences
-        diffs = (axs - self.x0s)
-        ix, tx = np.where(np.logical_and(np.greater_equal(diffs, 0), np.less(diffs, deltas)))
-
-        # differences in a linear array (not useful here)
-        # ts = diffs[ix, tx]
-
-        # Array of the remaining x
-        rem_x = xs[idx]
-
-        # Let's loop on the easing to compute on the x which are in the interval
-        # Note the this algorithm supposes that the number of easings is low
-        # Compared to the number of x to compute
-
-        interpolations = self.interpolations
-        yints = np.full(len(idx), 8, np.float)
-        for i in range(len(interpolations)):
-
-            i_filter = np.where(tx==i)[0]
-            vals = interpolations[i](rem_x[i_filter])
-
-            yints[i_filter] = vals
-
-        ys[idx] = yints
-
-        return ys
-
-    # ====================================================================================================
     # Integral
+    # When the y values are a speed relative to x, the integral allows
+    # to get the location at time x
 
-    def integral(self, x):
+    def integral(self, t0, t1, count=100):
+        """Compute the integral of the BCurve between to values.
 
-        xs = np.array(x)
-        single = len(xs.shape) == 0
+        Note that if t1 is an array of float, t0 can be a single float value.
+        If t0 is an array, it must be of the same shape as t1.        
 
-        # Array of values
+        Parameters
+        ----------
+        t0 : float or array of floats
+            Start value.
+        t1 : float or array of floats
+            End value.
+        count : int, optional
+            Number of steps to use to compute the integral. The default is 100.
 
-        if not single:
-            r = np.zeros(len(xs), np.float)
-            for i in range(len(xs)):
-                r[i] = self.integral(xs[i])
-            return r
-
-        # Below initial value of the interval
-
-        if x <= self.x0:
-            return 0.
-
-        # With an interpolation
-
-        r = 0.
-
-        for itp in self:
-            if x >= itp.x1:
-                r += itp.integral()
-            else:
-                r += itp.integral(x)
-                return r
-
-        # Extrapolation
-        # CAUTION: whatever the extrapolation we use constant
-
-        extr = (x - self.x1) * self.y1
-
-        return r + extr
-
-
-    # ====================================================================================================
-    # Scale along X and Y
-
-    def scale(self, scale):
-        sc = np.array(scale)
-        if len(sc.shape) == 0:
-            scx = scale
-            scy = 1.
+        Returns
+        -------
+        float or array of floats
+            The integral or array of integrals.
+        """
+        
+        if not hasattr(t1, '__len__'):
+            return self.integral(t0, np.array([t1]))[0]
+        
+        lt = len(t1)
+        t = np.linspace(t0, t1, count).reshape(count*lt) # shape (count, lt)
+        dt = (t1-t0)/(count-1)
+        
+        # Compute the values andreshape the result
+        
+        y = self(t).reshape(count, lt)        
+        
+        # Sums in colums
+        
+        return np.sum(y, axis=0) * dt
+        
+                
+    # ---------------------------------------------------------------------------
+    # Develop
+    
+    @classmethod
+    def Random(cls, count=3):
+        
+        bcurve = BCurve()
+        bcurve.points = np.zeros((count+1, 2), np.float)
+        if True: # Random else (0 -> 1)
+            bcurve.points[:, 0] = np.linspace(10., 110, count+1)
+            bcurve.points[:, 1] = np.random.uniform(10, 20, count+1)
         else:
-            scx = sc[0]
-            scy = sc[1]
+            bcurve.points[:, 0] = np.linspace(0., 1, count+1)
+            bcurve.points[:, 1] = np.linspace(0., 1, count+1)
+        
+        for i in range(count):
+            name = list(Easing.EASINGS)[np.random.randint(0, len(Easing.EASINGS))]
+            bcurve.easings.append(Easing(name, ease='EASE_IN' if np.random.randint(2) == 1 else 'EASE_OUT'))
 
+        return bcurve
+    
+    @classmethod
+    def Build(cls):
+        bc = BCurve()
+        
+        bc.set_start_point((10, 5))
 
-        a = self.bpoints[2:] - self.bpoints[1]
-        a[:, 0] *= scx
-        a[:, 1] *= scy
-
-        self.bpoints[2:] = self.bpoints[1] + a
-
-    # ====================================================================================================
-    # Translate along X and Y
-
-    def translate(self, vec):
-        v = np.array(vec)
-        if len(v.shape) == 0:
-            vx = vec
-            vy = 0.
-        else:
-            vx = v[0]
-            vy = v[1]
-
-        self.bpoints += (vx, vy)
-
-    # ====================================================================================================
-    # Call
-
-    def _plot(self, count=100, margin=0., fcomp=None, integ=False):
+        bc.add((15, 7), Easing('CIRCULAR'))
+        bc.add((20, -3), Easing('ELASTIC'))
+        
+        return bc
+    
+    def plot(self, margin=0., integral=False, count=1000):
         
         import matplotlib.pyplot as plt
-
-        x0 = self.x0
-        x1 = self.x1
-        amp = x1-x0
-
-        x0 -= margin*amp
-        x1 += margin*amp
-        dx = (x1-x0)/(count-1)
-
-        xs = np.arange(x0, x1+dx, dx, dtype=np.float)
-
+        
         fig, ax = plt.subplots()
-        ys = self(xs)
-        ax.plot(xs, ys)
-
-        if fcomp is not None:
-            ax.plot(xs, [fcomp(x) for x in xs])
-
-        if integ:
-            ax.plot(xs, [self.integral(x) for x in xs])
-
-        ax.set(xlabel='x', ylabel='easing',
-               title=f"{self}"[:60])
-        ax.grid()
-
-        fig.savefig("test.png")
+        
+        if len(self) > 0:
+            
+            dx = margin*self.rect.x_amp
+            x = np.linspace(self.rect.x0 - dx, self.rect.x1 + dx, count)
+            ax.plot(x, self(x))
+            ax.plot(self.points[:,0], self.points[:, 1], 's')
+            ax.set(title=self[0].name + ' ' + self[0].ease)
+            
+            if integral:
+                ax.plot(x, self.integral(0, x))
+        
         plt.show()
-
-
-def test_c(count=10):
-
-    interps = list(Interpolation.INTERPS.keys())
-    easings = Interpolation.EASINGS
-
-    wfc = Interpolations()
-    x0 = 0.
-    y0 = 0.
-    for i in range(count):
-        x1 = x0 + 1
-        y1 = y0 + (np.random.random_sample()-0.5)*2
-        itp = Interpolation(
-            interps[np.random.randint(len(interps))],
-            easings[np.random.randint(len(easings))],
-            input=input, output=output
-            )
-        wfc.append(itp)
-        x0 = x1
-        y0 = y1
-
-    print(wfc)
-    wfc._plot(count=1000, integ=True)
-    #wfc.scale((0.5, 2))
-    #wfc._plot(count=1000, integ=True)
-
-
-#test_c()
-
-def test_int():
-    itp = Interpolation.Bezier(240, 340, 0, 1.2)
-    itp._plot(integ=False)
-
-#test_int()
+        
+    def plot_bounds(self, repls=3, count=100):
+        
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        
+        xbounds = np.zeros((repls, 2), np.float)
+        ybounds = np.zeros((repls, 2), np.float)
+        for i in range(repls):
+            xbounds[i] = (i*4, i*4+3)
+            ybounds[i] = (i*3, i*5+5)
+            
+        xbounds += 10
+        ybounds -= 10
+        
+        xr = np.zeros((repls, count), np.float)
+        yr = np.zeros((repls, count), np.float)
+        
+        for i in range(repls):
+            xr[i] = np.linspace(xbounds[i, 0], xbounds[i, 1], count)
+            
+        for i in range(count):
+            yr[:, i] = self(xr[:, i], xbounds= xbounds, ybounds= ybounds)
+            
+        for i in range(repls):
+            ax.plot(xr[i], yr[i])
+        
+        plt.show()
+        
+        

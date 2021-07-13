@@ -8,12 +8,20 @@ Created on Thu Jan 28 14:12:35 2021
 
 import numpy as np
 
-#"""
-import bpy
 
-from .blender import get_frame
-from .wrappers import wrap
-
+if True:
+    import bpy
+    from .blender import get_frame
+    from .wrappers import wrap
+    from .interpolation import BCurve, Easing
+    
+    get_start_end_frame = lambda start: bpy.context.scene.frame_start if start else bpy.context.scene.frame_end
+    
+else:
+    get_frame = lambda x: x
+    get_start_end_frame = lambda start: 1 if start else 250
+    
+    from interpolation import BCurve, Easing
 
 # =============================================================================================================================
 # Used to compare the current frame to a given interval
@@ -25,30 +33,88 @@ from .wrappers import wrap
 # Random operations use a numpy random generator which can be set externally
 
 class Interval():
+    """Frame interval or a series of intervals.
+    
+    An interval is closed on left side and open on right side. This allows
+    to have a frame belonging to a unique interval within a series of
+    contiguous intervals.
+    
+    The class offers global methods to create random series of intervals: various durations at random locations
+    """
 
     def __init__(self, start=None, end=None):
+        """Interval initialization with two values
+        
+        If bounds are None, use the start or end of the animation
+        
+        Parameters
+        ----------
+        start : float or marker label, default None
+            Interval start. Left open if None
+        end : float or marker label, default None
+            Interval end. Right open if None
+        """
+
         self.frames = np.array([[Interval.get_frame(start, True), Interval.get_frame(end, False)]])
         self.rng_   = None
 
     @classmethod
     def Intervals(cls, frames):
-        itv = Interval()
+        """Build an interval from and array of couples.
+
+        Parameters
+        ----------
+        frames : array of couple of float
+            The intervals milestones.
+
+        Returns
+        -------
+        Interval
+            The created Interval instance.
+        """
+        
+        itv = cls()
         itv.frames = Interval.to_frames(frames)
         return itv
 
     @staticmethod
     def to_frames(values):
+        """Transform any array of float in an array of couples.
+
+        Parameters
+        ----------
+        values : array of float of any shape
+            Interpreted as an array of couples of floats.
+
+        Returns
+        -------
+        array of couple of floats
+            A valid series of intervals.
+        """
+        
         frames = np.array(values, np.float)
         count  = np.size(frames)
         return np.reshape(frames, (count//2, 2))
 
     @staticmethod
     def get_frame(frame, start=True):
+        """Transform a frame specification in a numeric value.        
+
+        Parameters
+        ----------
+        frame : int, float or marker label
+            A frame in the animation.
+        start : bool, optional
+            If frame is None, returns the start or end of the animation according this argument. The default is True.
+
+        Returns
+        -------
+        float
+            The frame number.
+        """
+        
         if frame is None:
-            if start:
-                return bpy.context.scene.frame_start
-            else:
-                return bpy.context.scene.frame_end
+            return get_start_end_frame(start)
         else:
             return get_frame(frame)
 
@@ -65,6 +131,7 @@ class Interval():
     @rng.setter
     def rng(self, value):
         self.rng_ = value
+        
     # ---------------------------------------------------------------------------
     # Display
 
@@ -94,6 +161,10 @@ class Interval():
 
     # ---------------------------------------------------------------------------
     # As an array of intervals
+    
+    @property
+    def single(self):
+        return len(self.frames) == 1
 
     def __len__(self):
         return len(self.frames)
@@ -144,7 +215,7 @@ class Interval():
         return np.reint(self.center)
 
     # ---------------------------------------------------------------------------
-    # As an array of Intervals, int version
+    # As an array of Intervals
 
     @property
     def starts(self):
@@ -167,7 +238,7 @@ class Interval():
         return np.clip(facts, 0., 1.)
 
     # ---------------------------------------------------------------------------
-    # As an array of Intervals
+    # As an array of Intervals, int version
 
     @property
     def istarts(self):
@@ -198,21 +269,101 @@ class Interval():
         return self
 
     # ---------------------------------------------------------------------------
-    # Sort indices depending on the frame being before, during or after
+    # Return indices depending on the frame being before, during or after
 
     def before(self, frame):
+        """Get the intervals before the current frame.
+        
+        Parameters
+        ----------
+        frame : float
+            The current frame.
+            
+        Returns
+        -------
+        Array of int
+            The indices of the intervals before the frame.
+        """
+        
         return np.where(self.frames[:, 0] >  frame)[0]
 
     def after(self, frame):
+        """Get the intervals after the current frame.
+        
+        Parameters
+        ----------
+        frame : float
+            The current frame.
+            
+        Returns
+        -------
+        Array of int
+            The indices of the intervals after the frame.
+        """
+        
         return np.where(self.frames[:, 1] <= frame)[0]
 
     def during(self, frame):
-        return np.where((self.frames[:, 0] > frame) and (frames[:, 1] <= frame))[0]
+        """Get the intervals including the current frame.
+        
+        Parameters
+        ----------
+        frame : float
+            The current frame.
+            
+        Returns
+        -------
+        Array of int
+            The indices of the intervals including the frame.
+        """
+        
+        return np.where((self.frames[:, 0] > frame) and (self.frames[:, 1] <= frame))[0]
+    
+    def when(self, frame):
+        """Position of intervals relatively to the current frame.
+        
+        For each interval:
+            -1 : the frame is before the interval
+             0 : the frame is within the interval
+             1 : the frame is after the interval
+        
+        Parameters
+        ----------
+        frame : float
+            The current frame.
+            
+        Returns
+        -------
+        Array of int
+            -1, 0 or 1 for each interval.
+        """
+        
+        w = np.zeros(len(self.frames), int)
+        w[self.frames[:, 0] >  frame] = -1
+        w[self.frames[:, 1] <= frame] =  1
+        
+        return w
 
     # ---------------------------------------------------------------------------
     # Split the interval in intervals of equal length
 
     def split(self, count, duration=None):
+        """Split the interval in intervals of equals durations.
+        
+        Parameters
+        ----------
+        count : int
+            Number of intervals to create
+            
+        duration : float, optional.
+            If None, the current durations is divided. If not None, the final duration
+            is duration*count. Default is None.
+        
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
 
         lg = len(self.frames)
 
@@ -234,6 +385,21 @@ class Interval():
     # Change the durations
 
     def set_durations(self, durations, keep='CENTER'):
+        """Change the durations of the intervals.
+
+        Parameters
+        ----------
+        durations : array of floats
+            The new durtations.
+        keep : str in ['START', 'CENTER', 'END'], optional
+            How the duration is changed, either by keep one of the bounds, or
+            by keeping the center. The default is 'CENTER'.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
 
         if keep == 'START':
             self.frames[:, 1] = self.frames[:, 0] + durations
@@ -250,6 +416,21 @@ class Interval():
     # Change the starts
 
     def set_starts(self, starts, keep_durations=True):
+        """Change the starts of the intervals. 
+
+        Parameters
+        ----------
+        starts : array of float
+            The new starting frames.
+        keep_durations : bool, optional
+            Move the interval ends to keep the durations. The default is True.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         if keep_durations:
             durations = self.durations
 
@@ -263,7 +444,22 @@ class Interval():
     # ---------------------------------------------------------------------------
     # Change the ends
 
-    def set_ends(self, starts, keep_durations=True):
+    def set_ends(self, ends, keep_durations=True):
+        """Change the ends of the intervals. 
+
+        Parameters
+        ----------
+        ends : array of float
+            The new ending frames.
+        keep_durations : bool, optional
+            Move the interval starts to keep the durations. The default is True.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         if keep_durations:
             durations = self.durations
 
@@ -278,6 +474,19 @@ class Interval():
     # Change the centers
 
     def set_centers(self, centers):
+        """Change the centers of the intervals. 
+
+        Parameters
+        ----------
+        centers : array of float
+            The new center frames.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         ofs = centers - (self.starts + self.durations/2)
         self.frames[:, 0] += ofs
         self.frames[:, 1] += ofs
@@ -289,6 +498,25 @@ class Interval():
     # Clipping mode can be MOVE or CUT
 
     def clip(self, start=None, end=None, mode='MOVE'):
+        """Clip the intervals with two bounds
+
+        Parameters
+        ----------
+        start : float, optional
+            Minimum values for starts. The default is None.
+        end : float, optional
+            Maximum values for ends. The default is None.
+        mode : str, optional
+            The default is 'MOVE'.
+            'MOVE': the intervals are moved to be within the bounds.
+            'CUT' : The intervals are cut at the bounds
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         start = self.get_frame(start, True)
         end   = self.get_frame(end, False)
 
@@ -313,6 +541,14 @@ class Interval():
     # Shuffle the intervals
 
     def shuffle(self):
+        """Shuffle the intervals
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         self.rng.shuffle(self.frames)
 
         return self
@@ -321,6 +557,24 @@ class Interval():
     # Generate normal durations
 
     def normal_durations(self, duration, scale, keep='CENTER'):
+        """Change the intervals durations following a normal distribution.
+
+        Parameters
+        ----------
+        duration : float
+            Average length of the intervals durations.
+        scale : float
+            Normal distribution scale.
+        keep : str in ['START', 'CENTER', 'END'], optional
+            How the duration is changed, either by keep one of the bounds, or
+            by keeping the center. The default is 'CENTER'.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         return self.set_durations(
             self.rng.normal(duration, scale, len(self.frames)),
             keep=keep)
@@ -329,6 +583,24 @@ class Interval():
     # Generate uniform durations
 
     def uniform_durations(self, min, max, keep='CENTER'):
+        """Change the intervals durations following a uniform distribution.
+
+        Parameters
+        ----------
+        min : float
+            Min distribution bounds.
+        max : float
+            Max distribution bound.
+        keep : str in ['START', 'CENTER', 'END'], optional
+            How the duration is changed, either by keep one of the bounds, or
+            by keeping the center. The default is 'CENTER'.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         return self.set_durations(
             self.rng.uniform(min, max, len(self.frames)),
             keep=keep)
@@ -337,6 +609,23 @@ class Interval():
     # Generate normal starts
 
     def normal_starts(self, start, scale, keep_durations=True):
+        """Change the starts following a normal distribution. 
+
+        Parameters
+        ----------
+        start : float
+            Center value of the normal distribution.
+        scale : float
+            Scale value of the normal distribuiton.
+        keep_durations : bool, optional
+            Move the interval ends to keep the durations. The default is True.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         return self.set_starts(
             self.rng.normal(start, scale, len(self.frames)),
             keep_durations=keep_durations)
@@ -345,6 +634,23 @@ class Interval():
     # Generate uniform starts
 
     def uniform_starts(self, min, max, keep_durations=True):
+        """Change the starts following a uniform distribution. 
+
+        Parameters
+        ----------
+        min : float
+            Min value of the uniform distribution.
+        max : float
+            Max value of the uniform distribuiton.
+        keep_durations : bool, optional
+            Move the interval ends to keep the durations. The default is True.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         return self.set_starts(
             self.rng.uniform(min, max, len(self.frames)),
             keep_durations=keep_durations)
@@ -353,6 +659,21 @@ class Interval():
     # Generate normal centers
 
     def normal_centers(self, center, scale):
+        """Change the centers following a normal distribution. 
+
+        Parameters
+        ----------
+        center : float
+            Center value of the normal distribution.
+        scale : float
+            Scale value of the normal distribuiton.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         return self.set_centers(
             self.rng.normal(center, scale, len(self.frames)))
 
@@ -360,76 +681,65 @@ class Interval():
     # Generate normal centers
 
     def uniform_centers(self, min, max):
+        """Change the centers following a uniform distribution. 
+
+        Parameters
+        ----------
+        min : float
+            Min value of the normal distribution.
+        max : float
+            Max value of the normal distribuiton.
+
+        Returns
+        -------
+        self
+            Return self for chaining purpose.
+        """
+        
         return self.set_centers(
             self.rng.uniform(min, max, len(self.frames)))
+    
+    # ---------------------------------------------------------------------------
+    # Debug
+    
+    def plot(self, frame=None):
+        """Plot the intervals for debug purposes
+        """
+        import matplotlib.pyplot as plt
+        
+        fig, ax = plt.subplots()
+        
+        cols = ['b' for itv in self.frames]
+        if frame is not None:
+            ax.vlines(frame, 0, len(self.frames)-1, 'black', ':')
+            w = self.when(frame)
+            for i in range(len(w)):
+                if w[i] < 0:
+                    cols[i] = 'r'
+                if w[i] > 0:
+                    cols[i] = 'g'
+        
+        for i in range(len(self.frames)):
+            ax.plot(self.frames[i], [i, i], cols[i])
+            
+        plt.show()
+        
+    
+    @classmethod
+    def demo(cls):
+        """A simple demo of the class.
+        """
+        
+        interval = cls()
+        interval.split(10)
+        #interval.shuffle()
+        interval.normal_centers(125, 50)
+        interval.uniform_durations(120, 2)
+        interval.plot(125)
+        
+        print(interval.factors(125))
+        
 
-
-# =============================================================================================================================
-# Execution of an action during an interval on a list of objects
-# action template is either f(object, frame) or f(frame) depending upon objects is None
-
-class Animator():
-
-    def __init__(self, action, objects=None, interval=Interval(), before=None, after=None):
-        self.interval  = interval
-        self.durations = interval.durations
-
-        self.before   = before
-        self.action   = action
-        self.after    = after
-
-        if objects is None:
-            self.objects = None
-        else:
-            self.objects = np.array(objects)
-
-    def animate(self, frame):
-
-        if self.objects is None:
-            w = self.interval.when(frame)
-
-            if (w == -1) and (self.before is not None):
-                self.before(frame)
-
-            if (w == 0) and (self.action is not None):
-                self.action(frame)
-
-            if (w == 1) and (self.after is not None):
-                self.after(frame)
-
-        else:
-            bef, dur, aft = self.interval.frame_locations(frame)
-            factors = self.interval.factors(frame)
-
-            if self.before is not None:
-                for i in bef:
-                    self.before(self.objects[i], frame=frame, start=self.interval.frames[i:, 0], end=self.interval.frames[i, 1], factor=factors[i])
-
-            if self.action is not None:
-                for i in dur:
-                    self.action(self.objects[i], frame=frame, start=self.interval.frames[i:, 0], end=self.interval.frames[i, 1], factor=factors[i])
-
-            if self.after is not None:
-                for i in aft:
-                    self.after(self.objects[i], frame=frame, start=self.interval.frames[i:, 0], end=self.interval.frames[i, 1], factor=factors[i])
-
-
-    @staticmethod
-    def hide(obj, frame):
-        obj.hide_render   = True
-        obj.hide_viewport = bpy.context.scene.bw_hide_viewport
-
-    @staticmethod
-    def show(obj, frame):
-        obj.hide_render   = False
-        obj.hide_viewport = False
-
-
-    def Hide(cls, objects, interval):
-        return Animator(cls.hide, objects, interval, cls.show, cls.show)
-
-    def Show(cls, objects, interval):
-        return Animator(cls.show, objects, interval, cls.hide, cls.hide)
 
 
 # =============================================================================================================================
@@ -440,6 +750,7 @@ class Engine():
     SETUP     = [] # Setup functions (called once)
     FUNCTIONS = [] # Animations (called at frame change)
     VARIABLES = {} # Variables mapped on objects properties
+    ANIMATORS = [] # Animator driven animation
 
     verbose   = False
     scene     = None # Risky algorithm !!!
@@ -473,6 +784,7 @@ class Engine():
     def clear():
         Engine.SETUP     = []
         Engine.FUNCTIONS = []
+        Engine.ANIMATORS = []
 
     # Add an animation function
 
@@ -504,11 +816,21 @@ class Engine():
 
         if Engine.verbose:
             print(f"Engine animation at frame {frame:6.1f}")
-
+            
+        # Current scene as a global variable
         Engine.scene = scene
+        
+        # Functions
         for f in Engine.FUNCTIONS:
             f(frame)
+        
+        # Animators
+        for a in Engine.ANIMATORS:
+            a.animate(frame)
+            
+        # Reset global scene
         Engine.scene = None
+            
 
     # ---------------------------------------------------------------------------
     # Set the animation global var
@@ -518,11 +840,120 @@ class Engine():
         bpy.context.scene.bw_engine_animate = go
         if go:
             Engine.animate(bpy.context.scene)
+            
+# =============================================================================================================================
+# Execution of an action during an interval on a list of objects
+# action template is either f(object, frame) or f(frame) depending upon objects is None
+
+class Animator():
+    """Animate objects on intervals.
+    
+    The animate method is called at each frame. 
+    """
+
+    def __init__(self, objects, attribute, bcurve=BCurve(), interval=None):
+        """Animate objects on intervals.
+
+        Parameters
+        ----------
+        action : function of template action(frame, objects=None, xbounds=None, ybounds=None)
+            Action to call at each frame. objects, xbounds and ybounds are used if
+            not None. This allow to use simpler templates.
+        objects : object or array of objects, optional
+            The objects to call the action for. The default is None.
+        interval : Interval, optional
+            Interval per object to use. The default is None.
+
+        Returns
+        -------
+        None.
+
+        """
+        self.objects   = objects
+        self.attribute = attribute
+        self.bcurve    = bcurve
+        self.interval  = interval
+        
+        # Register the animator
+        
+        Engine.ANIMATORS.append(self)
+        
+    def __repr__(self):
+        return f"<Animator:\nObjects:{self.objects}\nAttributes: {self.attribute}\nbcurve:{self.bcurve}"
+        
+    # ---------------------------------------------------------------------------
+    # Set the attribute
+    
+    def set_attribute(self, name, value):
+        if hasattr(self.objects, name):
+            setattr(self.objects, name, value)
+        else:
+            for o in self.objects:
+                setattr(o, name, value)
+            
+    # ---------------------------------------------------------------------------
+    # Animation
+
+    def animate(self, frame):
+        
+        xbounds = None
+        ybounds = None
+            
+        if self.interval is not None:
+            xbounds = self.interval.starts
+            ybounds = self.interval.ends
+            
+        values = self.bcurve(frame, xbounds, ybounds)
+        #print(f"Animate {int(frame):4d}:", values)
+        
+        if hasattr(self.attribute, '__len__'):
+            for attr in self.attribute:
+                self.set_attribute(attr, values)
+        else:
+            self.set_attribute(self.attribute, values)
+            
+    # ---------------------------------------------------------------------------
+    # Add a keyframe
+    
+    def set_keyframe(self, frame, value, interpolation='BEZIER', ease='AUTO'):
+        pt = (get_frame(frame), value)
+        return self.bcurve.add(end_point=pt, easing=Easing(interpolation, ease))
+        
+    # ---------------------------------------------------------------------------
+    # Constant (used for bool for instance)
+    
+    def set_constant(self, frame, value, set_before=False):
+        fr = get_frame(frame)
+        if set_before:
+            self.set_keyframe(fr - 1, 1 - value, interpolation='CONSTANT')
+        self.set_keyframe(fr, value, interpolation='CONSTANT')
+        
+    # ---------------------------------------------------------------------------
+    # Hide / Show
+    
+    @classmethod
+    def Hider(cls, objects):
+       anim = Animator(objects, ['hide_viewport', 'hide_render'], BCurve())
+       return anim
+   
+    def hide(self, frame, value=True, show_before=False):
+        self.set_constant(frame, value, set_before=show_before)
+        
+    def show(self, frame, value=True, hide_before=False):
+        self.set_constant(frame, not value, set_before=hide_before)            
 
 # =============================================================================================================================
 # Execution of an action during an interval on a list of objects
 
 def engine_handler(scene):
+    print('-'*100)
+    print("--------- DEBUG IN animation module: engine_handler....")
+    print('-'*100)
+    
+    Engine.animate(scene)
+    return
+    # END OF DEBUG
+    
     if  scene.bw_engine_animate:
         Engine.animate(scene)
 

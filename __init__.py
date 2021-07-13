@@ -26,7 +26,7 @@ from .core.wrappers import wrap
 from .core.utils import dicho
 from .core.utils import npdicho
 
-from .core.interpolation import Interpolation
+from .core.interpolation import Rect, Easing
 
 from .core.blender import create_collection
 from .core.blender import get_collection
@@ -52,9 +52,7 @@ from .core.blender import set_material
 from .core.duplicator import Duplicator
 
 from .core import animation
-from .core.animation import Interval, Engine
-
-from .core.interpolation import Interpolation
+from .core.animation import Interval, Animator, Engine
 
 from .core.bezier import PointsInterpolation
 from .core.bezier import from_points
