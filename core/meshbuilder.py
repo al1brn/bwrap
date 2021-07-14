@@ -21,7 +21,10 @@ __status__     = "Production"
 import numpy as np
 from math import cos, sin, radians, pi
 
-from .bezier import tangent, PointsInterpolation
+try:
+    from .bezier import tangent, PointsInterpolation
+except:
+    pass
 
 two_pi  = pi*2
 half_pi = pi/2
@@ -244,7 +247,7 @@ class MeshBuilder():
     # return the indices of the newly created vertices which can be used to create a face
 
     def add_verts(self, v):
-        """Add vertices to tyhe mesh
+        """Add vertices to the mesh
         
         Parameters
         ----------
@@ -364,7 +367,7 @@ class MeshBuilder():
 
     def merge(self, other):
         """Merge the mesh with another one.
-        
+
         Parameters
         ----------
         other : Meshbuilder
@@ -375,7 +378,7 @@ class MeshBuilder():
         two arrays of int
             Indices of added vertices and indices of added faces
         """
-
+        
         n = len(self.verts)
         vs = self.add_verts(other.verts)
         faces = [[n + iv for iv in face] for face in other.faces]
@@ -491,6 +494,109 @@ class MeshBuilder():
             ifaces = self.add_faces(fs)
 
         return inds, ifaces
+    
+    # ---------------------------------------------------------------------------
+    # Compute polygons for a rosary topology (ex: sphere, cylinder capped with triangles, arrow...)
+    # The topology is made of rings, each ring made of segments
+    # A ring can be reduced to a single vertex when it is a pole
+    # A ring can be closed (edge between the last and the first vertex)
+    # The number of vertices is (rings - len(poles))*segments + len(poles)
+    
+    def rosary(self, rings, segments, poles=[], close=True):
+        """Generates vertices and polygon with the shape of a rosary.
+        
+        The base shape is a cylinder made of rings of a given number of segments.
+        A ring can be reduces in a point when the ring index is in the poles array.
+        The cylinder can be close or not.
+        
+        The vertices are initialized along the z axis. The can be then changed.
+        Note that rosary(rings, segments, close=False) gives the same topology as
+        grid(count=(rings, segments), faces=True)
+        
+        rosary(rings, segments, poles=[0, -1], close=True) gives the topolgy of a UV sphere
+        rosary(rings, segments, poles=[-1], close=True) gives the topology of a cone
+        
+        Parameters
+        ----------
+        rings : int
+            Number of rings.
+        segments : int
+            Number of segments of each ring.
+        poles : array of ints, optional
+            List of the poles, ie the rings reduced to a single point. The default is [].
+        close : bool, optional
+            True to close the rings. The default is True.
+        """
+
+        # Somes checks
+        rings = max(2, rings)
+        segms = max(3, segments)
+        
+        # Poles can use negative indices
+        poles = np.array(poles)
+        for i, index in enumerate(poles):
+            if index < 0:
+                poles[i] = rings + index
+            
+        # Ring base
+        ag = np.linspace(0, 2*np.pi, segms, endpoint=False)
+        circ = np.zeros((segms, 3), np.float)
+        circ[:, 0] = np.cos(ag)
+        circ[:, 1] = np.sin(ag)
+        
+        # Create a ring or pole
+        def create_ring(ring):
+            z = ring*0.1
+            if ring in poles:
+                return self.vert((0., 0., z))
+            else:
+                circ[:, 2] = ring*0.1
+                return self.add_verts(circ)
+            
+        # ----- Quads between two rings
+        def quads(v0, v1):
+            for s in range(segms-1):
+                self.face((v0[s], v0[s+1], v1[s+1], v1[s]))
+            if close:
+                self.face((v0[segms-1], v0[0], v1[0], v1[segms-1]))
+        
+        # ----- Triangles from a pole towards a ring
+        def triangles_towards(v0, v1):
+            for s in range(segms-1):
+                self.face((v0, v1[s+1], v1[s]))
+            if close:
+                self.face((v0, v1[0], v1[segms-1]))
+            
+        # ----- Triangles from a pole towards a ring
+        def triangles_backwards(v0, v1):
+            for s in range(segms-1):
+                self.face((v0[s], v0[s+1], v1))
+            if close:
+                self.face((v0[segms-1], v0[0], v1))
+            
+        # Create the initial ring
+        v0 = create_ring(0)
+            
+        for ring in range(1, rings):
+            
+            # Create the ring
+            v1 = create_ring(ring)
+            
+            # Seams the two rings
+            if ring-1 in poles:
+                if ring in poles:
+                    pass
+                else:
+                    triangles_towards(v0, v1)
+            else:
+                if ring in poles:
+                    triangles_backwards(v0, v1)
+                else:
+                    quads(v0, v1)
+                    
+            # Next loop
+            v0 = v1
+    
 
     # =============================================================================================================================
     # Geometry computations
@@ -951,7 +1057,6 @@ class MeshBuilder():
             
         
         return builder
-
 
 # ---------------------------------------------------------------------------
 # Some tests

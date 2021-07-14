@@ -22,9 +22,11 @@ __status__     = "Production"
 from math import pi, degrees
 import numpy as np
 
-from .commons import base_error_title
-
-error_title = base_error_title % "geometry.%s"
+try:
+    from .commons import base_error_title
+    error_title = base_error_title % "geometry.%s"
+except:
+    error_title = "ERROR %"
 
 # Default ndarray float type
 ftype = np.float
@@ -1365,9 +1367,8 @@ def e_to_quat(e, order='XYZ'):
     return q_mul(qs[k], q_mul(qs[j], qs[i]))
 
 
-
 # -----------------------------------------------------------------------------------------------------------------------------
-# Get a quaternion which orient a given axis toward a target direction
+# Get a quaternion which orient a given axis towards a target direction
 # Another contraint is to have the up axis oriented towards the sky
 # The sky direction is the normally the Z
 #
@@ -1516,9 +1517,10 @@ def rotate_towards(v, target, center=(0., 0., 0.), axis='Z', up='Y', no_up=False
 # -----------------------------------------------------------------------------------------------------------------------------
 # Transformation Matrices 4x4
 
-def tmatrix(translation=(0., 0., 0.), mat=((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)), scale=(1., 1., 1.)):
+def tmatrix(translation=(0., 0., 0.), mat=((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)), scale=(1., 1., 1.), count=None):
 
-    count = max(np.size(translation), np.size(mat) // 3, np.size(scale)) // 3
+    if count is None:    
+        count = max(np.size(translation), np.size(mat) // 3, np.size(scale)) // 3
 
     # With no control : we are not idiotproof !
     ntrans = np.resize(translation, (count, 3))
@@ -1545,6 +1547,70 @@ def tmatrix(translation=(0., 0., 0.), mat=((1., 0., 0.), (0., 1., 0.), (0., 0., 
 
     # Result
     return mats
+
+def decompose_tmat(tmat):
+
+    scale = np.stack((
+        np.linalg.norm(tmat[:, :3, 0], axis=1),
+        np.linalg.norm(tmat[:, :3, 1], axis=1),
+        np.linalg.norm(tmat[:, :3, 2], axis=1))).transpose()
+    
+    mat = np.array(tmat[:, :3, :3])
+    
+    invs = 1/scale
+    scale_mat = np.resize(np.identity(3), (mat.shape[0], 3, 3))
+    scale_mat[:, 0, 0] = invs[:, 0]
+    scale_mat[:, 1, 1] = invs[:, 1]
+    scale_mat[:, 2, 2] = invs[:, 2]
+    
+    return np.array(tmat[:, :3, 3]), np.matmul(mat, scale_mat), scale
+
+def translation_from_tmat(tmat):
+    return np.array(tmat[:, :3, 3])
+    
+def mat_from_tmat(tmat):
+    return decompose_tmat(tmat)[1]
+
+def scale_from_tmat(tmat):
+    return decompose_tmat(tmat)[2]
+
+
+def test_tmat(test=0, count=2):
+    if test==0:
+        t0 = np.random.uniform(0, 10, (count, 3))
+        m0 = e_to_matrix(np.random.uniform(0, 7, (count, 3)))
+        s0 = np.random.uniform(2, 3, (count, 3))
+    else:
+        t0 = np.random.uniform(0, 10, (count, 3))
+        m0 = e_to_matrix(np.radians(np.resize((10, 70, -30), (count, 3))))
+        s0 = (0.3, 0.3, 1)
+        
+    tmat = tmatrix(t0, m0, s0)
+    
+    t1, m1, s1 = decompose_tmat(tmat)
+    tmat1 = tmatrix(t1, m1, s1)
+    
+    print("----- tmat1")
+    print("tmat: ", np.linalg.norm(tmat1-tmat))
+    print("trans:", np.linalg.norm(t1-t0))
+    print("mat:  ", np.linalg.norm(m1-m0))
+    print("scale:", np.linalg.norm(s1-s0))
+    print('$'*10)
+
+    t2, m2, s2 = decompose_tmat(tmat1)
+    tmat2 = tmatrix(t2, m2, s2)
+    
+    print("----- tmat2")
+    print("tmat: ", np.linalg.norm(tmat2-tmat))
+    print("trans:", np.linalg.norm(t2-t0))
+    print("mat:  ", np.linalg.norm(m2-m0))
+    print("scale:", np.linalg.norm(s2-s0))
+    print('$'*10)
+    print(np.degrees(m_to_euler(m2)))
+
+#test_tmat(1)
+
+
 
 
 def tmatrix_euler(translation=(0., 0., 0.), euler=(0., 0., 0.), order='XYZ', scale=(1., 1., 1.)):
@@ -1616,3 +1682,4 @@ def rotate_quat(quat, vectors, falloff=1.):
 
 def rotate(mat, vectors, falloff=1.):
     return transform(tmat_rotation(mat), vectors, falloff)
+

@@ -946,6 +946,7 @@ class Animator():
 # Execution of an action during an interval on a list of objects
 
 def engine_handler(scene):
+    # DEBUG MODE pour bw_engine_animate
     print('-'*100)
     print("--------- DEBUG IN animation module: engine_handler....")
     print('-'*100)

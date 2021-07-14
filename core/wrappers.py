@@ -1173,7 +1173,7 @@ class WMesh(WID):
         a     = to_shape(vectors, (len(verts)*3))
         verts.foreach_set("co", a)
         self.mark_update()
-
+        
     # x, y, z vertices access
 
     @property
@@ -1261,6 +1261,10 @@ class WMesh(WID):
         return self.verts[np.array(self.edge_indices)]
 
     # polygons as indices
+    
+    @property
+    def poly_count(self):
+        return len(self.wrapped.polygons)
 
     @property
     def poly_indices(self):
@@ -1315,6 +1319,64 @@ class WMesh(WID):
         a = np.empty(len(polygons)*3, np.float)
         polygons.foreach_get("normal", a)
         return np.reshape(a, (len(polygons), 3))
+
+    # ---------------------------------------------------------------------------
+    # uv management
+    
+    @property
+    def uvmaps(self):
+        return [uvl.name for uvl in self.wrapped.uv_layers]
+    
+    def get_uvmap(self, name, create=False):
+        try:
+            return self.wrapped.uv_layers[name]
+        except:
+            pass
+        
+        if create:
+            self.wrapped.uv_layers.new(name=name)
+            return self.wrapped.uv_layers[name]
+        
+        raise RuntimeError(f"WMesh error: uvmap '{name}' doesn't existe for object '{self.name}'")
+    
+    def create_uvmap(self, name):
+        return self.get_uvmap(name, create=True)
+    
+    def get_uvs(self, name):
+        uvmap = self.get_uvmap(name)
+        
+        count = len(uvmap.data)
+        uvs = np.empty(2*count, np.float)
+        uvmap.data.foreach_get("uv", uvs)
+        
+        return uvs.reshape((count, 2))
+    
+    def set_uvs(self, name, uvs):
+        uvmap = self.get_uvmap(name)
+
+        count = len(uvmap.data)
+        uvs = np.resize(uvs, count*2)
+        uvmap.data.foreach_set("uv", uvs)
+        
+    def get_poly_uvs(self, name, poly_index):
+        uvmap = self.get_uvmap(name)
+        
+        poly = self.wrapped.polygons[poly_index]
+        return np.array([uvmap.data[i].uv for i in poly.loop_indices])
+    
+    def set_poly_uvs(self, name, poly_index, uvs):
+        uvmap = self.get_uvmap(name)
+        
+        poly = self.wrapped.polygons[poly_index]
+        uvs = np.resize(uvs, (poly.loop_total, 2))
+        for i, iv in enumerate(poly.loop_indices):
+            uvmap.data[iv].uv = uvs[i]
+            
+    def get_poly_uvs_indices(self, name, poly_index):
+        uvmap = self.get_uvmap(name)
+        
+        return self.wrapped.polygons[poly_index].loop_indices
+
 
     # ---------------------------------------------------------------------------
     # Set new points
