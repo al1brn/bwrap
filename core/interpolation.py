@@ -717,6 +717,12 @@ class Easing():
             self.back      = kf0.back
             #self.bounces   = 3
             self.set_peramp(rect, kf0.period, kf0.amplitude)
+            
+    @classmethod
+    def FromKFPoints(cls, kf0, kf1):
+        easing = cls(name=kf0.interpolation, ease=kf0.easing)
+        easing.from_keyframes(kf0, kf1)
+        return easing
         
     # ===========================================================================
     # Develop
@@ -922,7 +928,8 @@ class BCurve():
         if len(self.points) < 2:
             return Rect((0, 0), (1, 1))
         else:
-            return Rect(self.points[0], self.points[-1])
+            return Rect( (self.points[ 0, 0], np.min(self.points[:, 1])),
+                         (self.points[-1, 0], np.max(self.points[:, 1])) )
         
     def easing_rect(self, index):
         """The rect of a given easing function.        
@@ -1051,10 +1058,8 @@ class BCurve():
         ----------
         t : array of floats
             The abscissa of the curve
-            
         xbounds : array of couple of floats, optional
             One interval per value to use as the replacement of the default interval.
-            
         ybounds : array of couple of floats, optional
             One interval per value to use as the replacement of the default y interval.
             
@@ -1080,6 +1085,7 @@ class BCurve():
         
         # ----- if xbounds exists: convert to default bounds
         if xbounds is not None:
+            xbounds = np.resize(xbounds, (len(t), 2))
             t = bounds.x0 + (t - xbounds[:, 0]) / (xbounds[:, 1] - xbounds[:, 0]) * bounds.x_amp
 
         # ----- Periodic
@@ -1115,6 +1121,7 @@ class BCurve():
         if ybounds is None:
             return y
         else:
+            ybounds = np.resize(ybounds, (len(t), 2))
             return ybounds[:, 0] + (y - bounds.y0) / bounds.y_amp * (ybounds[:, 1] - ybounds[:, 0])
         
     # ---------------------------------------------------------------------------

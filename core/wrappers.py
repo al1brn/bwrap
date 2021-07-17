@@ -902,7 +902,7 @@ class WID(WStruct):
             return self
 
         else:
-            depsgraph   = bpy.context.evaluated_depsgraph_get()
+            depsgraph = bpy.context.evaluated_depsgraph_get()
             return self.__class__(self.wrapped.evaluated_get(depsgraph))
 
 
@@ -1121,8 +1121,11 @@ class WMesh(WID):
     """Wrapper of a Mesh structure.
     """
 
-    def __init__(self, wrapped):
-        super().__init__(name=wrapped.name, coll=bpy.data.meshes)
+    def __init__(self, wrapped, evaluated=False):
+        if evaluated:
+            super().__init__(wrapped, name=wrapped.name)
+        else:
+            super().__init__(name=wrapped.name, coll=bpy.data.meshes)
 
     @property
     def owner(self):
@@ -1321,6 +1324,40 @@ class WMesh(WID):
         return np.reshape(a, (len(polygons), 3))
 
     # ---------------------------------------------------------------------------
+    # Materials
+    
+    def copy_materials_from(self, other):
+        """Copy the list of materials from another object.
+
+        Parameters
+        ----------
+        other : object with materials
+            The object to copy the materials from.
+
+        Returns
+        -------
+        None.
+        """
+        
+        self.wrapped.materials.clear()
+        for mat in other.materials:
+            self.wrapped.materials.append(mat)
+            
+    @property
+    def material_indices(self):
+        """Material indices from the faces.
+        """
+        
+        inds = np.zeros(self.poly_count)
+        self.wrapped.polygons.foreach_get("material_index", inds)
+        return inds
+    
+    @material_indices.setter
+    def material_indices(self, value):
+        inds = np.resize(value, self.poly_count)
+        self.wrapped.polygons.foreach_set("material_index", inds)
+
+    # ---------------------------------------------------------------------------
     # uv management
     
     @property
@@ -1372,11 +1409,8 @@ class WMesh(WID):
         for i, iv in enumerate(poly.loop_indices):
             uvmap.data[iv].uv = uvs[i]
             
-    def get_poly_uvs_indices(self, name, poly_index):
-        uvmap = self.get_uvmap(name)
-        
+    def get_poly_uvs_indices(self, poly_index):
         return self.wrapped.polygons[poly_index].loop_indices
-
 
     # ---------------------------------------------------------------------------
     # Set new points
@@ -1588,8 +1622,8 @@ class WMesh(WID):
                 layer = self.wrapped.vertex_layers_float.new(name=name)
             else:
                 return
-        count = len(layer.data)
-        layer.data.foreach_set("value", vals)
+
+        layer.data.foreach_set("value", np.resize(vals, len(layer.data)))
 
     def get_ints(self, name, create=True):
         """Get values of an int layer.        
@@ -1643,7 +1677,8 @@ class WMesh(WID):
                 print("creation", layer)
             else:
                 return
-        layer.data.foreach_set("value", vals)
+            
+        layer.data.foreach_set("value", np.resize(vals, len(layer.data)))
 
 # ---------------------------------------------------------------------------
 # Spline wrapper
@@ -1894,7 +1929,7 @@ class WBezierSpline(WSpline):
         verts, lefts, rights = self.get_handles()
         return {"type": 'BEZIER', "verts": verts, "lefts": lefts, "rights": rights}
     
-    def restore(data, count=None):
+    def restore(self, data, count=None):
         """Restore the vertices from a dictionnary previously created with save.
         
         This method is typically used with a newly created Bezier curve with no point.
@@ -2198,11 +2233,14 @@ class WCurve(WID):
     In addition to wrap the Curve class, the wrapper also behaves as an array
     to give easy access to the splines.
     
-    The itme are wrapper of splines.
+    The items are wrapper of splines.
     """
 
-    def __init__(self, wrapped):
-        super().__init__(name=wrapped.name, coll=bpy.data.curves)
+    def __init__(self, wrapped, evaluated=False):
+        if evaluated:
+            super().__init__(wrapped, name=wrapped.name)
+        else:
+            super().__init__(name=wrapped.name, coll=bpy.data.curves)
 
     # ---------------------------------------------------------------------------
     # WCurve is a collection of splines
@@ -2380,8 +2418,11 @@ class WText(WID):
     Other attributes come from the Blender TextCurve class.
     """
 
-    def __init__(self, wrapped):
-        super().__init__(name=wrapped.name, coll=bpy.data.curves)
+    def __init__(self, wrapped, evaluated=False):
+        if evaluated:
+            super().__init__(wrapped, name=wrapped.name)
+        else:
+            super().__init__(name=wrapped.name, coll=bpy.data.curves)
 
     @property
     def text(self):
@@ -2415,7 +2456,17 @@ class WObject(WID):
     """
 
     def __init__(self, wrapped):
-        super().__init__(name=wrapped.name, coll=bpy.data.objects)
+        
+        init = True
+        try:
+            if wrapped.is_evaluated:
+                super().__init__(wrapped)
+                init = False
+        except:
+            pass
+            
+        if init:
+            super().__init__(name=wrapped.name, coll=bpy.data.objects)
 
     # ---------------------------------------------------------------------------
     # Data
@@ -2473,11 +2524,11 @@ class WObject(WID):
         # Supported types
         name = data.__class__.__name__
         if name == 'Mesh':
-            return WMesh(data)
+            return WMesh(data, self.wrapped.is_evaluated)
         elif name == 'Curve':
-            return WCurve(data)
+            return WCurve(data, self.wrapped.is_evaluated)
         elif name == 'TextCurve':
-            return WText(data)
+            return WText(data, self.wrapped.is_evaluated)
         else:
             raise RuntimeError(
                 error_title % "WObject.wdata" +
@@ -3094,6 +3145,34 @@ class WObject(WID):
             sk = self.get_sk(name, step, create=False)
             if sk is not None:
                 self.wrapped.shape_key_remove(sk.wrapped)
+                
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # Shape_key eval time
+    
+    @property
+    def eval_time(self):
+        return self.wrapped.data.shape_keys.eval_time
+    
+    @eval_time.setter
+    def eval_time(self, value):
+        self.wrapped.data.shape_keys.eval_time = value
+        
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # Get animation from shape keys
+    
+    def get_sk_animation(self, eval_times):
+        memo = self.eval_time
+        
+        verts = np.empty((len(eval_times), self.verts_count, 3), np.float)
+        for i, evt in enumerate(eval_times):
+            self.eval_time = evt
+            verts[i] = self.evaluated.verts
+        
+        self.eval_time = memo
+        
+        return verts
+        
+                
 
 # ---------------------------------------------------------------------------
 # Wrapper

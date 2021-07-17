@@ -22,12 +22,11 @@ import numpy as np
 import bpy
 
 from .core.wrappers import wrap
-from .core.crowd import Crowd
 
 from .core.utils import dicho
 from .core.utils import npdicho
 
-from .core.interpolation import Rect, Easing
+from .core.interpolation import Rect, Easing, BCurve
 
 from .core.blender import create_collection
 from .core.blender import get_collection
@@ -51,6 +50,7 @@ from .core.blender import show_object
 from .core.blender import set_material
 
 from .core.duplicator import Duplicator
+from .core.crowd import Crowd
 
 from .core import animation
 from .core.animation import Interval, Animator, Engine
