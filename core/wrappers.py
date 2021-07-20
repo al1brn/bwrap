@@ -15,8 +15,10 @@ from mathutils import Quaternion
 from .frames import get_frame
 from .plural import to_shape, setattrs, getattrs
 from .bezier import  control_points, PointsInterpolation
+from .interpolation import BCurve
 
 from .geometry import q_tracker
+from .bmatrix import *
 
 from .commons import base_error_title, get_chained_attr, set_chained_attr
 error_title = base_error_title % "wrappers.%s"
@@ -420,6 +422,67 @@ class WStruct():
                     acs.append(fcurve)
 
         return acs
+    
+    # ----------------------------------------------------------------------------------------------------
+    # Return the BCurve version of an animation curve
+    # Use the dotted version only for UI simplicty
+    
+    def bcurve(self, name):
+        """Get the BCurve version of a fcurve.
+        
+        The BCurve is more efficient when called with an array of value:
+            - Y = bcurve(X)
+            - Y = [fcurve.evaluate(x) for x in X]
+            
+        Returns only one function. Uses the dottes syntax only.
+        
+        Raises an error if more that one fcurve exist for the given attribute: this occurs
+        when several entries in an array are animated. For instance, if all entries of
+        'location' are animated:
+            - name="location"   --> error
+            - name="location.x" --> ok
+
+        Parameters
+        ----------
+        name : str
+            Animated attribute name.
+
+        Returns
+        -------
+        BCurve.
+        """
+        
+        acs = self.get_acurves(name)
+        if len(acs) > 1:
+            raise RuntimeError(error_title % "bcurve" +
+                    f"The attribute '{name}' has several animation curves. Can return only one.\n"
+                    "Use dotted syntax such as 'location.x' to specify which curve to get."
+                    )
+            
+        if len(acs) == 0:
+            raise RuntimeError(error_title % "bcurve" +
+                    f"The attribute '{name}' is not animated."
+                    )
+            
+        return BCurve.FromFCurve(acs[0])
+    
+    def set_bcurve(self, name, bc):
+        
+        b_kfs = bc.keyframe_points
+        
+        acs = self.new_acurves(name, reset=True)
+        fc = acs[0]
+        fc.keyframe_points.add(len(b_kfs))
+        
+        for kfs, kft in zip(b_kfs, fc.keyframe_points):
+            kft.co            = kfs.co.copy()
+            kft.interpolation = kfs.interpolation
+            kft.amplitude     = kfs.amplitude
+            kft.back          = kfs.back
+            kft.easing        = kfs.easing
+            kft.handle_left   = kfs.handle_left
+            kft.handle_right  = kfs.handle_right
+            kft.period        = kfs.period
 
     # ----------------------------------------------------------------------------------------------------
     # Delete a fcurve
@@ -2924,6 +2987,81 @@ class WObject(WID):
         self.wrapped.matrix_basis = np.transpose(m)
 
         self.mark_update()
+        
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # World transformations
+    
+    @property
+    def wlocation(self):
+        return bmx_location(self.wrapped.matrix_world)
+    
+    @property
+    def wx(self):
+        return bmx_x(self.wrapped.matrix_world)
+    @property
+    def wy(self):
+        return bmx_y(self.wrapped.matrix_world)
+    
+    @property
+    def wz(self):
+        return bmx_z(self.wrapped.matrix_world)
+    
+    @property
+    def wscale(self):
+        return bmx_scale(self.wrapped.matrix_world)
+        
+    @property
+    def wsx(self):
+        return bmx_sx(self.wrapped.matrix_world)
+        
+    @property
+    def wsy(self):
+        return bmx_sy(self.wrapped.matrix_world)
+        
+    @property
+    def wsz(self):
+        return bmx_sz(self.wrapped.matrix_world)
+    
+    @property
+    def wmatrix(self):
+        return bmx_mat(self.wrapped.matrix_world)
+    
+    @property
+    def weuler(self):
+        return bmx_euler(self.wrapped.matrix_world, self.wrapped.rotation_euler.order)
+    
+    @property
+    def wrx(self):
+        return bmx_rx(self.wrapped.matrix_world, self.wrapped.rotation_euler.order)
+    
+    @property
+    def wry(self):
+        return bmx_ry(self.wrapped.matrix_world, self.wrapped.rotation_euler.order)
+    
+    @property
+    def wrz(self):
+        return bmx_rz(self.wrapped.matrix_world, self.wrapped.rotation_euler.order)
+    
+    @property
+    def weulerd(self):
+        return np.degrees(bmx_euler(self.wrapped.matrix_world, self.wrapped.rotation_euler.order))
+    
+    @property
+    def wrxd(self):
+        return np.degrees(bmx_rx(self.wrapped.matrix_world, self.wrapped.rotation_euler.order))
+    
+    @property
+    def wryd(self):
+        return np.degrees(bmx_ry(self.wrapped.matrix_world, self.wrapped.rotation_euler.order))
+    
+    @property
+    def wrzd(self):
+        return np.degrees(bmx_rz(self.wrapped.matrix_world, self.wrapped.rotation_euler.order))
+    
+    @property
+    def wquat(self):
+        return bmx_quat(self.wrapped.matrix_world)
 
     # -----------------------------------------------------------------------------------------------------------------------------
     # -----------------------------------------------------------------------------------------------------------------------------

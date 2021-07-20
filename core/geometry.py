@@ -87,6 +87,7 @@ def get_axis(axis, default=(0, 0, 1)):
     nrms = np.linalg.norm(axiss, axis=1)
     
     # Remove zeros
+    axiss[nrms<zero] = (0, 0, 1)
     nrms[nrms<zero] = 1
     
     # Normalization
@@ -389,8 +390,21 @@ def v_angle(v, w):
     float or array of float
         The angle between the vectors
     """
-
-    return np.arccos(np.maximum(-1, np.minimum(1, v_dot(normalized(v), normalized(w)))))
+    
+    count = max(np.size(v)//3, np.size(w)//3, 1)
+    vs = np.resize(get_axis(v), (count, 3))
+    ws = np.resize(get_axis(w), (count, 3))
+    
+    single = False
+    if count == 1:
+        single = (len(np.shape(v)) == 1) and (len(np.shape(w)) == 1)
+        
+    ags = np.arccos(np.maximum(-1, np.minimum(1, np.einsum('...i,...i', vs, ws))))
+        
+    if single:
+        return ags[0]
+    else:
+        return ags
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -1238,7 +1252,6 @@ def e_to_quat(e, order='XYZ'):
     i, j, k = euler_i[order]
     return q_mul(qs[k], q_mul(qs[j], qs[i]))
 
-
 # -----------------------------------------------------------------------------------------------------------------------------
 # Get a quaternion which orient a given axis towards a target direction
 # Another contraint is to have the up axis oriented towards the sky
@@ -1249,7 +1262,7 @@ def e_to_quat(e, order='XYZ'):
 # - up     : The up direction wich must remain oriented towards the sky
 # - sky    : The up direction must be rotated in the plane (target, sky)
 
-def q_tracker(axis, target, up='Y', sky='Z', no_up = True):
+def q_tracker(axis, target, up='Y', sky='Z', no_up = False):
     """Compute a quaternion which rotate an axis towards a target.
     
     The rotation is computed using a complementary axis named 'up' which
@@ -1285,7 +1298,154 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up = True):
     array of quaternions
         The quaternions that can be used to rotate the axis according the arguments.
     """
+    
+    axs = get_axis(axis)       # Vectors to rotate
+    txs = get_axis(target)     # The target direction after rotation
+    
+    # ---------------------------------------------------------------------------
+    # Make sure we have the proper arrays to work on
+    
+    count = max(np.size(axs)//3, np.size(txs)//3)
+    single = False
+    if count == 1:
+        single = (len(axs.shape) == 1) and (len(txs.shape) == 1)
+    
+    axs   = np.resize(axs, (count, 3))
+    txs   = np.resize(txs, (count, 3))
+    
+    # ===========================================================================
+    # First rotation
+    
+    # ---------------------------------------------------------------------------
+    # First rotation will be made around a vector perp to  (axs, txs)
+    
+    perps   = np.cross(axs, txs)  # Perp vector with norm == sine
+    rot_sin = np.linalg.norm(perps, axis=1)    # Sine
+    rot_cos = np.einsum('...i,...i', axs, txs) # Cosine
 
+    qrot = quaternion(perps, np.arctan2(rot_sin, rot_cos))
+    
+    # ---------------------------------------------------------------------------
+    # When the axis is already in the proper direction, it can point in the wrong way
+    # Make final adjustment
+    
+    qrot[np.logical_and(rot_sin < zero, rot_cos < 0)] = quaternion(up, np.pi)
+    
+    # ---------------------------------------------------------------------------
+    # No up management (for cylinders for instance)
+
+    if no_up:
+        if single:
+            return qrot[0]
+        else:
+            return qrot
+        
+    # ===========================================================================
+    # Second rotation around the target axis
+        
+    # ---------------------------------------------------------------------------
+    # The first rotation places the up axis in a certain direction
+    # An additional rotation around the target is required
+    # to put the up axis in the plane (target, up_direction)
+
+    # The "sky" is normally the Z direction. Let's name it Z for clarity
+    
+    Z = np.resize(get_axis(sky), (count, 3))
+    
+    # Since with must rotate 'up vector' in the plane (Z, target),
+    # let's compute a normalized vector perpendicular to this plane
+    
+    N = np.cross(Z, txs)
+    nrm = np.linalg.norm(N, axis=1)
+    nrm[nrm < zero] = 1.
+    N = N / np.expand_dims(nrm, axis=1)
+    
+    # Let's compute where is now the up axis
+    # Note that 'up axis' is supposed to be perpendicular to the axis.
+    # Hence, the rotated 'up' direction is perpendicular to the plane (Z, target)
+    
+    rotated_up = q_rotate(qrot, np.resize(get_axis(up), (count, 3)))
+    
+    # Let's compute the angle betweent the 'rotated up' and the plane (Z, target)
+    # The sine is the projection of the vector on the normal axis,
+    # ie the scalar product
+    
+    r_sin = np.einsum('...i,...i', rotated_up, N)
+    
+    # The cosine is the projection on the plane, ie the vector minus the 
+    # component along the normal.
+    # Let's compute the vector first
+    
+    v_proj = rotated_up - N*np.expand_dims(r_sin, 1)
+    
+    # And the absolute value of the cosine now
+    
+    r_cos = np.linalg.norm(v_proj, axis=1)
+    
+    # If the projected vector in the plane doesn't point in the Z direction
+    # we must invert the cosine
+    
+    r_cos[np.einsum('...i,...i', v_proj, Z) < 0] *= -1
+    
+    # We have the second rotation now that we can combine with the previous one
+    
+    qrot = q_mul(quaternion(txs, np.arctan2(r_sin, r_cos)), qrot)
+    
+    # Result
+
+    if single:
+        return qrot[0]
+    else:
+        return qrot
+
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# Get a quaternion which orient a given axis towards a target direction
+# Another contraint is to have the up axis oriented towards the sky
+# The sky direction is the normally the Z
+#
+# - axis   : The axis to rotate toward the target axis
+# - target : Thetarget direction for the axis
+# - up     : The up direction wich must remain oriented towards the sky
+# - sky    : The up direction must be rotated in the plane (target, sky)
+
+def q_tracker_OLD(axis, target, up='Y', sky='Z', no_up = True):
+    """Compute a quaternion which rotate an axis towards a target.
+    
+    The rotation is computed using a complementary axis named 'up' which
+    must be oriented upwards.
+    The upwards direction is Z by default and can be overriden by the argument 'sky'.
+    
+    After rotation:
+        - 'axis' points towards 'target'.
+        - 'up' points such as 'up' cross 'target' is perpendicular to vertical axis.
+        - 'sky' is used to replace the 'Z' direction.
+    
+
+    Parameters
+    ----------
+    axis : vector
+        The axis to orient.
+    target : vector
+        The direction the axis must be oriented towards.
+    up : vector, optional
+        The axis which must be oriented upwards. The default is 'Y'.
+    sky : vector, optional
+        The direction of the sky, i.e. the upwards direction. The default is 'Z'.
+    no_up : bool, optional
+        Don't rotate around the target axis. The default is True.
+
+    Raises
+    ------
+    RuntimeError
+        If array lengths are not compatible.
+
+    Returns
+    -------
+    array of quaternions
+        The quaternions that can be used to rotate the axis according the arguments.
+    """
+    
     axs = get_axis(axis)       # Vectors to rotate
     txs = get_axis(target)     # The target direction after rotation
 
@@ -1629,6 +1789,18 @@ def scale_from_tmat(tmat):
     """
     
     return mat_scale_from_tmat(tmat)[1]
+
+
+
+
+
+
+
+
+
+
+
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # A test

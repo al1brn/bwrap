@@ -83,7 +83,7 @@ class Crowd(Transformations):
     # Overrides matrices transformations
         
     def apply(self):
-        self.wobject.verts = self.transform_verts43(self.base_verts)
+        self.wobject.wdata.verts = self.transform_verts43(self.base_verts)
 
     # ---------------------------------------------------------------------------
     # Euler order

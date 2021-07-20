@@ -49,6 +49,7 @@ from .core.blender import hide_object
 from .core.blender import show_object
 from .core.blender import set_material
 
+from .core.transformations import Transformations, ObjectTransformations
 from .core.duplicator import Duplicator
 from .core.crowd import Crowd
 

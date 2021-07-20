@@ -96,6 +96,14 @@ class Transformations():
         
         return 'XYZ'
     
+    @property
+    def track_axis(self):
+        return 'Z'
+    
+    @property
+    def up_axis(self):
+        return 'Y'
+    
     # ---------------------------------------------------------------------------
     # Redime
     
@@ -141,14 +149,9 @@ class Transformations():
     # In both cases, it returns n*mats vertices reshaped in (n*mats, 4)
     # n is the number fo vertices of the mesh to transform
 
-    def transform_verts4(self, verts):
-        count = verts.shape[-2]*len(self.tmat)
-        return np.matmul(verts, self.tmat).reshape(count, 4)
-    
-        # ----- OLD: tmat is resized to have one matrix per vertex
-        return np.einsum('...jk,...k', 
-            np.resize(self.tmat, (len(verts), 4, 4)),
-            verts)
+    def transform_verts4(self, verts4):
+        count = verts4.shape[-2]*len(self.tmat)
+        return np.matmul(verts4, self.tmat).reshape(count, 4)
 
     def transform_verts3(self, verts):
         return self.transform_verts4(
@@ -167,7 +170,7 @@ class Transformations():
     def compose_before(self, other):
         self.tmat = np.matmul(self.tmat, other.tmat)
         self.lock_apply()
-    
+
     # ---------------------------------------------------------------------------
     # Locations
         
@@ -244,33 +247,33 @@ class Transformations():
         self.lock_apply()
     
     @property
-    def xscales(self):
+    def sx(self):
         return np.linalg.norm(self.tmat[:, 0, :3], axis=1)
     
-    @xscales.setter
-    def xscales(self, value):
+    @sx.setter
+    def sx(self, value):
         m, s = self.mat_scales
         s[:, 0] = np.resize(value, len(self))
         self.tmat = tmatrix(self.locations, m, s)
         self.lock_apply()
     
     @property
-    def yscales(self):
+    def sy(self):
         return np.linalg.norm(self.tmat[:, 1, :3], axis=1)
     
-    @yscales.setter
-    def yscales(self, value):
+    @sy.setter
+    def sy(self, value):
         m, s = self.mat_scales
         s[:, 1] = np.resize(value, len(self))
         self.tmat = tmatrix(self.locations, m, s)
         self.lock_apply()
     
     @property
-    def zscales(self):
+    def sz(self):
         return np.linalg.norm(self.tmat[:, 2, :3], axis=1)
 
-    @zscales.setter
-    def zscales(self, value):
+    @sz.setter
+    def sz(self, value):
         m, s = self.mat_scales
         s[:, 2] = np.resize(value, len(self))
         self.tmat = tmatrix(self.locations, m, s)
@@ -310,31 +313,31 @@ class Transformations():
         self.eulers = np.radians(value)
         
     @property
-    def xeulers(self):
+    def rx(self):
         return self.eulers[:, 0]
     
-    @xeulers.setter
-    def xeulers(self, value):
+    @rx.setter
+    def rx(self, value):
         eulers = self.eulers
         eulers[:, 0] = np.resize(value, len(self))
         self.eulers = eulers
         
     @property
-    def yeulers(self):
+    def ry(self):
         return self.eulers[:, 1]
     
-    @yeulers.setter
-    def yeulers(self, value):
+    @ry.setter
+    def ry(self, value):
         eulers = self.eulers
         eulers[:, 1] = np.resize(value, len(self))
         self.eulers = eulers
         
     @property
-    def zeulers(self):
+    def rz(self):
         return self.eulers[:, 2]
     
-    @zeulers.setter
-    def zeulers(self, value):
+    @rz.setter
+    def rz(self, value):
         eulers = self.eulers
         eulers[:, 2] = np.resize(value, len(self))
         self.eulers = eulers
@@ -343,28 +346,28 @@ class Transformations():
     # Degrees version
     
     @property
-    def xeulersd(self):
-        return np.degrees(self.xeulers)
+    def rxd(self):
+        return np.degrees(self.rx)
     
-    @xeulersd.setter
-    def xeulersd(self, value):
-        self.xeulers = np.radians(value)
+    @rxd.setter
+    def rxd(self, value):
+        self.rx = np.radians(value)
         
     @property
-    def yeulersd(self):
-        return np.degrees(self.zeulers)
+    def ryd(self):
+        return np.degrees(self.ry)
     
-    @yeulersd.setter
-    def yeulersd(self, value):
-        self.yeulers = np.radians(value)
+    @ryd.setter
+    def ryd(self, value):
+        self.ry = np.radians(value)
         
     @property
-    def zeulersd(self):
-        return np.degrees(self.zeulers)
+    def rzd(self):
+        return np.degrees(self.rz)
     
-    @zeulersd.setter
-    def zeulersd(self, value):
-        self.zeulers = np.radians(value)
+    @rzd.setter
+    def rzd(self, value):
+        self.rz = np.radians(value)
         
     # ---------------------------------------------------------------------------
     # Quaternions
@@ -378,48 +381,135 @@ class Transformations():
         self.matrices = q_to_matrix(value)
         
     # ---------------------------------------------------------------------------
+    # Spherical coordinates
+    
+    def get_axis_distances(self, locations=(0., 0., 0.)):
+        """Get the directions and distances to given locations.
+
+        Parameters
+        ----------
+        locations : vector or array of vectors, optional
+            The locations to compute the directions to and the distances to. The default is (0., 0., 0.).
+
+        Returns
+        -------
+        array of vectors
+            The normalized axis between the items and the locations.
+        array of floats
+            The distances between the items and the locations
+        """
+        
+        locs = self.locations - locations
+        
+        dists = np.linalg.norm(locs, axis=1)
+        return get_axis(locs), dists
+    
+    # ---------------------------------------------------------------------------
+    # Set the spherical coordinates
+    
+    def set_axis_distances(self, axis=None, distances=None, locations=(0., 0., 0.)):
+        """Change the locations using spherical axis and distances to given locations.
+
+        Parameters
+        ----------
+        axis : array of vectors, optional
+            The directions between the items and the locations. The default is None.
+        distances : array of floats, optional
+            The distances between the items and the locations. The default is None.
+        locations : vector or array of vectors, optional
+            The locations from which to locate the items. The default is (0., 0., 0.).
+
+        Returns
+        -------
+        None.
+        """
+        
+        # ----- Default values
+        if axis is None or distances is None:
+            a, d = self.get_axis_distances(locations)
+            if axis is None:
+                axis = a
+            if distances is None:
+                distances = d
+                
+        # ----- Change the locations
+        self.locations = locations + axis*np.expand_dims(distances, 1)
+        
+    # ---------------------------------------------------------------------------
     # Distances
     
     def distances(self, locations=(0, 0, 0)):
+        """Distances to given locations
+
+        Parameters
+        ----------
+        locations : vector or array of vectors, optional
+            The location(s) to compte the distance to. The default is (0, 0, 0).
+
+        Returns
+        -------
+        array of floats
+            The distances.
+        """
+        
         return np.linalg.norm(self.locations - locations, axis=1)
     
     def proximities(self, locations=(0, 0, 0), bounds=(0., 1.)):
+        """A normalized factor between 0 and 1 giving the proximity to locations.
+        
+        The result is 0 if the distance is less than the lower bound, 1 if the distance
+        is greater than the upper bound, and between 0 and 1 for intermediary values.
+
+        Parameters
+        ----------
+        locations : vector or array of vectors, optional
+            The locations to compute the proximity to. The default is (0, 0, 0).
+        bounds : couple of floats, optional
+            The bounds where to map the interval [0, 1] of the result. The default is (0., 1.).
+
+        Returns
+        -------
+        array of floats
+            The factors.
+        """
+        
         return np.clip((self.distances(locations) - bounds[0]) / (bounds[1] - bounds[0]), 0, 1)
     
-    @property
-    def directions(self):
-        locs = self.locations
-        return locs/(np.resize(np.linalg.norm(locs, axis=1), (3, len(self))).transpose())
+    def directions(self, locations=(0., 0., 0.)):
+        """The directions towards given locations.
+        
+        Return an array of normalized vectors.
 
-    @directions.setter
-    def directions(self, value):
-        ds = np.resize(value, (len(self), 3))
-        ns = self.radius/np.linalg.norm(ds, axis=1)
-        self.locations = ds*(np.resize(ns, (3, len(self))).transpose())
+        Parameters
+        ----------
+        locations : vector or array of vectors, optional
+            The locations to compute the directions to. The default is (0., 0., 0.).
+
+        Returns
+        -------
+        array of vectors
+            The normalized vectors towards the locations.
+        """
+        
+        return get_axis(self.locations - locations)
         
     @property
     def radius(self):
-        return np.linalg.norm(self.locations, axis=1)
+        return distances()
     
     @radius.setter
-    def radius(self, d):
-        self.locations = self.directions*(np.resize(d, (3, len(self))).transpose())
+    def radius(self, value):
+        self.set_axis_distances(distances=value)
         
     # ---------------------------------------------------------------------------
     # Orientation
     
     def orient(self, target, axis=None, up=None):
         if axis is None:
-            try:
-                axis = self.track_axis
-            except:
-                axis = 'Z'
-                
+            axis = self.track_axis
+
         if up is None:
-            try:
-                up = self.up_axis
-            except:
-                up = 'Y'
+            up = self.up_axis
             
         self.quaternions = q_tracker(axis, target=target, up=up)
         
@@ -427,8 +517,31 @@ class Transformations():
         self.orient(location - self.locations, axis=axis, up=up)
         
 
+class ObjectTransformations(Transformations):
+    
+    def __init__(self, obj, world=True):
+        super().__init__(count=1)
+        self.obj   = obj
+        self.world = world
+        if self.world:
+            self.tmat_ = (np.array(obj.matrix_world).transpose()).reshape(1, 4, 4)
+        else:
+            self.tmat_ = (np.array(obj.matrix_basis).transpose()).reshape(1, 4, 4)
+            
+    def apply(self):
+        if self.world:
+            self.obj.matrix_world = self.tmat[0]
+        else:
+            self.obj.matrix_basis = self.tmat[0]
+    
+    @property
+    def euler_order(self):
+        return self.obj.rotation_euler.order
+    
+    @property
+    def track_axis(self):
+        return self.obj.track_axis
 
-
-
-
-
+    @property
+    def up_axis(self):
+        return self.obj.up_axis

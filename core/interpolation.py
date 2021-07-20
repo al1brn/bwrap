@@ -211,7 +211,7 @@ class Rect():
             return r
     
     def expand(self, P):
-        """Convert a point from the unitary from to the rectangle.
+        """Convert a point from the unitary form to the rectangle.
 
         Parameters
         ----------
@@ -881,6 +881,45 @@ class BCurve():
             pass
 
         kfs = []
+        for i in range(len(self.points)):
+            P = self.points[i]
+            if i == len(self.points)-1:
+                easing = self[i-1]
+                rect   = self.easing_rect(i-1)
+            else:
+                easing = self[i]
+                rect   = self.easing_rect(i)
+                
+            kf = Kf()
+            kf.handle_left  = (-1., 0.)
+            kf.handle_right = ( 1., 0.)
+            
+            if i > 0:
+                kf.handle_left = self.easing_rect(i-1).expand(self[i-1].P2)
+                
+            kf.co            = np.array(P)
+            kf.handle_right  = rect.expand(easing.P1)
+
+            kf.interpolation = easing.name
+            kf.easing        = easing.ease
+            
+            p, a = easing.get_peramp(rect)
+            kf.amplitude     = a
+            kf.period        = p
+            
+            kf.back          = easing.back
+            
+            if i == 0:
+                kf.handle_left = P - np.array(kf.handle_right - P)
+            if i == len(self.points)-1:
+                kf.handle_right = P + np.array(P - kf.handle_left)
+
+            kfs.append(kf)
+
+        return kfs
+        
+        
+        
         for i in range(len(self)):
             easing = self[i]
             rect   = self.easing_rect(i)
@@ -889,14 +928,18 @@ class BCurve():
             
             if i > 0:
                 kf.handle_left = self.easing_rect(i-1).expand(self[i-1].P2)
+            else:
+                kf.handle_left = -rect.expand(easing.P1)
+                
                 
             kf.co            = rect.P0
-            kf.handle_right  = rect.expand(self.P2)
+            print("keyframe_points", type(easing), easing)
+            kf.handle_right  = rect.expand(easing.P1)
 
             kf.interpolation = easing.name
             kf.easing        = easing.ease
             
-            p, a = easing.get_peramp(rect, easing.perdio, easing.amplitude)
+            p, a = easing.get_peramp(rect)
             kf.amplitude     = a
             kf.period        = p
             
@@ -976,10 +1019,10 @@ class BCurve():
         self.points = np.array(point).reshape(1, 2)
         
     # ---------------------------------------------------------------------------
-    # Add a curve
+    # Add an easing the curve
     # End point is used as start point if it is located before the first existing one
     
-    def add(self, end_point, easing=Easing('LINEAR', 'AUTO')):
+    def add_easing(self, end_point, easing=Easing('LINEAR', 'AUTO')):
         """Add and easing to the curve.
 
         Typical use is to append a new easing at the end of existing ones,
@@ -998,6 +1041,9 @@ class BCurve():
         int
             The index of the created easing with the BCurve.
         """
+        
+        if type(easing) is str:
+            easing = Easing(easing, 'AUTO')
         
         zero = 0.0001
         point = np.array(end_point, np.float)
@@ -1044,6 +1090,35 @@ class BCurve():
         self.easings.append(easing)
         self.points = np.append(self.points, [point], axis=0)
         return len(self)-1
+    
+    # ---------------------------------------------------------------------------
+    # Add an easing the curve
+    # End point is used as start point if it is located before the first existing one
+    
+    def add(self, end_point, interpolation='BEZIER', easing='AUTO'):
+        """Add and easing to the curve.
+
+        Typical use is to append a new easing at the end of existing ones,
+        but if the end point is not after the current end point, the easing
+        is insert within the existing ones.
+
+        Parameters
+        ----------
+        end_point : point
+            End of the easing.
+        interpolation : str, optional
+            The interpolation type. The default is 'BEZIER'.
+        easing : str, optional
+            The easing. The default is 'AUTO'.
+
+        Returns
+        -------
+        int
+            The index of the created easing with the BCurve.
+        """
+        
+        return self.add_easing(end_point, Easing(interpolation, easing))
+    
     
     # ---------------------------------------------------------------------------
     # Compute
