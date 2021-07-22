@@ -37,12 +37,12 @@ zero = 1e-6
 # -----------------------------------------------------------------------------------------------------------------------------
 # Get an axis
 
-def get_axis(axis, default=(0, 0, 1)):
+def get_axis(axis):
     """Axis can be defined aither by a letter or a vector.
 
     Parameters
     ----------
-    staraxis: array
+    axis: array
         array of vector specs, ie triplets or letters: [(1, 2, 3), 'Z', (1, 2, 3), '-X']
 
     Returns
@@ -97,6 +97,16 @@ def get_axis(axis, default=(0, 0, 1)):
         return axiss[0]
     else:
         return axiss
+    
+    
+# -----------------------------------------------------------------------------------------------------------------------------
+# A utility given the index of an axis and its sign
+
+def signed_axis_index(axis):
+    axs = get_axis(axis)
+    i = np.argmax(abs(axs))
+    return i, -1 if axs[i] < 0 else 1
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Dump the content of an array
@@ -215,67 +225,106 @@ def _str(array, dim=1, vtype='scalar'):
 # -----------------------------------------------------------------------------------------------------------------------------
 # Vectors geometry
 
-
 # -----------------------------------------------------------------------------------------------------------------------------
 # Norm of vectors
 
-def norm(v):
-    """Norm of vectors.
+def vect_norm(v, null_to_one=False):
+    """Compute the norm of an array of vectors.
+    
+    Can force null values to one.
 
     Parameters
     ----------
-    v: vector or array of vectors
-
-    Return
-    ------
-    float or array of float
-        The vectors norms
-    """
-
-    vs = np.array(v, ftype)
-    return np.linalg.norm(vs, axis=len(vs.shape)-1)
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# Noramlizd vectors
-
-def normalized(v):
-    """Normalize vectors.
-
-    Parameters
-    ----------
-    v: vector or array of vectors
+    v : array of vectors
+        The vectors to normalized.
+    null_to_one : bool, optional
+        Set to 1 the null values. The default is False.
 
     Returns
     -------
-    vector or array of vectors
-        The normalized vectors
+    array of vectors
+        The normalized vectors.
     """
     
-    vs = np.array(v)
-
-    if vs.shape == ():
-        return 1.
+    dim = np.shape(v)[-1]
+    count = max(1, np.size(v) // dim)
     
-    elif len(vs.shape) == 1:
-        nrm = np.linalg.norm(vs)
-        if nrm < zero:
-            nv = np.zeros(vs.shape[0], ftype)
-            nv[-1] = 1
-            return nv
+    # ---------------------------------------------------------------------------
+    # Only one vector
+    
+    if count == 1 and len(np.shape(v)) <= 1:
+        n = np.linalg.norm(v)
+        if null_to_one and n < zero:
+            return 1.
         else:
-            return vs / nrm
-        
+            return n
+
+    # ---------------------------------------------------------------------------
+    # Several ones
+
+    vs = np.resize(v, (count, dim))
+    if null_to_one:
+        nrms = np.linalg.norm(vs, axis=1)
+        nrms[nrms < zero] = 1
+        return nrms
     else:
-        d = len(vs.shape) - 1
-        nrms = np.linalg.norm(vs, axis=d)
-        nrms[nrms<zero] = 1
-        return vs / np.expand_dims(nrms, d)
+        return np.linalg.norm(vs, axis=1)
+    
+# -----------------------------------------------------------------------------------------------------------------------------
+# Noramlizd vectors
+
+def vect_normalize(v, null_replace=None):
+    """Normalize and array of vector.
+    
+    Null vectors are replaced by null_replace if not None.
+
+    Parameters
+    ----------
+    v : array of vectors
+        DESCRIPTION.
+    nulls : vector, optional
+        The replacement of null vectors if not None. The default is None.
+
+    Returns
+    -------
+    Array of vectors.
+        The normalized vectors.
+    """
+    
+    dim = np.shape(v)[-1]
+    count = max(1, np.size(v) // dim)
+    
+    # ---------------------------------------------------------------------------
+    # Only one vector
+    
+    if count == 1 and len(np.shape(v)) <= 1:
+        n = np.linalg.norm(v)
+        if n <= zero:
+            return np.array(v, np.float) if null_replace is None else np.array(null_replace, np.float)
+        else:
+            return np.array(v) / n
+        
+    # ---------------------------------------------------------------------------
+    # Several ones
+
+    vs = np.resize(v, (count, dim))
+    nrms = np.linalg.norm(vs, axis=1)
+    null = nrms < zero
+    
+    nrms[null] = 1
+    vs = vs / np.expand_dims(nrms, axis=1)
+    
+    if null_replace is not None:
+        vs[null] = np.array(null_replace, np.float)
+        
+    return vs
+
 
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Dot product between arrays of vectors
 
-def v_dot(v, w):
+def vect_dot(v, w):
     """Dot products between vectors.
     
     if v (w) is a single vector, dot all along w (v).
@@ -319,7 +368,7 @@ def v_dot(v, w):
     # ----- No more that two dimensions
     if len(vs.shape) > 2 or len(ws.shape) > 2:
         raise RuntimeError(
-            error_title % "v_dot" +
+            error_title % "vect_dot" +
             f"The function only applies on two arrays of vectors, not on {vs.shape} dot {ws.shape}"
             )
 
@@ -338,7 +387,7 @@ def v_dot(v, w):
     # ----- The array must have the same size
     if v_count != w_count:
         raise RuntimeError(
-            error_title % "v_dot" +
+            error_title % "vect_dot" +
             f"The two arrays of vectors don't have the same length: {v_count} ≠ {w_count}\n"
             )
 
@@ -347,7 +396,7 @@ def v_dot(v, w):
 # -----------------------------------------------------------------------------------------------------------------------------
 # Cross product between arrays of vectors
 
-def cross(v, w):
+def vect_cross(v, w):
     """Cross product between vectors.
 
     Parameters
@@ -359,25 +408,26 @@ def cross(v, w):
     -------
     vector or array of vectors
     """
-
+    
+    v_count = np.size(v) // 3
+    w_count = np.size(w) // 3
+    
     # ----- Make sure we have arrays
-    vs = np.array(v, ftype)
-    ws = np.array(w, ftype)
-
-    if (len(vs.shape) == 0) or (len(ws.shape) == 0) or \
-            (len(ws.shape) > 2) or (len(ws.shape) > 2) or \
-            (vs.shape[-1] != 3) or (ws.shape[-1] != 3):
+    if not ((v_count == 1) or (w_count == 1) or (v_count == w_count)):
         raise RuntimeError(
-            error_title % "cross" +
-            f"Cross error: cross product need two 3-vectors or arrays of 3-vectors: {vs.shape} x {vs.shape}\n"
+            error_title % "vect_cross" +
+            f"cross product needs two arrays of vectors of the same length, not: {np.shape(v)} x {np.shape(w)}\n"
             )
-
-    return np.cross(vs, ws)
+        
+    if v_count == 1 and w_count == 1 and len(np.shape(v)) == 1 and len(np.shape(w)) == 1:
+        return np.cross(v, w)
+    
+    return np.cross(np.reshape(v, (v_count, 3)), np.reshape(w, (w_count, 3)))
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Angles between vectors
 
-def v_angle(v, w):
+def vect_angle(v, w):
     """Angles between vectors.
 
     Parameters
@@ -391,20 +441,62 @@ def v_angle(v, w):
         The angle between the vectors
     """
     
-    count = max(np.size(v)//3, np.size(w)//3, 1)
-    vs = np.resize(get_axis(v), (count, 3))
-    ws = np.resize(get_axis(w), (count, 3))
+    return np.arccos(vect_dot(vect_normalize(v), vect_normalize((w))))
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# Plane (ie vector perppendicular to the two vectors)
+
+def vect_perpendicular(v, w, null_replace=(0, 0, 1)):
+    """Compute a normalized vector perpendicular to a couple of vectors.
+
+    Parameters
+    ----------
+    v : array of vectors
+        First vectors.
+    w : array of vectors
+        Second vectors.
+    null_replace : vector, optional
+        The value to use when the tw o vectors are colinear. The default is (0, 0, 1).
+
+    Returns
+    -------
+    array of vectors
+        The normalized vectors perpendicular to the given vectors.
+    """
     
-    single = False
-    if count == 1:
-        single = (len(np.shape(v)) == 1) and (len(np.shape(w)) == 1)
-        
-    ags = np.arccos(np.maximum(-1, np.minimum(1, np.einsum('...i,...i', vs, ws))))
-        
-    if single:
-        return ags[0]
+    return vect_normalize(vect_cross(v, w), null_replace=null_replace)
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# Plane (ie vector perpendicular to the two vectors)
+
+def vect_plane_projection(v, perps):
+    """Projection of a vector on to a plane.
+    
+    The plane is either specified by its perpendicular vector or by two vectors
+
+    Parameters
+    ----------
+    v : array of vectors
+        The vectors to project.
+    perps : array of normalized vectors, optional
+        Planes definition by normalized peprpendiculars. The default is None.
+
+    Returns
+    -------
+    Array of vectors.
+        The projections of vectors in the planes
+    """
+    
+    perps = get_axis(perps)
+    count = max(np.size(v) // 3, len(perps))
+
+    vs = np.resize(v, (count, 3))
+    vs = vs - perps*np.expand_dims(vect_dot(vs, perps), axis=1)
+    
+    if count == 1 and len(np.shape(v)) == 1:
+        return vs[0]
     else:
-        return ags
+        return vs
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -465,72 +557,6 @@ def m_rotate(m, v):
     vs = np.resize(v, (nv, 3))
     
     return np.einsum('...jk,...j', ms, vs).reshape(np.shape(v))
-
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# Transpose matrices
-
-def m_transpose_DEPR(m):
-    """Transpose a matrix.
-
-    Parameters
-    ----------
-    m: array(n x n) or array of array(n x n)
-        The matrices to transpose
-
-    Returns
-    -------
-    array(n x n) or array of array(n x n)
-    """
-
-    ms = np.array(m, ftype)
-
-    if not(
-        ((len(ms.shape) > 1) and (ms.shape[-2] == ms.shape[-1])) and \
-        (len(ms.shape) <= 3) \
-        ):
-        raise RuntimeError(
-            error_title % "m_transpose" +
-            f"transpose error: argument must be a matrix or an array of matrices. Impossible to transpose shape {ms.shape}.\n" +
-            _str(ms, 2)
-            )
-
-    # A single matrix
-    if len(ms.shape) == 2:
-        return np.transpose(ms)
-
-    # Array of matrices
-    return np.transpose(ms, (0, 2, 1))
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# Invert matrices
-
-def m_invert_DEPR(m):
-    """Invert a matrix.
-
-    Parameters
-    ----------
-    m: array(n x n) or array of array(n x n)
-        The matrices to invert
-
-    Returns
-    -------
-    array(n x n) or array of array(n x n)
-    """
-
-    ms = np.array(m, ftype)
-
-    if not(
-        ((len(ms.shape) > 1) and (ms.shape[-2] == ms.shape[-1])) and \
-        (len(ms.shape) <= 3) \
-        ):
-        raise RuntimeError(
-            error_title % "m_invert" +
-            f"invert error: argument must be a matrix or an array of matrices. Impossible to invert shape {ms.shape}.\n" +
-            _str(ms, 2)
-            )
-
-    return np.linalg.inv(ms)
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Convert a matrix to euler
@@ -1216,44 +1242,8 @@ def e_to_quat(e, order='XYZ'):
     i, j, k = euler_i[order]
     return q_mul(qs[k], q_mul(qs[j], qs[i]))
 
-
-
-
-
-
-
-
-
-
-
-
-    # OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD OLD 
-
-    es = np.array(e, ftype)
-
-    if not ( ( (len(es.shape) == 1) and (len(es)==3) ) or ( (len(es.shape) == 2) and (es.shape[-1]==3)) ):
-        raise RuntimeError(
-            error_title % "e_to_quat" +
-            f"e_to_quat error: argument must be euler triplets, a vector(3) or and array of vectors(3), not shape {es.shape}\n" +
-            _str(es, 1, 'euler')
-            )
-
-
-
-    if len(es.shape) == 1:
-        qs = [quaternion((1, 0, 0), es[0]),
-              quaternion((0, 1, 0), es[1]),
-              quaternion((0, 0, 1), es[2])]
-    else:
-        qs = [quaternion((1, 0, 0), es[:, 0]),
-              quaternion((0, 1, 0), es[:, 1]),
-              quaternion((0, 0, 1), es[:, 2])]
-
-    i, j, k = euler_i[order]
-    return q_mul(qs[k], q_mul(qs[j], qs[i]))
-
 # -----------------------------------------------------------------------------------------------------------------------------
-# Get a quaternion which orient a given axis towards a target direction
+# Get a quaternion which orients a given axis towards a target direction.
 # Another contraint is to have the up axis oriented towards the sky
 # The sky direction is the normally the Z
 #
@@ -1262,8 +1252,8 @@ def e_to_quat(e, order='XYZ'):
 # - up     : The up direction wich must remain oriented towards the sky
 # - sky    : The up direction must be rotated in the plane (target, sky)
 
-def q_tracker(axis, target, up='Y', sky='Z', no_up = False):
-    """Compute a quaternion which rotate an axis towards a target.
+def q_tracker(axis, target, up='Y', sky='Z', no_up=False):
+    """Compute a quaternion which rotates an axis towards a target.
     
     The rotation is computed using a complementary axis named 'up' which
     must be oriented upwards.
@@ -1274,6 +1264,8 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up = False):
         - 'up' points such as 'up' cross 'target' is perpendicular to vertical axis.
         - 'sky' is used to replace the 'Z' direction.
     
+    This algorithm is more general than m_tracker since axis, up can be any vectors.
+    The vertical is also a parameter, nor necessarily the vertical axis.
 
     Parameters
     ----------
@@ -1397,30 +1389,28 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up = False):
         return qrot[0]
     else:
         return qrot
-
-
+    
 # -----------------------------------------------------------------------------------------------------------------------------
-# Get a quaternion which orient a given axis towards a target direction
-# Another contraint is to have the up axis oriented towards the sky
-# The sky direction is the normally the Z
+# Get a matrix which orients a given axis towards a target direction.
+# Another contraint is to have the up axis oriented towards positive Z.
 #
 # - axis   : The axis to rotate toward the target axis
 # - target : Thetarget direction for the axis
 # - up     : The up direction wich must remain oriented towards the sky
-# - sky    : The up direction must be rotated in the plane (target, sky)
-
-def q_tracker_OLD(axis, target, up='Y', sky='Z', no_up = True):
-    """Compute a quaternion which rotate an axis towards a target.
+   
+def m_tracker(axis, target, up='Y'):
+    """Compute a matrice which rotates an axis towards a target.
     
     The rotation is computed using a complementary axis named 'up' which
     must be oriented upwards.
-    The upwards direction is Z by default and can be overriden by the argument 'sky'.
     
     After rotation:
         - 'axis' points towards 'target'.
         - 'up' points such as 'up' cross 'target' is perpendicular to vertical axis.
         - 'sky' is used to replace the 'Z' direction.
     
+    This algorithm is less general than q_tracker since axis, up must be one of the
+    three axis, or the opposite.
 
     Parameters
     ----------
@@ -1430,176 +1420,95 @@ def q_tracker_OLD(axis, target, up='Y', sky='Z', no_up = True):
         The direction the axis must be oriented towards.
     up : vector, optional
         The axis which must be oriented upwards. The default is 'Y'.
-    sky : vector, optional
-        The direction of the sky, i.e. the upwards direction. The default is 'Z'.
-    no_up : bool, optional
-        Don't rotate around the target axis. The default is True.
-
-    Raises
-    ------
-    RuntimeError
-        If array lengths are not compatible.
 
     Returns
     -------
-    array of quaternions
-        The quaternions that can be used to rotate the axis according the arguments.
+    array of matrices
+        The matrices that can be used to rotate the axis according the arguments.
     """
     
-    axs = get_axis(axis)       # Vectors to rotate
-    txs = get_axis(target)     # The target direction after rotation
-
     # ---------------------------------------------------------------------------
-    # Let's align the array lengths
-    # We work on (n, 3)
-
-    single_axis   = len(axs.shape) == 1
-    single_target = len(txs.shape) == 1
-    a_count       = 1 if single_axis   else len(axs)
-    t_count       = 1 if single_target else len(txs)
-    count         = max(a_count, t_count)
-
-    if not ( (a_count in [1, count]) and (t_count in [1, count]) ):
-        raise RuntimeError(
-            error_title % "q_tracker" +
-            f"q_tracker error: the arrays of axis and targets must have the same size: {a_count} ≠ {t_count}\n" +
-            _str(axs, 3), _str(txs, 3)
-            )
-
-    if a_count < count:
-        axs = np.resize(axs, (count, 3))
-    if t_count < count:
-        txs = np.resize(txs, (count, 3))
-
-    if len(axs.shape) == 1:
-        axs = np.array([axs])
-    if len(txs.shape) == 1:
-        txs = np.array([txs])
-
+    # Make sure we manage an array of vectors
+    
+    count = max(1, np.size(target)//3)
+    txs = np.resize(get_axis(target), (count, 3))
+    
     # ---------------------------------------------------------------------------
-    # First rotation will be made around a vector perp to  (axs, txs)
-
-    vrot = cross(axs, txs)  # Perp vector with norm == sine
-    crot = v_dot(axs, txs)    # Dot products = cosine
-    qrot = quaternion(vrot, np.arccos(np.maximum(-1, np.minimum(1, crot))))
-
-    # Particular cases = axis and target are aligned
-    sames = np.where(abs(crot - 1) < zero)[0]
-    opps  = np.where(abs(crot + 1) < zero)[0]
-
-    # Where they are the same, null quaternion
-    if len(sames) > 0:
-        qrot[sames] = quaternion((0, 0, 1), 0)
-
-    # Where they are opposite, we must rotate 180° around a perp vector
-    if len(opps) > 0:
-        # Let's try a rotation around the X axis
-        vx = cross(axs[opps], (1, 0, 0))
-
-        # Doesnt' work where the cross product is null
-        xzs = np.where(norm(vx) < zero)[0]
-        rem = np.arange(len(vx))
-
-        # If cross product with X is null, it's where vrot == X
-        # we can rotate 180° around Y
-        if len(xzs) > 0:
-            idx = np.arange(count)[opps][xzs]
-            qrot[idx] = quaternion((0, 1, 0), pi)
-            rem = np.delete(rem, xzs)
-
-        # We can use this vector to rotate 180°
-        if len(rem) > 0:
-            idx = np.arange(count)[opps][rem]
-            qrot[idx] = quaternion(vx, pi)
-
-    # No up management
-    if no_up:
-        if single_axis and single_target:
-            return qrot[0]
-        else:
-            return qrot
-
-
-    # ---------------------------------------------------------------------------
-    # This rotation places the up axis in a certain direction
-    # An additional rotation around the target is required
-    # to put the up axis in the plane (target, up_direction)
-
-    upr = q_rotate(qrot, get_axis(up))
-
-    # Projection in the plane perpendicular to the target
-    J = upr - v_dot(upr, txs)*txs
-
-    # We need the normalized version of this vector
-    Jn = norm(J)
-
-    # Norm can be null (when the up direction is // to the target)
-    # In that case, nothing to do
-    nzs = np.where(abs(Jn) > zero)[0]
-
-    if len(nzs) > 0:
-
-        # Normalized version of the vector to rotate
-        J[nzs] /= Jn[nzs]
-
-        # Target axis and J are two perpendicular normal vectors
-        # They are considered to form the two first vector of a base
-        # I = txs
-        # J = normalized projection of up perpendicular to I
-        # We want to rotate the J vector around I to align it along the sky axis
-
-        # Let's compute K
-        K = cross(txs[nzs], J[nzs])
-
-        # We are interested by the components of the sky vector on J and K
-        sks = get_axis(sky)
-        q2  = quaternion(txs[nzs], np.arctan2(v_dot(sks, K), v_dot(sks, J[nzs])))
-
-        qrot[nzs] = q_mul( q2, qrot[nzs])
-
-
-    # Let's return a single quaternion if singles were passed
-
-    if single_axis and single_target:
-        return qrot[0]
+    # For the sake of clarity, X is the name of the axis to point towards target,
+    # Y is the name of the up axis and Z is the third axis
+    
+    # Each axis is taken in the positive direction plus an additional var sx, sy, sz
+    # to keep the sign
+    
+    # ----- X : the axis to orient towards target
+    
+    X = get_axis(axis)
+    ix = np.argmax(np.abs(X))
+    sx = 1 if X[ix] > 0 else -1
+    X = np.zeros(3, np.float)
+    X[ix] = 1
+    
+    # ----- Y : the axis to up axis
+    
+    Y = get_axis(up)
+    if abs(np.dot(X, Y)) > zero:
+        for y in 'XYZ':
+            Y = get_axis(y)
+            if abs(np.dot(X, Y)) < zero:
+                break
+    iy = np.argmax(np.abs(Y))
+    sy = 1 if Y[iy] > 0 else -1
+    Y = np.zeros(3, np.float)
+    Y[iy] = 1
+            
+    # ----- Z : the third axis
+    
+    # Get the third index in (1, 2, 3) with possible negative value
+    sz = 1
+    iz = np.array(((0, 3, -2), (-3, 0, 1), (2, -1, 0)))[ix, iy]
+    if iz < 0:
+        iz = -iz-1
+        sz = -1
     else:
-        return qrot
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# Rotate vertices around a pivot towards a direction
-
-def rotate_towards(v, target, center=(0., 0., 0.), axis='Z', up='Y', no_up=False):
-    """Rotate vertices around a pivot towards a direction
-
-    Parameters
-    ----------
-    v : array of vertices
-        The vertices to rotate.
-    target : array of vectors
-        The directions to orient the vertices to.
-    center : array of vertices, optional
-        The pivot to rotate around. The default is (0., 0., 0.).
-    axis : array of vectors, optional
-        The axis to orient towards the target. The default is 'Z'.
-    up : array of vectors, optional
-        The up direction. The default is 'Y'.
-    no_up : bool, optional
-        Don'st compute up. The default is False.
-
-    Returns
-    -------
-    array of vertices
-        The rotated vertices.
-    """
-
-    # The rotation quaternion
-    q = q_tracker(axis, target, up, no_up=no_up)
-
-    # Vertices and centers
-    vs = np.array(v, ftype)
-    cs = np.array(center, ftype)
-
-    return q_rotate(q, vs-cs) + cs
+        iz -= 1
+    Z = np.zeros(3, np.float)
+    Z[iz] = 1
+    
+    # ---------------------------------------------------------------------------
+    # The resulting matrix is composed of three normalized vectors:
+    # ix --> target
+    # iz --> perpendicular to the vertical plane containing the target
+    # iy --> perpendicular to the two previous ones
+    
+    # Let's compute the perpendicular to the vertical plane
+    # This vector is the rotated direction of Z. Hence the cross order is:
+    # X' (x) Y' --> Z'
+    
+    N = np.cross(txs, np.resize((0., 0., 11), (count, 3)))
+    
+    # Theses vectors can be null is the target is Z
+    
+    N_norm = np.linalg.norm(N, axis=1)
+    not_null = np.where(N_norm > zero)
+    N[not_null] = N[not_null] / np.expand_dims(N_norm[not_null], axis=1)
+    
+    # Let's choose Y when the the target is vertical
+    N[N_norm <= zero] = (0, 1, 0)
+    
+    # Now, let's compute the third vector
+    up_target = np.cross(N, txs)
+    
+    # ----- We can build the resulting matrix
+    
+    M = np.zeros((count, 3, 3), np.float)
+    M[:, ix] = txs * sx
+    M[:, iy] = up_target * sy
+    M[:, iz] = N * sz
+    
+    if count == 1 and len(np.shape(target)) <= 1:
+        return M[0]
+    else:
+        return M
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -1640,7 +1549,13 @@ def tmatrix(translation=(0., 0., 0.), mat=((1., 0., 0.), (0., 1., 0.), (0., 0., 
     # Make sure the arguments are at the correct shape
     ntrans = np.resize(translation, (count, 3))
     nmat   = np.resize(mat,         (count, 3, 3))
-    nscale = np.resize(scale,       (count, 3))
+
+    if len(np.shape(scale)) == 0:
+        scale = np.resize(scale, 3)
+    elif len(np.shape(scale)) == 1 and len(scale) == count:
+        scale = np.resize(scale, (3, count)).transpose()
+        
+    nscale = np.resize(scale, (count, 3))
     
     nmat[:, 0, :3] *= np.expand_dims(nscale[:, 0], 1)
     nmat[:, 1, :3] *= np.expand_dims(nscale[:, 1], 1)

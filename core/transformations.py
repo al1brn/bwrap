@@ -35,13 +35,20 @@ class Transformations():
     the lock_apply method calls apply method only when the transformation is unlocked.
     """
     
-    def __init__(self, translation=(0., 0., 0.), mat=((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)), scale=(1., 1., 1.), count=None):        
-        self.tmat_ = tmatrix(translation, mat, scale, count)
+    def __init__(self, locations=(0., 0., 0.), matrices=((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)), scales=(1., 1., 1.), count=None):        
+        self.tmat_ = tmatrix(locations, matrices, scales, count)
         self.locked = 0
         
-    @classmethod
-    def FromTMat(cls, tmat):
-        trans = cls()
+    def __repr__(self):
+        n = len(self.tmat)
+        np.set_printoptions(precision=3)
+        s = f"<{self.__class__.__name__}: len={n}\n {self.tmat[:min(3, n)]}\n>"
+        np.set_printoptions(suppress=True)
+        return s
+        
+    @staticmethod
+    def FromTMat(tmat):
+        trans = Transformations(count=len(tmat))
         trans.tmat_ = tmat
         return trans
     
@@ -153,22 +160,50 @@ class Transformations():
         count = verts4.shape[-2]*len(self.tmat)
         return np.matmul(verts4, self.tmat).reshape(count, 4)
 
-    def transform_verts3(self, verts):
-        return self.transform_verts4(
-            np.column_stack(verts, np.ones(len(verts))))[:, :3]
-    
     def transform_verts43(self, verts):
         return self.transform_verts4(verts)[:, :3]
+
+    def transform(self, verts3):
+        
+        if len(verts3.shape) == 1:
+            return self.transform(verts3.reshape(1, 3))[0]
+        
+        elif len(verts3.shape) == 2:
+            return self.transform_verts4(
+                np.column_stack((verts3, np.ones(len(verts3)))))[:, :3]
+        
+        elif len(verts3.shape) == 3:
+            col_shape = (verts3.shape[0] * verts3.shape[1], 3)
+            shape4 = list(verts3.shape)
+            shape4[-1] = 4
+            return self.transform_verts4(np.reshape(
+                np.column_stack((verts3.reshape(col_shape), np.ones(col_shape[0]))), shape4))[:, :3]
+        else:
+            raise RuntimeError(f"Invalid shape for the array of vectors to transform: {verts3.shape}")
+    
+    # ---------------------------------------------------------------------------
+    # Invert rotation
+    
+    def inverse(self):
+        mat, scales = self.mat_scales
+        scales[scales==0] = 1.
+        return Transformations(locations=-self.locations, matrices=mat.transpose((0, 2, 1)), scales=scales)
+    
+    def inv_rotation(self, verts3):
+        return Transformations(matrices=self.matrices.transpose((0, 2, 1))).transform(verts3)
     
     # ---------------------------------------------------------------------------
     # Transform other transformation
     
     def compose_after(self, other):
-        self.tmat = np.matmul(other.tmat, self.tmat)
+        self.tmat_ = np.matmul(other.tmat, self.tmat)
         self.lock_apply()
     
     def compose_before(self, other):
-        self.tmat = np.matmul(self.tmat, other.tmat)
+        locs = self.locations
+        self.locations = 0
+        self.tmat_ = np.matmul(self.tmat, other.tmat)
+        self.locations += locs
         self.lock_apply()
 
     # ---------------------------------------------------------------------------
@@ -502,19 +537,85 @@ class Transformations():
         self.set_axis_distances(distances=value)
         
     # ---------------------------------------------------------------------------
+    # Normals orientation
+    
+    @property
+    def normals(self):
+        iup, sup = signed_axis_index(self.up_axis)
+        return self.matrices[:, :, iup]*sup
+
+    @normals.setter
+    def normals(self, value):
+        relative = False
+        if relative:
+            if True:
+                self.rotate_quat(q_tracker(get_axis(self.up_axis), np.resize(self.inv_rotation(value), (len(self), 3)), no_up=True))
+            else:
+                ups = self.transform(get_axis(self.up_axis))
+                vs = np.resize(value, (len(self), 3))
+                q = q_tracker(ups, vs, no_up=True)
+                self.rotate_quat(q)
+        else:
+            self.quaternions = q_tracker(get_axis(self.up_axis), np.resize(get_axis(value), (len(self), 3)), no_up=True)
+
+    # ---------------------------------------------------------------------------
     # Orientation
     
-    def orient(self, target, axis=None, up=None):
+    def orient(self, target, axis=None, up=None, sky='Z', no_up=False):
         if axis is None:
             axis = self.track_axis
 
         if up is None:
             up = self.up_axis
             
-        self.quaternions = q_tracker(axis, target=target, up=up)
+        #self.matrices = m_tracker(axis, target, up)
+        self.quaternions = q_tracker(axis, target=target, up=up, sky=sky, no_up=no_up)
         
-    def track_to(self, location, axis=None, up=None):
-        self.orient(location - self.locations, axis=axis, up=up)
+    def track_to(self, location, axis=None, up=None, sky='Z', no_up=False):
+        self.orient(location - self.locations, axis=axis, up=up, sky=sky, no_up=no_up)
+        
+    # ---------------------------------------------------------------------------
+    # Relative
+    
+    def rotate(self, axis, angle):
+        tf = Transformations()
+        tf.quaternions = quaternion(axis, angle)
+        self.compose_after(tf)
+        
+    def rotated(self, axis, angle):
+        tf = Transformations()
+        tf.quaternions = quaternion(axis, np.radians(angle))
+        self.compose_after(tf)
+        
+    def rotate_euler(self, eulers):
+        tf = Transformations()
+        tf.matrices = e_to_matrix(eulers, self.euler_order)
+        self.compose_after(tf)
+
+    def rotate_eulers(self, eulers):
+        tf = Transformations()
+        tf.eulers = np.radians(eulers)
+        self.compose_after(tf)
+        
+    def rotate_mat(self, mat):
+        tf = Transformations()
+        tf.matrices = mat
+        self.compose_after(tf)
+        
+    def rotate_quat(self, quat):
+        tf = Transformations()
+        tf.quaternions = quat
+        self.compose_after(tf)
+        
+    def rotate_vector(self, axis, target):
+        tf = Transformations()
+        tf.quaternions = q_tracker(axis, target, no_up=True)
+        self.compose_after(tf)
+        
+
+    
+    
+        
         
 
 class ObjectTransformations(Transformations):

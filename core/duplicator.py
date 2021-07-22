@@ -12,7 +12,7 @@ import bpy
 
 from .blender import get_object, wrap_collection, duplicate_object, delete_object
 
-#from .plural import to_shape, getattrs, setattrs
+from .plural import to_shape, getattrs, setattrs
 from .wrappers import wrap
 from .transformations import Transformations
 
