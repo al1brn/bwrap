@@ -26,7 +26,7 @@ try:
     from .commons import base_error_title
     error_title = base_error_title % "geometry.%s"
 except:
-    error_title = "ERROR geometry.%s: "
+    error_title = "ERROR geometry.%s:\n"
 
 # Default ndarray float type
 ftype = np.float
@@ -35,69 +35,38 @@ ftype = np.float
 zero = 1e-6
 
 # -----------------------------------------------------------------------------------------------------------------------------
-# Get an axis
+# Shape of object
 
-def get_axis(axis):
-    """Axis can be defined aither by a letter or a vector.
-
-    Parameters
-    ----------
-    axis: array
-        array of vector specs, ie triplets or letters: [(1, 2, 3), 'Z', (1, 2, 3), '-X']
-
-    Returns
-    -------
-    array of normalized vectors
-    """
-    
-    # ---------------------------------------------------------------------------
-    # Axis is a str
-    
-    if type(axis) is str:
-        
-        upper = axis.upper()
-        
-        if upper in ['X', '+X', 'POS_X']:
-            return np.array((1., 0., 0.))
-        elif upper in ['Y', '+Y', 'POS_Y']:
-            return np.array((0., 1., 0.))
-        elif upper in ['Z', '+Z', 'POS_Z']:
-            return np.array((0., 0., 1.))
-
-        elif upper in ['-X', 'NEG_X']:
-            return np.array((-1., 0., 0.))
-        elif upper in ['-Y', 'NEG_Y']:
-            return np.array((0., -1., 0.))
-        elif upper in ['-Z', 'NEG_Z']:
-            return np.array((0., 0., -1.))
-        else:
-            raise RuntimeError((error_title % "get_axis") +
-                f"Unknwon axis spec: '{axis}'")
-            
-    # ---------------------------------------------------------------------------
-    # Axis is an array
-    
-    # Number of axis
-    n = max(1, np.size(axis) // 3)
-    
-    # An array of vectors
-    axiss = np.resize(axis, (n, 3))
-    
-    # The length
-    nrms = np.linalg.norm(axiss, axis=1)
-    
-    # Remove zeros
-    axiss[nrms<zero] = (0, 0, 1)
-    nrms[nrms<zero] = 1
-    
-    # Normalization
-    axiss = axiss / np.expand_dims(nrms, 1)
-    
-    if n == 1 and len(np.shape(axis)) < 2:
-        return axiss[0]
+def build_shape(base_shape, item_shape):
+    if hasattr(base_shape, '__len__'):
+        shape = list(base_shape)
+    elif base_shape == 1:
+        return item_shape
     else:
-        return axiss
-    
+        shape = [base_shape]
+        
+    if hasattr(item_shape, '__len__'):
+        shape.extend(item_shape)
+    else:
+        shape.append(item_shape)
+    return shape
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# Shape utilities
+
+def sub_shape(shape, sub_dim=1):
+    if hasattr(shape, '__len__'):
+        if len(shape) <= sub_dim:
+            return 1
+        elif len(shape) == sub_dim+1:
+            return shape[0]
+        else:
+            if sub_dim == 0:
+                return tuple(shape)
+            else:
+                return tuple(shape[:-sub_dim])
+    else:
+        return 1
     
 # -----------------------------------------------------------------------------------------------------------------------------
 # A utility given the index of an axis and its sign
@@ -220,7 +189,6 @@ def _str(array, dim=1, vtype='scalar'):
     else:
         return f"[array of shape {array.shape} for object of dim {dim}]\n{array}"
 
-
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
 # Vectors geometry
@@ -228,7 +196,7 @@ def _str(array, dim=1, vtype='scalar'):
 # -----------------------------------------------------------------------------------------------------------------------------
 # Norm of vectors
 
-def vect_norm(v, null_to_one=False):
+def vect_norm(v):
     """Compute the norm of an array of vectors.
     
     Can force null values to one.
@@ -237,8 +205,6 @@ def vect_norm(v, null_to_one=False):
     ----------
     v : array of vectors
         The vectors to normalized.
-    null_to_one : bool, optional
-        Set to 1 the null values. The default is False.
 
     Returns
     -------
@@ -246,29 +212,34 @@ def vect_norm(v, null_to_one=False):
         The normalized vectors.
     """
     
-    dim = np.shape(v)[-1]
-    count = max(1, np.size(v) // dim)
-    
-    # ---------------------------------------------------------------------------
-    # Only one vector
-    
-    if count == 1 and len(np.shape(v)) <= 1:
-        n = np.linalg.norm(v)
-        if null_to_one and n < zero:
-            return 1.
-        else:
-            return n
-
-    # ---------------------------------------------------------------------------
-    # Several ones
-
-    vs = np.resize(v, (count, dim))
-    if null_to_one:
-        nrms = np.linalg.norm(vs, axis=1)
-        nrms[nrms < zero] = 1
-        return nrms
+    vs = np.array(v)
+    if len(vs.shape) == 1:
+        return np.linalg.norm(vs)
     else:
-        return np.linalg.norm(vs, axis=1)
+        return np.linalg.norm(vs, axis=-1)
+    
+# -----------------------------------------------------------------------------------------------------------------------------
+# Mulitplication of a vector by a scalar
+
+def scalar_mult(n, v):
+    
+    # ----- One single scalar: very simple
+    
+    if (np.size(n) == 1) or len(np.shape(v)) < 1:
+        return np.dot(n, v)
+    
+    # ----- Several scalars but one single vector
+    if len(np.shape(v)) == 1:
+        return scalar_mult(n, np.resize(v, build_shape(np.shape(n), np.shape(v)[-1])))
+        
+    # ----- Shape must be compatible
+    print("n", sub_shape(np.shape(n), 0))
+    print("v", sub_shape(np.shape(v), 1))
+    if sub_shape(np.shape(v), 1) != sub_shape(np.shape(n), 0):
+        raise RuntimeError((error_title % "scalar_mult") + 
+                f"the shapes of scalars and vectors don't match for multiplication: {np.shape(n)} {np.shape(v)}.")
+        
+    return np.array(v) * np.expand_dims(n, axis=-1)
     
 # -----------------------------------------------------------------------------------------------------------------------------
 # Noramlizd vectors
@@ -291,34 +262,101 @@ def vect_normalize(v, null_replace=None):
         The normalized vectors.
     """
     
-    dim = np.shape(v)[-1]
-    count = max(1, np.size(v) // dim)
+    vs = np.array(v)
     
-    # ---------------------------------------------------------------------------
-    # Only one vector
+    # ----- One single vector: easy
     
-    if count == 1 and len(np.shape(v)) <= 1:
-        n = np.linalg.norm(v)
-        if n <= zero:
-            return np.array(v, np.float) if null_replace is None else np.array(null_replace, np.float)
+    if len(vs.shape) == 1:
+        ns = np.linalg.norm(vs)
+        if ns < zero:
+            if null_replace is None:
+                return vs
+            else:
+                return np.array(null_replace)
         else:
-            return np.array(v) / n
-        
-    # ---------------------------------------------------------------------------
-    # Several ones
-
-    vs = np.resize(v, (count, dim))
-    nrms = np.linalg.norm(vs, axis=1)
-    null = nrms < zero
+            return vs / ns
     
-    nrms[null] = 1
-    vs = vs / np.expand_dims(nrms, axis=1)
+    # ----- An array of vectors
     
+    # Norms with possible nul values
+    ns = np.linalg.norm(vs, axis=-1)
+    
+    # Replace the null values by one
+    nulls = np.where(ns < zero)
+    ns[nulls] = 1.
+    
+    # Divide the vectors by the norms
+    vs = vs / np.expand_dims(ns, axis=len(vs.shape)-1)
+    
+    # Replace the null vectors by something if required
     if null_replace is not None:
-        vs[null] = np.array(null_replace, np.float)
+        vs[nulls] = np.array(null_replace)
         
     return vs
 
+def random_vectors(shape, dim=3):
+    return np.random.uniform(-3, 3, build_shape(shape, dim))
+
+def random_quaternions(shape):
+    count = np.product(shape)
+    q = vect_normalize(random_vectors(count))
+    
+    
+    ags = np.radians(np.random.randint(-18, 19, count)*10)/2
+    q = q * np.expand_dims(np.sin(ags), axis=1)
+    return np.insert(q, 0, np.cos(ags)).reshape(build_shape(shape, 4))
+
+def random_eulers(shape):
+    return np.radians(np.random.randint(-18, 19, build_shape(shape, 3))*10)
+
+def random_scales(shape):
+    return np.random.uniform(0.1, 5, build_shape(shape, 3))
+
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# Get an axis
+
+def get_axis(axis):
+    """Axis can be defined aither by a letter or a vector.
+
+    Parameters
+    ----------
+    axis: array
+        array of vector specs, ie triplets or letters: [(1, 2, 3), 'Z', (1, 2, 3), '-X']
+
+    Returns
+    -------
+    array of normalized vectors
+    """
+    
+    # ---------------------------------------------------------------------------
+    # Axis is a str
+    
+    if type(axis) is str:
+        
+        upper = axis.upper()
+        
+        if upper in ['X', '+X', 'POS_X']:
+            return np.array((1., 0., 0.))
+        elif upper in ['Y', '+Y', 'POS_Y']:
+            return np.array((0., 1., 0.))
+        elif upper in ['Z', '+Z', 'POS_Z']:
+            return np.array((0., 0., 1.))
+
+        elif upper in ['-X', 'NEG_X']:
+            return np.array((-1., 0., 0.))
+        elif upper in ['-Y', 'NEG_Y']:
+            return np.array((0., -1., 0.))
+        elif upper in ['-Z', 'NEG_Z']:
+            return np.array((0., 0., -1.))
+        else:
+            raise RuntimeError((error_title % "get_axis") +
+                f"Unknwon axis spec: '{axis}'")
+            
+    # ---------------------------------------------------------------------------
+    # Axis is an array
+    
+    return vect_normalize(axis)
 
 
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -327,9 +365,11 @@ def vect_normalize(v, null_replace=None):
 def vect_dot(v, w):
     """Dot products between vectors.
     
-    if v (w) is a single vector, dot all along w (v).
-    if both v and w are array of vectors, they must have the same length. The dot is computed all
-    along the two arrays
+    If the shapes of the arrays are the same, dot vector per vector.
+    If the shape are not the same:
+        - The last dim must be the same: (m, n, 3) and (m, n, 3)
+        - The shortest dim must be only one dim less than the longest and
+          match the beginning of the longest: (m, n, 3) and (m, n, p, 3)
 
     Parameters
     ----------
@@ -349,49 +389,25 @@ def vect_dot(v, w):
         The dot products.
     """
     
-    # ----- Make sure we have arrays
-    vs = np.array(v, ftype)
-    ws = np.array(w, ftype)
+    # ----- One of the argument is a single vector
     
-    # ----- One is a scalar
-    if vs.shape == () or ws.shape == ():
-        return np.dot(vs, ws)
-
-    # ----- First is a single vector
-    if len(vs.shape) == 1:
-        return np.dot(ws, vs)
-
-    # ----- Second is a single vector
-    if len(ws.shape) == 1:
-        return np.dot(vs, ws)
+    if len(np.shape(v)) <= 1 or len(np.shape(w)) <= 1:
+        if len(np.shape(v)) <= 1:
+            return np.dot(w, v)
+        else:
+            return np.dot(v, w)
+        
+    # ----- Otherwise, shapes must match
     
-    # ----- No more that two dimensions
-    if len(vs.shape) > 2 or len(ws.shape) > 2:
-        raise RuntimeError(
-            error_title % "vect_dot" +
-            f"The function only applies on two arrays of vectors, not on {vs.shape} dot {ws.shape}"
-            )
+    if np.shape(v) != np.shape(w):
+        raise RuntimeError((error_title % "vect_dot") +
+            f"The array of vectors don't have the same shape: {np.shape(v)} and {np.shape(w)}")
+        
+    # ----- Ok
+    return np.einsum('...i,...i', v, w)
+        
 
-    # ----- The number of vectors to dot
-    v_count = vs.shape[0]
-    w_count = ws.shape[0]
 
-    # ----- v is array with only one vector
-    if v_count == 1:
-        return np.dot(ws, vs[0])
-
-    # ----- w is array with only one vector
-    if w_count == 1:
-        return np.dot(vs, ws[0])
-
-    # ----- The array must have the same size
-    if v_count != w_count:
-        raise RuntimeError(
-            error_title % "vect_dot" +
-            f"The two arrays of vectors don't have the same length: {v_count} ≠ {w_count}\n"
-            )
-
-    return np.einsum('...i,...i', vs, ws)
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Cross product between arrays of vectors
@@ -409,20 +425,20 @@ def vect_cross(v, w):
     vector or array of vectors
     """
     
-    v_count = np.size(v) // 3
-    w_count = np.size(w) // 3
+    # ----- One of the argument is a single vector
     
-    # ----- Make sure we have arrays
-    if not ((v_count == 1) or (w_count == 1) or (v_count == w_count)):
-        raise RuntimeError(
-            error_title % "vect_cross" +
-            f"cross product needs two arrays of vectors of the same length, not: {np.shape(v)} x {np.shape(w)}\n"
-            )
-        
-    if v_count == 1 and w_count == 1 and len(np.shape(v)) == 1 and len(np.shape(w)) == 1:
+    if len(np.shape(v)) == 1 or len(np.shape(w)) == 1:
         return np.cross(v, w)
     
-    return np.cross(np.reshape(v, (v_count, 3)), np.reshape(w, (w_count, 3)))
+    # ----- Otherwise, shapes must match
+    if np.shape(v) != np.shape(w):
+        raise RuntimeError((error_title % "vect_cross") +
+            f"The array of vectors don't have the same shape: {np.shape(v)} and {np.shape(w)}")
+        
+    return np.cross(v, w)
+
+
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Angles between vectors
@@ -441,7 +457,8 @@ def vect_angle(v, w):
         The angle between the vectors
     """
     
-    return np.arccos(vect_dot(vect_normalize(v), vect_normalize((w))))
+    return np.arccos(np.clip(vect_dot(vect_normalize(v), vect_normalize((w))), -1, 1))
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Plane (ie vector perppendicular to the two vectors)
@@ -466,6 +483,7 @@ def vect_perpendicular(v, w, null_replace=(0, 0, 1)):
     
     return vect_normalize(vect_cross(v, w), null_replace=null_replace)
 
+
 # -----------------------------------------------------------------------------------------------------------------------------
 # Plane (ie vector perpendicular to the two vectors)
 
@@ -487,16 +505,31 @@ def vect_plane_projection(v, perps):
         The projections of vectors in the planes
     """
     
+    # Ensure we have normalized perppendicular vectors
     perps = get_axis(perps)
-    count = max(np.size(v) // 3, len(perps))
-
-    vs = np.resize(v, (count, 3))
-    vs = vs - perps*np.expand_dims(vect_dot(vs, perps), axis=1)
     
-    if count == 1 and len(np.shape(v)) == 1:
-        return vs[0]
-    else:
-        return vs
+    # Projection length on perpendiculars
+    vs    = np.array(v)
+    projs = vect_dot(vs, perps)
+    
+    # Make sure we have the proper numbers of vectors and norms
+    
+    v_count = np.size(vs) // 3
+    p_count = np.size(projs)
+    
+    if v_count != p_count:
+        if v_count == 1:
+            shape = list(projs.shape)
+            shape.append(3)
+            vs = np.resize(vs, shape)
+        elif p_count == 1:
+            projs = np.resize(projs, vs.shape[:-1])
+        else:
+            raise RuntimeError((error_title % "vect_plane_projection") +
+                   f"The shapes of the argument don't allow the computation: {np.shape(v)}, {np.shape(perps)}")
+    
+    return vs - perps*np.expand_dims(vect_dot(vs, perps), axis=len(vs.shape)-1)
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -541,22 +574,21 @@ def m_rotate(m, v):
     array(n) or array of array(n)
     """
     
-    nm = np.size(m) // 9
-    nv = np.size(v) // 3
+    # ----- Only one vector
+    if len(np.shape(v)) == 1:
+        return np.matmul(v, m)
     
-    if nm == 1 and nv > 1:
-        return m_rotate(np.resize(m, (nv, 3, 3)), v)
+    # ----- Only one matrix
+    if np.size(m) == 9:
+        return np.matmul(v, m)
     
-    if nm != nv:
-        raise RuntimeError(
-            error_title % "m_rotate" +
-            f"The number of matrices must match the number of vectors to rotate: matrices =  {np.shape(m)} vectors = {np.shape(v)}"
-            )
+    # ---- The shapes must match
+    if np.shape(v)[:-1] != np.shape(m)[:-2]:
+        raise RuntimeError((error_title % "m_rotate") +
+                f"The shapes of the matrices and the vectors don't match: {np.shape(m)} {np.shape(v)}")
     
-    ms = np.resize(m, (nv, 3, 3))
-    vs = np.resize(v, (nv, 3))
-    
-    return np.einsum('...jk,...j', ms, vs).reshape(np.shape(v))
+    return np.einsum('...jk,...j', m, v)#.reshape(np.shape(v))
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Convert a matrix to euler
@@ -578,21 +610,16 @@ def m_to_euler(m, order='XYZ'):
         The euler triplets
     """
 
-    ms = np.array(m, ftype)
-
-    if not(
-        ((len(ms.shape) > 1) and (ms.shape[-2] == 3) and (ms.shape[-2] == 3) ) and \
-        (len(ms.shape) <= 3) \
-        ):
-        raise RuntimeError(
-            error_title % "m_to_euler" +
-            f"m_to_euler error: argument must be a matrix(3x3) or an array of matrices. Impossible to convert shape {ms.shape}.\n" +
-            _str(ms, 2)
-            )
-
+    ms = np.array(m)
+    start_shape = np.array(ms.shape)
+    
+    # ----- Only one matrix
     single = len(ms.shape) == 2
     if single:
         ms = np.reshape(ms, (1, 3, 3))
+    else:
+        base_shape = np.array(ms.shape)[:-2]
+        ms = ms.reshape(np.product(base_shape), 3, 3)
 
     # ---------------------------------------------------------------------------
     # Indices in the array to compute the angles
@@ -683,7 +710,7 @@ def m_to_euler(m, order='XYZ'):
 
     else:
         raise RuntimeError(
-            error_title % "m_to_euler" +
+            (error_title % "m_to_euler") +
             f"m_to_euler error: '{order}' is not a valid euler order")
 
     # ---------------------------------------------------------------------------
@@ -719,7 +746,8 @@ def m_to_euler(m, order='XYZ'):
     if single:
         return angles[0, xyz]
     else:
-        return angles[:, xyz]
+        return np.reshape(angles[:, xyz], start_shape[:-1])
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Conversion matrix to quaternion
@@ -760,23 +788,47 @@ def quaternion(axis, angle):
     array(4) of array or array(4)
         The requested quaternions
     """
-
+    
+    # ----- Only one angle
+    if np.size(angle) == 1:
+        axs = get_axis(axis)
+        shape = np.array(axs.shape)
+        axs = np.reshape(axs, (np.product(shape[:-1]), 3))
+        shape[-1]= 4
+        return np.insert(axs*np.sin(angle/2), 0, np.cos(angle/2), axis=1).reshape(shape)
+    
+    # ----- Only one axis
     axs = get_axis(axis)
-    count = max(np.size(axis)//3, np.size(angle))
+    if np.size(axs) == 3:
+        shape = list(np.shape(angle))
+        shape.append(3)
+        axs = np.resize(axs, shape)
+        shape[-1] = 4
+    else:
+        shape = list(np.shape(axis))
+        shape[-1]= 4
+        
+        
+    # ----- Several axis and angles
+    # shapes must match
+    
+    if np.shape(angle) != np.shape(axs)[:-1]:
+        raise RuntimeError((error_title % "quaternion") +
+                f"The shapes of the axis and the angles don't match: {np.shape(axis)} {np.shape(angle)}")
+        
+    count = np.product(np.shape(angle))
     
     ags = np.resize(angle, count)/2
-    axs = np.insert(
-        np.resize(axs,(count, 3))*np.expand_dims(np.sin(ags), 1), 0, np.cos(ags), axis=1)
-    
-    if count == 1 and len(np.shape(axis)) == 1:
-        return axs[0]
-    else:
-        return axs
+    axs = np.resize(axs, (count, 3))
+        
+    return np.insert(
+        np.resize(axs,(count, 3))*np.expand_dims(np.sin(ags), 1), 0, np.cos(ags), axis=1).reshape(shape)
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Quaternions to axis and angles
 
-def axis_angle(q, combine=False):
+def axis_angle(q):
     """Return the axis and angles components of a quaternion.
 
     Parameters
@@ -790,20 +842,24 @@ def axis_angle(q, combine=False):
         The axis and angles of the quaternions
     """
     
+    
     count = np.size(q)//4
+    shape = np.shape(q)
     qs = np.resize(q, (count, 4))
     
-    sn = np.linalg.norm(qs[:, 1:], axis=1)
+    sn = np.linalg.norm(qs[:, 1:], axis=-1)
     ags = 2*np.arctan2(sn, qs[:, 0])
     sn[sn<zero] = 1
     
     axs = qs[:, 1:] / np.expand_dims(sn, 1)
     
-    if len(np.shape(q)) == 1:
+    if len(shape) == 1:
         return axs[0], ags[0]
     else:
-        return axs, ags
-    
+        ag_shape = shape[:-1]
+        ax_shape = np.array(shape)
+        ax_shape[-1]= 3
+        return axs.reshape(ax_shape), ags.reshape(ag_shape)
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Quaternion conjugate
@@ -890,6 +946,19 @@ def q_mul(qa, qb):
         The results of the multiplications: qa x qb
     """
     
+    # ----- Check the shapes
+    
+    if not( (np.size(qa) == 4) or (np.size(qb) == 4) or (np.shape(qa)==np.shape(qb)) ):
+        raise RuntimeError((error_title % "q_mul") +
+                f"the shapes of the arrays of quaternions don't match: {np.shape(qa)} {np.shape(qb)}")
+        
+    if np.size(qa) == 4:
+        shape = np.shape(qb)
+    else:
+        shape = np.shape(qa)
+        
+    # ----- Ok, we can work on linear arrays
+    
     count = max(np.size(qa)//4, np.size(qb)//4)
     qas = np.resize(qa, (count, 4))
     qbs = np.resize(qb, (count, 4))
@@ -904,16 +973,7 @@ def q_mul(qa, qb):
          qas[:, 1:] * np.expand_dims(qbs[:, 0], 1) + \
          np.cross(qas[:, 1:], qbs[:, 1:])
 
-    qs = np.insert(v, 0, w, axis=1)
-    
-    # Insert w before v
-    if np.shape(qa) == np.shape(qb):
-        return qs.reshape(np.shape(qa))
-    else:
-        if count == 1 and len(np.shape(qa)) == 1:
-            return qs[0]
-        else:
-            return qs
+    return np.insert(v, 0, w, axis=1).reshape(shape)
 
 
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -934,25 +994,12 @@ def q_rotate(q, v):
     array(3) or array of array(3)
     """
     
-    nq = np.size(q) // 4
-    nv = np.size(v) // 3
-    if nq == 1 and nv > 1:
-        return q_rotate(np.resize(q, (nv, 4)), v)
-    
-    if nq != nv:
-        raise RuntimeError(
-            error_title % "q_rotate" +
-            f"The number of quaternions must be either 1 or match the number fo vertices: quaternions = {np.shape(q)} and vectors : {np.shape(v)}"
-            )
-    
-    qs = np.resize(q, (nv, 4))
- 
-    # Vector --> quaternion by inserting a 0 at position 0
-    vs = np.insert(np.resize(v, (nv, 3)), 0, 0, axis=1)
-    
-    # Vector rotation
-    return q_mul(qs, q_mul(vs, q_conjugate(qs)))[:, 1:].reshape(np.shape(v))
-    
+    vr = q_mul(q, q_mul(np.insert(v, 0, 0, axis=len(np.shape(v))-1), q_conjugate(q)))
+    if len(vr.shape) == 1:
+        return vr[1:]
+    else:
+        return np.delete(vr, 0, axis=len(vr.shape)-1)
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Quaternion to matrix
@@ -970,14 +1017,9 @@ def q_to_matrix(q):
     array(3 x 3) or array of array(3 x 3)
     """
 
-    qs = np.array(q, ftype)
+    shape = np.array(np.shape(q))
+    qs = np.resize(q, (np.product(shape)//4, 4))
 
-    if not ( ( (len(qs.shape) == 1) and (len(qs)==4) ) or ( (len(qs.shape) == 2) and (qs.shape[-1]==4)) ):
-        raise RuntimeError(
-            error_title % "q_to_matrix" +
-            f"q_to_matrix error: argument must be quaternions, a vector(4) or and array of vectors(4), not shape {qs.shape}\n" +
-            _str(qs, 1, True)
-            )
     # m1
     # +w	 +z -y +x
     # -z +w +x +y
@@ -1028,7 +1070,10 @@ def q_to_matrix(q):
         qs[:, [1, 2, 3, 0]]*(+1, +1, +1, +1)
         )).transpose((1, 0, 2))
     
-    return np.matmul(m1, m2)[:, :3, :3]
+    shape[-1] = 3
+    shape = list(shape)
+    shape.append(3)
+    return np.matmul(m1, m2)[:, :3, :3].reshape(shape)
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Conversion quaternion --> euler
@@ -1082,24 +1127,22 @@ def e_to_matrix(e, order='XYZ'):
     -------
     array(3 x 3) or array of array(3 x 3)
     """
-
-    es = np.array(e, ftype)
-
-    if not ( ( (len(es.shape) == 1) and (len(es)==3) ) or ( (len(es.shape) == 2) and (es.shape[-1]==3)) ):
-        raise RuntimeError(
-            error_title % "e_to_matrix" +
-            f"e_to_mat error: argument must be euler triplets, a vector(3) or and array of vectors(3), not shape {es.shape}\n" +
-            _str(es, 1, 'euler')
-            )
-
+    
     if not order in euler_orders:
         raise RuntimeError(
-            error_title % "e_to_matrix" +
+            (error_title % "e_to_matrix") +
             f"e_to_mat error: '{order}' is not a valid code for euler order, must be in {euler_orders}")
-
-    single = len(es.shape) == 1
-    if single:
-        es = np.reshape(es, (1, 3))
+        
+    if np.size(e) == 1:
+        e = np.resize(e, 3)
+    
+    # Normalize the eulers
+    count = np.size(e) // 3
+    es = np.resize(e, (count, 3))
+    shape = list(np.shape(e))
+    shape.append(3)
+    
+    # ----- Let's go
 
     m = np.zeros((len(es), 3, 3), ftype)
 
@@ -1175,13 +1218,9 @@ def e_to_matrix(e, order='XYZ'):
         m[:, 0, 2] = sx*sz - cx*sy*cz
         m[:, 1, 2] = sx*cz + cx*sy*sz
         m[:, 2, 2] = cx*cy
-
-    if single:
-        return m[0]
-    else:
-        return m
-
-
+        
+    return m.reshape(shape)
+    
 # -----------------------------------------------------------------------------------------------------------------------------
 # Rotate a vector with an euler
 
@@ -1227,12 +1266,14 @@ def e_to_quat(e, order='XYZ'):
     # ----- The order must be valid !
     if not order in euler_orders:
         raise RuntimeError(
-            error_title % "e_to_quat" +
+            (error_title % "e_to_quat") +
             f"e_to_mat error: '{order}' is not a valid code for euler order, must be in {euler_orders}")
-    
-
-    # ----- Ensure an array of triplets    
+        
+    # ----- The final shape
+    shape = np.array(np.shape(e))
+    shape[-1] = 4
     count = np.size(e)//3
+    
     es = np.resize(e, (count, 3))
     
     qs = [quaternion((1, 0, 0), es[:, 0]),
@@ -1240,7 +1281,8 @@ def e_to_quat(e, order='XYZ'):
           quaternion((0, 0, 1), es[:, 2])]
 
     i, j, k = euler_i[order]
-    return q_mul(qs[k], q_mul(qs[j], qs[i]))
+    return q_mul(qs[k], q_mul(qs[j], qs[i])).reshape(shape)
+        
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Get a quaternion which orients a given axis towards a target direction.
@@ -1294,14 +1336,20 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up=False):
     axs = get_axis(axis)       # Vectors to rotate
     txs = get_axis(target)     # The target direction after rotation
     
+    if len(axs.shape) == 1:
+        shape = np.array(txs.shape)
+    elif (len(txs.shape) == 1) or (axs.shape == txs.shape):
+        shape = np.array(axs.shape)
+    else:
+        raise RuntimeError((error_title % "q_tracker") + 
+                f"The shapes of the axis and the targets don't match: {axs.shape} {txs.shape}")
+    shape[-1] = 4
+    
     # ---------------------------------------------------------------------------
     # Make sure we have the proper arrays to work on
     
     count = max(np.size(axs)//3, np.size(txs)//3)
-    single = False
-    if count == 1:
-        single = (len(axs.shape) == 1) and (len(txs.shape) == 1)
-    
+
     axs   = np.resize(axs, (count, 3))
     txs   = np.resize(txs, (count, 3))
     
@@ -1314,7 +1362,7 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up=False):
     perps   = np.cross(axs, txs)  # Perp vector with norm == sine
     rot_sin = np.linalg.norm(perps, axis=1)    # Sine
     rot_cos = np.einsum('...i,...i', axs, txs) # Cosine
-
+    
     qrot = quaternion(perps, np.arctan2(rot_sin, rot_cos))
     
     # ---------------------------------------------------------------------------
@@ -1325,12 +1373,9 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up=False):
     
     # ---------------------------------------------------------------------------
     # No up management (for cylinders for instance)
-
+    
     if no_up:
-        if single:
-            return qrot[0]
-        else:
-            return qrot
+        return qrot.reshape(shape)
         
     # ===========================================================================
     # Second rotation around the target axis
@@ -1341,8 +1386,16 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up=False):
     # to put the up axis in the plane (target, up_direction)
 
     # The "sky" is normally the Z direction. Let's name it Z for clarity
+    # If there are only one vector, the number of sky can give the returned shape
     
-    Z = np.resize(get_axis(sky), (count, 3))
+    if count == 1:
+        Z = get_axis(sky)
+        if len(Z.shape) > 1:
+            shape = np.array(Z.shape)
+            shape[-1] = 4
+        Z = np.resize(Z, (count, 3))
+    else:
+        Z = np.resize(get_axis(sky), (count, 3))
     
     # Since with must rotate 'up vector' in the plane (Z, target),
     # let's compute a normalized vector perpendicular to this plane
@@ -1381,14 +1434,9 @@ def q_tracker(axis, target, up='Y', sky='Z', no_up=False):
     
     # We have the second rotation now that we can combine with the previous one
     
-    qrot = q_mul(quaternion(txs, np.arctan2(r_sin, r_cos)), qrot)
+    return q_mul(quaternion(txs, np.arctan2(r_sin, r_cos)), qrot).reshape(shape)
     
-    # Result
 
-    if single:
-        return qrot[0]
-    else:
-        return qrot
     
 # -----------------------------------------------------------------------------------------------------------------------------
 # Get a matrix which orients a given axis towards a target direction.
@@ -1430,8 +1478,11 @@ def m_tracker(axis, target, up='Y'):
     # ---------------------------------------------------------------------------
     # Make sure we manage an array of vectors
     
-    count = max(1, np.size(target)//3)
-    txs = np.resize(get_axis(target), (count, 3))
+    txs = get_axis(target)
+    shape = list(txs.shape)
+    count = max(1, np.size(txs)//3)
+    txs = np.resize(txs, (count, 3))
+    shape.append(3)
     
     # ---------------------------------------------------------------------------
     # For the sake of clarity, X is the name of the axis to point towards target,
@@ -1505,16 +1556,16 @@ def m_tracker(axis, target, up='Y'):
     M[:, iy] = up_target * sy
     M[:, iz] = N * sz
     
-    if count == 1 and len(np.shape(target)) <= 1:
-        return M[0]
-    else:
-        return M
+    return M.reshape(shape)
+
+
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
 # Transformation Matrices 4x4
 
-def tmatrix(translation=(0., 0., 0.), mat=((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)), scale=(1., 1., 1.), count=None):
+def tmatrix(locations=(0., 0., 0.), matrices=((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)), scales=(1., 1., 1.), count=None):
     """Build an array of transformation matrices from translations, matrices and scales.
     
     A transformation matrix is a (4x4) matrix used to apply the three transformation
@@ -1528,62 +1579,70 @@ def tmatrix(translation=(0., 0., 0.), mat=((1., 0., 0.), (0., 1., 0.), (0., 0., 
 
     Parameters
     ----------
-    translation : array of vectors, optional
+    locations : array of vectors, optional
         The translation to apply. The default is (0., 0., 0.).
-    mat : array of matrices(3x3), optional
+    matrices : array of matrices(3x3), optional
         The rotation matrices. The default is ((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)).
-    scale : array of vectors, optional
+    scales : array of vectors, optional
         The scale to apply. The default is (1., 1., 1.).
-    count : int, optional
-        The length of the resulting array. The default is None.
+    count : int or list, optional
+        The shape of the resulting array. The default is None.
 
     Returns
     -------
-    array of (4x4) matrices
+    array of (count, 4, 4) of matrices
         The transformation matrices.
     """
-
-    if count is None:    
-        count = max(np.size(translation), np.size(mat) // 3, np.size(scale)) // 3
-
-    # Make sure the arguments are at the correct shape
-    ntrans = np.resize(translation, (count, 3))
-    nmat   = np.resize(mat,         (count, 3, 3))
-
-    if len(np.shape(scale)) == 0:
-        scale = np.resize(scale, 3)
-    elif len(np.shape(scale)) == 1 and len(scale) == count:
-        scale = np.resize(scale, (3, count)).transpose()
-        
-    nscale = np.resize(scale, (count, 3))
     
+    # ----- locations and scales can be scalar
+    
+    if not hasattr(locations, '__len__'):
+        locations = np.resize(locations, 3)
+        
+    if not hasattr(scales, '__len__'):
+        scales = np.resize(scales, 3)
+    
+    # ----- Target shape of matrices
+    
+    t_shape = sub_shape(np.shape(locations), 1)
+    m_shape = sub_shape(np.shape(matrices), 2)
+    s_shape = sub_shape(np.shape(scales), 1)
+    
+    shape = t_shape
+    if shape == 1:
+        shape = m_shape
+    if shape == 1:
+        shape = s_shape
+    if shape == 1 and count is not None:
+        shape = count
+        
+    if (t_shape != 1 and t_shape != shape) or (m_shape != 1 and m_shape != shape) or (s_shape != 1 and s_shape != shape) or (count is not None and count != shape):
+        raise RuntimeError((error_title % "tmatrix") +
+                f"The shapes of the argument don't match: locations: {np.shape(locations)}, mat: {np.shape(matrices)}, scales: {np.shape(scales)}, count={count}")
+        
+    # Shape now contains the shape of the matrices
+    # Build linear end shape the result
+    
+    count = np.product(shape)
+
+    nmat   = np.resize(matrices, (count, 3, 3))
+    nscale = np.resize(scales, (count, 3))
+
     nmat[:, 0, :3] *= np.expand_dims(nscale[:, 0], 1)
     nmat[:, 1, :3] *= np.expand_dims(nscale[:, 1], 1)
     nmat[:, 2, :3] *= np.expand_dims(nscale[:, 2], 1)
     
-    """
-
-    # Rotation mutiplied by scale
-    scale_mat = np.resize(np.identity(3), (count, 3, 3))
-    scale_mat[:, 0, 0] = nscale[:, 0]
-    scale_mat[:, 1, 1] = nscale[:, 1]
-    scale_mat[:, 2, 2] = nscale[:, 2]
-
-    nmat = np.matmul(scale_mat, nmat)
-    """
-
-    # Resulting array of matrices
-
+    # Resulting array of matrices initialized as identity
     mats = np.resize(np.identity(4), (count, 4, 4))
 
     # set rotation and scale
     mats[:, :3, :3] = nmat
 
     # set translation
-    mats[:, 3, :3] = ntrans
+    mats[:, 3, :3] = np.resize(locations, (count, 3))
 
     # Result
-    return mats
+    return mats.reshape(build_shape(shape, (4, 4)))
 
     
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -1609,10 +1668,19 @@ def mat_scale_from_tmat(tmat):
         The scale part.
     """
     
+    shape = sub_shape(tmat.shape, 2)
+    count = np.product(shape)
+    
+    tmat = np.reshape(tmat, (count, 4, 4))
+    
     scale = np.stack((
         np.linalg.norm(tmat[:, 0, :3], axis=1),
         np.linalg.norm(tmat[:, 1, :3], axis=1),
         np.linalg.norm(tmat[:, 2, :3], axis=1))).transpose()
+    
+    # No division by 0
+    nulls = np.where(scale < zero)
+    scale[nulls] = 1.
     
     mat = np.array(tmat[:, :3, :3])
     
@@ -1620,7 +1688,11 @@ def mat_scale_from_tmat(tmat):
     mat[:, 1, :3] = mat[:, 1, :3] / np.expand_dims(scale[:, 1], 1)
     mat[:, 2, :3] = mat[:, 2, :3] / np.expand_dims(scale[:, 2], 1)
     
-    return mat, scale
+    # Restore the nulls
+    scale[nulls] = 0.
+
+    return mat.reshape(build_shape(shape, (3, 3))), scale.reshape(build_shape(shape, 3))
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Full decomposition
@@ -1649,8 +1721,12 @@ def decompose_tmat(tmat):
     """
 
     m, s = mat_scale_from_tmat(tmat)
+    
+    shape = sub_shape(tmat.shape, 2)
+    count = np.product(shape)
 
-    return np.array(tmat[:, 3, :3]), m, s
+    return np.array(tmat.reshape(count, 4, 4)[:, 3, :3]).reshape(build_shape(shape, 3)), m, s
+
     
 
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -1670,7 +1746,9 @@ def translation_from_tmat(tmat):
         The rotation part.
     """
     
-    return np.array(tmat[:, 3, :3])
+    shape = sub_shape(tmat.shape, 2)
+    count = np.product(shape)
+    return np.array(tmat.reshape(count, 4, 4)[:, 3, :3]).reshape(build_shape(shape, 3))
     
     
 def mat_from_tmat(tmat):
@@ -1705,131 +1783,48 @@ def scale_from_tmat(tmat):
     
     return mat_scale_from_tmat(tmat)[1]
 
+# =============================================================================================================================
+# Transformation
+#
+# The shape of the array of matrices is (shape, 4, 4)
+# The shape of the array of vectors can be:
+# - (n, 4)        --> (shape, n, 4)
+# - (shape, n, 4) --> (shape, n, 4)
+#
+# In case we have one vertex per matrix, use one per on argument:
+# - (shape, 4)   --> (shape, 4)
 
-
-
-
-
-
-
-
-
-
-
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# A test
-
-def test_tmat(test=0, count=2):
-    if test==0:
-        t0 = np.random.uniform(0, 10, (count, 3))
-        m0 = e_to_matrix(np.random.uniform(0, 7, (count, 3)))
-        s0 = np.random.uniform(2, 3, (count, 3))
-    else:
-        t0 = np.random.uniform(0, 10, (count, 3))
-        m0 = e_to_matrix(np.radians(np.resize((10, 70, -30), (count, 3))))
-        s0 = (0.3, 0.3, 1)
+def tmat_transform4(tmat, v4, one_one=False):
+    
+    # ----- One vertex per matrix
+    if one_one:
+        m_shape = sub_shape(tmat.shape, 2)
+        v_shape = sub_shape(v4.shape, 1)
         
-    tmat = tmatrix(t0, m0, s0)
+        if m_shape != v_shape:
+            raise RuntimeError((error_title % "tmat_transform4") + 
+                    f"with one_one argument = True, the sub shapes must be equal: (shape, 4, 4) and (shape, 4). Here {np.shape(tmat)} and {np.shape(v4)}.")
+            
+        return tmat_transform4(tmat, np.reshape(v4, build_shape(v_shape, (1, 4))), one_one=False).reshape(build_shape(v_shape, 4))
     
-    t1, m1, s1 = decompose_tmat(tmat)
-    tmat1 = tmatrix(t1, m1, s1)
+    # ----- Only one vector or an array of vectors
+    if len(np.shape(v4)) <= 2:
+        return np.matmul(v4, tmat)
     
-    def sn(n):
-        return f"{n:.10f}"
+    # ----- Check the shapes compatibility
+
+    m_shape = sub_shape(tmat.shape, 2)
+    v_shape = sub_shape(v4.shape, 2)
     
-    print("----- tmat1")
-    print("tmat: ", sn(np.linalg.norm(tmat1-tmat)))
-    print("trans:", sn(np.linalg.norm(t1-t0)))
-    print("mat:  ", sn(np.linalg.norm(m1-m0)))
-    print("scale:", sn(np.linalg.norm(s1-s0)))
-    print('.'*10)
-
-    t2, m2, s2 = decompose_tmat(tmat1)
-    tmat2 = tmatrix(t2, m2, s2)
+    if m_shape == v_shape:
+        return np.matmul(v4, tmat)
     
-    print("----- tmat2")
-    print("tmat: ", sn(np.linalg.norm(tmat2-tmat)))
-    print("trans:", sn(np.linalg.norm(t2-t0)))
-    print("mat:  ", sn(np.linalg.norm(m2-m0)))
-    print("scale:", sn(np.linalg.norm(s2-s0)))
-    print('.'*10)
+    raise RuntimeError((error_title % "tmat_transform4") + 
+            f"shapes are not compatible with multiplication Here {np.shape(tmat)} and {np.shape(v4)}.")
+    
+def tmat_transform43(tmat, v4, one_one=False):
+    return np.delete(tmat_transform4(tmat, v4, one_one=one_one), 3, axis=-1)
 
-    print(np.degrees(m_to_euler(m2)))
-
-
-
-# ///////////////////////////////////////////////////////////////////////////
-# WORK IN PROGRESS
-
-
-def tmatrix_euler(translation=(0., 0., 0.), euler=(0., 0., 0.), order='XYZ', scale=(1., 1., 1.)):
-    return tmatrix(translation, e_to_matrix(euler, order), scale)
-
-def tmatrix_quat(translation=(0., 0., 0.),quat=(1., 0., 0.,0. ), scale=(1., 1., 1.)):
-    return tmatrix(translation, q_to_matrix(quat), scale)
-
-def mul_tmatrices(tmat1, tmat2):
-    count = max(np.size(tmat1), np.size(tmat2)) // 16
-
-    m1 = np.resize(tmat1, (count, 4, 4))
-    m2 = np.resize(tmat2, (count, 4, 4))
-    return np.matmul(m1, m2)
-
-
-def tmat_translation(translation):
-    return tmatrix(translation=translation)
-
-def tmat_scale(scale):
-    return tmatrix(scale=scale)
-
-def tmat_rotation(mat):
-    return tmatrix(mat=mat)
-
-def tmat_rotation_euler(euler, order='XYZ'):
-    return tmatrix_euler(euler=euler, order=order)
-
-def tmat_rotation_quat(quat):
-    return tmatrix_quat(quat=quat)
-
-def transform(tmat, vectors, falloff=1.):
-
-    # Number fo vectors to transform
-    count = np.size(vectors) // 3
-
-    # tmat to the right number of matrices
-    mats = np.resize(tmat, (count, 4, 4))
-
-    # To 4-vectors
-    v4 = np.ones((count, 4), np.float)
-    v4[:, :3] = vectors
-
-    # Apply the transformation matrices
-    v4t = np.einsum('ijk,ik->ij', mats, v4)
-
-    # Apply the falloff between the two arrays
-    if np.size(falloff) == 1:
-        vs = v4t*falloff + v4*(1. - falloff)
-    else:
-        fo = np.array(falloff)[:, np.newaxis]
-        vs = v4t*fo + v4*(1. - fo)
-
-
-    # Return 3-vectprs
-    return vs[:, :3]
-
-def translate(translation, vectors, falloff=1.):
-    return transform(tmat_translation(translation), vectors, falloff)
-
-def scale(scale, vectors, falloff=1.):
-    return transform(tmat_scale(scale), vectors, falloff)
-
-def rotate_euler(euler, order, vectors, falloff=1.):
-    return transform(tmat_rotation_euler(euler, order), vectors, falloff)
-
-def rotate_quat(quat, vectors, falloff=1.):
-    return transform(tmat_rotation_quat(quat), vectors, falloff)
-
-def rotate(mat, vectors, falloff=1.):
-    return transform(tmat_rotation(mat), vectors, falloff)
-
+def tmat_transform(tmat, v3, one_one=False):
+    return tmat_transform43(tmat, np.insert(v3, 3, 1, axis=-1), one_one=one_one)
+    

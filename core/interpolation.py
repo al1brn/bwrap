@@ -24,9 +24,14 @@ __status__     = "Production"
 import numpy as np
 from math import pi
 
-if True:
+try:
     from .commons import base_error_title
-    error_title = base_error_title % "interpolation.%s"
+except:
+    base_error_title = "ERROR %s:\n"
+
+    
+error_title = base_error_title % "interpolation.%s"
+    
 
 # =============================================================================================================================
 # Useful constants
@@ -1160,8 +1165,8 @@ class BCurve():
         
         # ----- if xbounds exists: convert to default bounds
         if xbounds is not None:
-            xbounds = np.resize(xbounds, (len(t), 2))
-            t = bounds.x0 + (t - xbounds[:, 0]) / (xbounds[:, 1] - xbounds[:, 0]) * bounds.x_amp
+            xbounds = np.resize(xbounds, np.shape(t) + (2,))
+            t = bounds.x0 + (t - xbounds[..., 0]) / (xbounds[..., 1] - xbounds[..., 0]) * bounds.x_amp
 
         # ----- Periodic
         if self.extrapolation == 'PERIODIC':
@@ -1196,8 +1201,8 @@ class BCurve():
         if ybounds is None:
             return y
         else:
-            ybounds = np.resize(ybounds, (len(t), 2))
-            return ybounds[:, 0] + (y - bounds.y0) / bounds.y_amp * (ybounds[:, 1] - ybounds[:, 0])
+            ybounds = np.resize(ybounds, np.shape(t) + (2,))
+            return ybounds[..., 0] + (y - bounds.y0) / bounds.y_amp * (ybounds[..., 1] - ybounds[..., 0])
         
     # ---------------------------------------------------------------------------
     # Integral
@@ -1225,21 +1230,23 @@ class BCurve():
             The integral or array of integrals.
         """
         
-        if not hasattr(t1, '__len__'):
-            return self.integral(t0, np.array([t1]))[0]
-        
-        lt = len(t1)
-        t = np.linspace(t0, t1, count).reshape(count*lt) # shape (count, lt)
+        if np.size(t1) > np.size(t0):
+            shape = np.shape(t1)
+            size  = np.size(t1)
+        else:
+            shape = np.shape(t0)
+            size  = np.size(t0)
+            
+        if not hasattr(shape, '__len__'):
+            shcount = (shape, count)
+        else:
+            shcount = shape + (count,)
+            
+        t = np.linspace(np.resize(t0, size), np.resize(t1, size), count).transpose().reshape(shcount)
         dt = (t1-t0)/(count-1)
         
-        # Compute the values andreshape the result
-        
-        y = self(t).reshape(count, lt)        
-        
-        # Sums in colums
-        
-        return np.sum(y, axis=0) * dt
-        
+        # Compute the values and sum on the last axis
+        return np.sum(self(t), axis=-1) * dt
                 
     # ---------------------------------------------------------------------------
     # Develop
@@ -1320,4 +1327,4 @@ class BCurve():
         
         plt.show()
         
-        
+ 

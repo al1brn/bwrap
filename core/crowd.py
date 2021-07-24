@@ -10,6 +10,7 @@ import numpy as np
 
 from .wrappers import wrap
 from .transformations import Transformations
+from .geometry import build_shape
 
 # ====================================================================================================
 # Crowd: duplicates a mesh in a single mesh
@@ -78,15 +79,16 @@ class Crowd(Transformations):
         # Vertices
         verts = np.array(wmodel.verts)
         self.v_count = len(verts)
-        self.total_verts = len(self) * self.v_count
+        self.total_verts = self.size * self.v_count
         
+        # Base vertices as 4D-vectors
         self.base_verts = np.column_stack((verts, np.ones(self.v_count)))
 
         # Polygons
         polys = wmodel.poly_indices
         self.p_count = len(polys)
         
-        faces = [[index + i*self.v_count for index in face] for i in range(len(self)) for face in polys]
+        faces = [[index + i*self.v_count for index in face] for i in range(self.size) for face in polys]
 
         # New geometry
         self.wobject.new_geometry(np.resize(verts, (self.total_verts, 3)), faces)
@@ -101,14 +103,14 @@ class Crowd(Transformations):
         for name in wmodel.uvmaps:
             uvs = wmodel.get_uvs(name)
             self.wobject.create_uvmap(name)
-            self.wobject.set_uvs(name, np.resize(uvs, (len(self)*len(uvs), 2)))
+            self.wobject.set_uvs(name, np.resize(uvs, (self.size*len(uvs), 2)))
             
         # ----- No animation
         self.animated = False
             
     def __repr__(self):
         s = "<"
-        s += f"Crowd of {len(self)} meshes of {self.v_count} vertices, vertices: {self.total_verts}"
+        s += f"Crowd of {self.size} [{self.shape}] meshes of {self.v_count} vertices, vertices: {self.total_verts}"
         if self.animated:
             s += "\n"
             s += f"Animation of {self.steps} steps: {self.base_verts.shape}"
@@ -189,7 +191,6 @@ class Crowd(Transformations):
         """
         
         return self.wobject.up_axis
-        return 'Y'
     
     
     # ---------------------------------------------------------------------------
@@ -242,17 +243,17 @@ class Crowd(Transformations):
             np.random.seed(seed)
             
         if phases is None:
-            self.phases = np.random.randint(0, self.steps, len(self))
+            self.phases = np.random.randint(0, self.steps, self.shape)
         else:
-            self.phases = np.resize(phases, len(self))
+            self.phases = np.resize(phases, self.shape)
             
         if speeds is None:
-            self.speeds = np.random.randint(1, self.steps, len(self))
+            self.speeds = np.random.randint(1, self.steps, self.shape)
         else:
-            self.speeds = np.resize(speeds, len(self))
+            self.speeds = np.resize(speeds, self.shape)
             
         # ----- Reshape the base vertices
-        self.base_verts = np.resize(self.base_verts, (len(self), self.v_count, 4))
+        self.base_verts = np.resize(self.base_verts, build_shape(self.shape, (self.v_count, 4)))
             
     # ---------------------------------------------------------------------------
     # Set an animation
@@ -273,7 +274,7 @@ class Crowd(Transformations):
         """
         
         if self.animated:
-            indices = np.int((self.phases + frame*self.speeds) % self.steps)
+            indices = (self.phases + frame*self.speeds).astype(np.int) % self.steps
             self.base_verts = self.animation[indices]
             self.lock_apply()
             
