@@ -8,20 +8,14 @@ Created on Thu Jan 28 14:12:35 2021
 
 import numpy as np
 
+import bpy
+from ..blender.frames import get_frame
+from ..wrappers.wrap_function import wrap
+from ..maths.interpolation import BCurve, Easing
 
-if True:
-    import bpy
-    from .blender import get_frame
-    from .wrappers import wrap
-    from .interpolation import BCurve, Easing
-    
-    get_start_end_frame = lambda start: bpy.context.scene.frame_start if start else bpy.context.scene.frame_end
-    
-else:
-    get_frame = lambda x: x
-    get_start_end_frame = lambda start: 1 if start else 250
-    
-    from interpolation import BCurve, Easing
+from ..core.commons import WError
+
+get_start_end_frame = lambda start: bpy.context.scene.frame_start if start else bpy.context.scene.frame_end
 
 # =============================================================================================================================
 # Used to compare the current frame to a given interval
@@ -767,7 +761,13 @@ class Engine():
     def variable(name, scene=None):
         woa = Engine.VARIABLES.get(name)
         if woa is None:
-            raise RuntimeError(f"Engine variable error: the variable named '{name}' is not mapped to an object property!")
+            raise WError(f"Engine variable error: the variable named '{name}' is not mapped to an object property!",
+                    Class = "Engine",
+                    Static_method = "variable",
+                    SETUP = Engine.SETUP,
+                    FUNCTIONS = Engine.FUNCTIONS,
+                    VARIABLES = Engine.VARIABLES,
+                    ANIMATORS = Engine.ANIMATORS)
 
         if scene is None:
             scene = Engine.scene
@@ -830,16 +830,34 @@ class Engine():
             
         # Reset global scene
         Engine.scene = None
-            
+
+    # ---------------------------------------------------------------------------
+    # Is registered
+    
+    @staticmethod
+    def register():
+        if not hasattr(bpy.context.scene, "bw_engine_animate"):
+            register()
 
     # ---------------------------------------------------------------------------
     # Set the animation global var
 
     @staticmethod
     def run(go=True):
+        register()
         bpy.context.scene.bw_engine_animate = go
         if go:
             Engine.animate(bpy.context.scene)
+
+    # ---------------------------------------------------------------------------
+    # Go directly
+    
+    @staticmethod
+    def go(f):
+        Engine.clear()
+        Engine.add(f)
+        Engine.run(True)
+            
             
 # =============================================================================================================================
 # Execution of an action during an interval on a list of objects
@@ -946,13 +964,14 @@ class Animator():
 # Execution of an action during an interval on a list of objects
 
 def engine_handler(scene):
-    # DEBUG MODE pour bw_engine_animate
-    print('-'*100)
-    print("--------- DEBUG IN animation module: engine_handler....")
-    print('-'*100)
-    
-    Engine.animate(scene)
-    return
+    if False:
+        # DEBUG MODE pour bw_engine_animate
+        print('-'*100)
+        print("--------- DEBUG IN animation module: engine_handler....")
+        print('-'*100)
+        
+        Engine.animate(scene)
+        return
     # END OF DEBUG
     
     if  scene.bw_engine_animate:

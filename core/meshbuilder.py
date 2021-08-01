@@ -21,10 +21,9 @@ __status__     = "Production"
 import numpy as np
 from math import cos, sin, radians, pi
 
-try:
-    from .bezier import tangent, PointsInterpolation
-except:
-    pass
+from mathutils import Vector, Quaternion
+
+from ..maths.bezier import tangent, PointsInterpolation
 
 two_pi  = pi*2
 half_pi = pi/2

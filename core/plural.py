@@ -8,9 +8,7 @@ Created on Tue Jan 26 21:28:31 2021
 
 import numpy as np
 
-from .commons import base_error_title
-
-error_title = base_error_title % "plural.%s"
+from ..core.commons import WError
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +47,12 @@ def to_shape(a, shape):
     elif size % na.size == 0:
         return np.resize(na, shape)
     else:
-        raise RuntimeError(error_title % "to_shape" +
-            f"target shape: {shape}\n" +
-            f"input size:   {na.size}")
+        raise WError("Error in converting shape",
+                Function = "to_shape",
+                a_shape = np.shape(a),
+                a_size  = np.size(a),
+                shape = shape,
+                a = a)
         
 # ---------------------------------------------------------------------------
 # Compute the target shape of an array based on the shape of the items

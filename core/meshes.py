@@ -1,6 +1,7 @@
-from .blender import get_create_object
-from .bezier import tangent, PointsInterpolation
-from .meshbuilder import MeshBuilder, get_axis
+from ..blender.blender import get_create_object
+from ..maths.bezier import PointsInterpolation
+from ..core.meshbuilder import MeshBuilder
+from ..maths.geometry import get_axis
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Create an arrow

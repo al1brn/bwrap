@@ -6,7 +6,21 @@ Created on Wed Jan 27 07:52:00 2021
 @author: alain
 """
 
-base_error_title = "\n>>>>> Blender Wrap error - %s\n"
+# =============================================================================================================================
+# Module exception
+
+class WError(Exception):
+    def __init__(self, message, **kwargs):
+        self.message = message
+        self.vals = kwargs
+        
+    def __str__(self):
+        s = "\n" + "-"*100 + "\n"
+        s += "ERROR in Blender Wrap module\n"
+        s += self.message + "\n"
+        for k, v in self.vals.items():
+            s += f"- {k.replace('_', ' '):15s}: {v}\n"
+        return s
 
 # =============================================================================================================================
 # Access to chained attrs
@@ -32,7 +46,11 @@ def chained_attr(obj, prop):
         # Find the opening bracket
         left = s.find('[')
         if left < 0:
-            raise RuntimeError(f"Attribute error in '{prop}': '{s}' is an incorrect array access ('[' is missing)")
+            raise WError(
+                f"Attribute error in '{prop}': '{s}' is an incorrect array access ('[' is missing)",
+                Function = "chained_attr",
+                obj = obj,
+                prop = prop)
 
         # Read the index
         index = s[left + 1:-1]
@@ -82,14 +100,21 @@ def chained_attr(obj, prop):
             o = getattr(o, s)
             debug += '.' + s
         else:
-            raise RuntimeError(f"Attribute error in '{prop}': '{debug}' has not attribute named '{s}'")
+            raise WError(f"Attribute error in '{prop}': '{debug}' has not attribute named '{s}'",
+                Function = "chained_attr",
+                obj = obj,
+                prop = prop)
 
         # ----- Time to go to the item if the array is an index
         if index is not None:
             try:
                 o = o[index]
             except:
-                raise RuntimeError(f"Attribute error in '{prop}': improper index '{index}' for '{debug}'")
+                raise WError(f"Attribute error in '{prop}': improper index '{index}' for '{debug}'",
+                    Function = "chained_attr",
+                    obj = obj,
+                    prop = prop)
+                                   
 
     # ---------------------------------------------------------------------------
     # Let's return the result
