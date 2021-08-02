@@ -44,6 +44,18 @@ class WText(WID):
         self.wrapped.body = value
         
     # ===========================================================================
+    # Properties and methods to expose to WMeshObject
+    
+    @classmethod
+    def exposed_methods(cls):
+        return []
+
+    @classmethod
+    def exposed_properties(cls):
+        return {"text": 'RW'}
+        
+        
+    # ===========================================================================
     # Generated source code for WText class
 
     @property

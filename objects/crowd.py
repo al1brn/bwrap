@@ -8,12 +8,25 @@ Created on Tue Jul 13 14:03:31 2021
 
 import numpy as np
 
-from ..maths.transformations import Transformations
-from ..maths.geometry import build_shape
+from ..maths.transformations import Transformations, SlaveTransformations
+from ..maths.shapes import get_full_shape
 
 from ..wrappers.wrap_function import wrap
 
 from ..core.commons import WError
+
+# ====================================================================================================
+# Group transo class utility
+
+class GroupTransfo():
+    def __init__(self, indices, center):
+        self.indices = indices
+        self.center  = center
+        self.transfo = None
+        self.pivot   = None
+        
+    def __repr__(self):
+        return f"<GroupTransfo: {self.transfo}, pivot: {self.pivot}, indices: {np.shape(self.indices)}>"
 
 # ====================================================================================================
 # Crowd: duplicates a mesh in a single mesh
@@ -113,6 +126,10 @@ class Crowd(Transformations):
             
         # ----- No animation
         self.animated = False
+        
+        # ----- Groups
+        group_indices = wmodel.group_indices()
+        self.groups = {group_name: GroupTransfo(group_indices[group_name], center=wmodel.group_center(group_name)) for group_name in group_indices}
             
     def __repr__(self):
         s = "<"
@@ -140,6 +157,28 @@ class Crowd(Transformations):
         self.wobject.verts = value
         
     # ---------------------------------------------------------------------------
+    # Groups can benefit from additional transformations
+    
+    def group_transformation(self, group_name, center_group_name=None):
+        
+        if not group_name in self.groups:
+            raise WError(f"The model object of '{self.wobject.name}' doesn't have a vertex group named '{group_name}'")
+            
+        if center_group_name is None:
+            center_group_name = group_name
+        else:
+            if not center_group_name in self.groups:
+                raise WError(f"The model object of '{self.wobject.name}' doesn't have a vertex group named '{center_group_name}'")
+            
+            
+        gt = self.groups[group_name]
+        if gt.transfo is None:
+            gt.transfo = SlaveTransformations(self)
+            gt.pivot   = self.groups[center_group_name].center
+
+        return gt.transfo
+        
+    # ---------------------------------------------------------------------------
     # Overrides matrices transformations
         
     def apply(self):
@@ -151,8 +190,23 @@ class Crowd(Transformations):
         -------
         None.
         """
-        self.wobject.wdata.verts = self.transform_verts43(self.base_verts)
-
+        
+        # The slave transformation can call apply()
+        mem_locked = self.locked
+        self.locked = 1
+        
+        verts = self.transform_verts43(self.base_verts)
+        
+        # ----- Group transformation
+        
+        for group_name, gt in self.groups.items():
+            if gt.transfo is not None:
+                verts[..., gt.indices, :] = self.compose(gt.transfo, center=gt.pivot).transform_verts43(self.base_verts[gt.indices])
+            
+        self.wobject.wdata.verts = verts
+        
+        self.locked = mem_locked
+        
     # ---------------------------------------------------------------------------
     # Euler order
     
@@ -259,7 +313,7 @@ class Crowd(Transformations):
             self.speeds = np.resize(speeds, self.shape)
             
         # ----- Reshape the base vertices
-        self.base_verts = np.resize(self.base_verts, build_shape(self.shape, (self.v_count, 4)))
+        self.base_verts = np.resize(self.base_verts, get_full_shape(self.shape, (self.v_count, 4)))
             
     # ---------------------------------------------------------------------------
     # Set an animation
@@ -283,9 +337,8 @@ class Crowd(Transformations):
             indices = (self.phases + frame*self.speeds).astype(np.int) % self.steps
             self.base_verts = self.animation[indices]
             self.lock_apply()
-            
-        
-    
+
+
         
     
     

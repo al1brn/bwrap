@@ -22,6 +22,7 @@ import bpy
 
 from .wrappers.wrap_function import wrap
 from .objects.wcollection import WCollection
+from .objects.crowd import Crowd
 
 from .core.animation import Interval, Engine, Animator
 

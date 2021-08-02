@@ -29,6 +29,17 @@ class WMesh(WID):
             super().__init__(wrapped, name=wrapped.name)
         else:
             super().__init__(name=wrapped.name, coll=bpy.data.meshes)
+            
+    @staticmethod
+    def get_mesh(thing, **kwargs):
+        
+        if issubclass(type(thing), WMesh):
+            return thing
+        
+        if hasattr(thing, 'wmesh'):
+            return thing.wmesh
+        
+        raise WError(f"Object {thing} is not a mesh!", **kwargs)
 
     @property
     def owner(self):
@@ -75,9 +86,14 @@ class WMesh(WID):
 
     @verts.setter
     def verts(self, vectors):
-        verts = self.wrapped.vertices
-        a     = to_shape(vectors, (len(verts)*3))
-        verts.foreach_set("co", a)
+        verts = np.empty((self.verts_count, 3), np.float)
+        count = np.size(vectors)
+        if count >= 3:
+            verts[:] = np.reshape(vectors, (count//3, 3))
+        else:
+            verts[:] = vectors
+        
+        self.wrapped.vertices.foreach_set("co", verts.reshape(self.verts_count*3))
         self.mark_update()
         
     # x, y, z vertices access
@@ -165,7 +181,7 @@ class WMesh(WID):
         """
         
         return self.verts[np.array(self.edge_indices)]
-
+    
     # polygons as indices
     
     @property
@@ -202,7 +218,7 @@ class WMesh(WID):
         polys = self.poly_indices
         verts = self.verts
         return [ [list(verts[i]) for i in poly] for poly in polys]
-
+    
     # ---------------------------------------------------------------------------
     # Polygons centersand normals
 
@@ -243,8 +259,10 @@ class WMesh(WID):
         """
         
         self.wrapped.materials.clear()
-        for mat in other.materials:
+        wother = WMesh.get_mesh(other, Class="WMesh", Method="copy_materials_from")
+        for mat in wother.materials:
             self.wrapped.materials.append(mat)
+   
             
     @property
     def material_indices(self):
@@ -259,7 +277,7 @@ class WMesh(WID):
     def material_indices(self, value):
         inds = np.resize(value, self.poly_count)
         self.wrapped.polygons.foreach_set("material_index", inds)
-
+        
     # ---------------------------------------------------------------------------
     # uv management
     
@@ -596,6 +614,42 @@ class WMesh(WID):
                 return
             
         layer.data.foreach_set("value", np.resize(vals, len(layer.data)))
+        
+    # ---------------------------------------------------------------------------
+    # Groups
+    # Return the indices of the vertices belonging to a group
+    
+    def group_indices(self, group_index):
+        if group_index is None:
+            return None
+        
+        verts = self.wrapped.vertices
+
+        idx = np.zeros(len(verts), bool)
+        for i, v in enumerate(verts):
+            for g in v.groups:
+                if g.group == group_index:
+                    idx[i] = True
+                    break
+
+        return np.arange(len(verts))[idx]
+        
+    # ===========================================================================
+    # Properties and methods to expose to WMeshObject
+    
+    @classmethod
+    def exposed_methods(cls):
+        return ["copy_materials_from", "get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
+             "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
+             "detach_geometry", "copy_mesh", "python_source_code",
+             "get_floats", "set_floats", "get_ints", "set_ints"]
+
+    @classmethod
+    def exposed_properties(cls):
+        return {"verts_count": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
+             "bevel_weights": 'RW',"edge_indices": 'RO', "edge_indices": 'RO', "poly_count": 'RO',
+             "poly_indices": 'RO', "poly_vertices": 'RO', "poly_centers": 'RO', "normals": 'RO', 
+             "material_indices": 'RW', "uvmaps": 'RO'}
         
     # ===========================================================================
     # Generated source code for WMesh class

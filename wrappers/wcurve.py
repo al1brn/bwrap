@@ -81,9 +81,6 @@ class WCurve(WID):
         
         return WBezierSpline(spline) if spline.type == 'BEZIER' else WNurbsSpline(spline)
 
-    
-
-
     # ---------------------------------------------------------------------------
     # Add a spline
 
@@ -217,6 +214,17 @@ class WCurve(WID):
         self.wrapped.id_data.update_tag()
         
         return created
+    
+    # ===========================================================================
+    # Properties and methods to expose to WMeshObject
+    
+    @classmethod
+    def exposed_methods(cls):
+        return ["new", "delete", "set_splines_count", "set_verts_count"]
+
+    @classmethod
+    def exposed_properties(cls):
+        return {}
     
     # ===========================================================================
     # Generated source code for WCurve class

@@ -8,7 +8,6 @@ Created on Mon Jul 26 09:44:35 2021
 
 import numpy as np
 import bpy
-from mathutils import Quaternion
 
 from .wid import WID
 from .wmesh import WMesh
@@ -16,12 +15,7 @@ from .wcurve import WCurve
 from .wtext import WText
 from .wshapekey import WShapekey
 
-from ..core.plural import to_shape
-
-from ..maths.geometry import q_tracker
-from ..maths import bmatrix as bmx
 from ..maths.transformations import ObjectTransformations
-
 
 from ..core.commons import WError
 

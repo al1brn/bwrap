@@ -111,10 +111,13 @@ def wrap(name, create=None, **kwargs):
 
     elif cname == "Curve":
         return WCurve(obj)
+    
     elif cname == "Mesh":
         return WMesh(obj)
+    
     elif cname == "TextCurve":
         return WText(obj)
+    
     elif cname == 'Spline':
         return WCurve.spline_wrapper(obj)
     

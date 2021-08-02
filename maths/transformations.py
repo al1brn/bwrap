@@ -64,7 +64,19 @@ class Transformations():
         return s
     
     # ===========================================================================
-    # Initiali
+    # From transformation matrix
+    
+    @staticmethod
+    def FromTMat(tmat):
+        transfo = Transformations(count=get_main_shape(np.shape(tmat), (4, 4)))
+        transfo.tmat_ = np.array(tmat)
+        return transfo
+    
+    def compose(self, other, center=0.):
+        return Transformations.FromTMat(tmat_compose(self.tmat, other.tmat, center=center))
+    
+    def compose_with(self, other, center=0.):
+        self.tmat = self.compose(other, center=center).tmat
     
     # ===========================================================================
     # Can be overriden
@@ -675,6 +687,31 @@ class Transformations():
             self.euler = noise(euler[0], euler[1], get_full_shape(self.shape, 3))
         
         self.unlock()
+        
+# =============================================================================================================================
+# A slave Transformations (apply )
+
+class SlaveTransformations(Transformations):
+    
+    def __init__(self, transformations):
+        super().__init__(count=transformations.shape)
+        self.mother = transformations
+        
+    def __repr__(self):
+        return f"Slave transformations {self.shape} on: {self.mother}"
+    
+    def apply(self):
+        self.mother.lock_apply()
+    
+    def lock_apply(self):
+        self.mother.lock_apply()
+    
+    def lock(self):
+        self.mother.lock()
+        
+    def unlock(self):
+        self.mother.unlock()
+        
 
 # =============================================================================================================================
 # A slicer on to a Transformations
@@ -687,7 +724,7 @@ class TransformationsSlicer(Transformations):
         self.slice  = index
         
     def __repr__(self):
-        return f"Slicer transformations of slice {self.slice} on:\n{super().__repr__()}"
+        return f"Slicer transformations of slice {self.slice} on:\n{self.mother}"
     
     @property
     def tmat(self):

@@ -37,6 +37,15 @@ ftype = np.float
 zero = 1e-6
 
 # -----------------------------------------------------------------------------------------------------------------------------
+# At least as vector
+
+def atleast_vector(v):
+    if np.size(v) < 3:
+        return np.resize(v, 3)
+    else:
+        return v
+
+# -----------------------------------------------------------------------------------------------------------------------------
 # A utility given the index of an axis and its sign
 
 def signed_axis_index(axis):
@@ -280,8 +289,12 @@ def vect_normalize(v, null_replace=None):
 # -----------------------------------------------------------------------------------------------------------------------------
 # Some randomization
 
-def random_vectors(shape, bounds=[-3, 3]):
-    return np.random.uniform(bounds[0], bounds[1], get_full_shape(shape, 3))
+def random_vectors(shape, bounds=[0, 5]):
+    z = np.random.uniform(-1., 1., shape)
+    r = np.sqrt(1 - z*z)
+    a = np.random.uniform(0., 2*np.pi, shape)
+    
+    return np.stack((r*np.cos(a), r*np.sin(a), z), axis=-1)*np.expand_dims(np.random.uniform(bounds[0], bounds[1], shape), axis=-1)
 
 def random_v4(shape, bounds=[-3, 3]):
     return np.insert(random_vectors(shape, bounds), 0, 1, axis=-1)
@@ -603,11 +616,11 @@ def m_to_euler(m, order='XYZ'):
 
         xyz = [1, 0, 2]
 
-        ls0, cs0, sgn = (2, 0, -1)
-        ls1, cs1, lc1, cc1 = (2, 1, 2, 2)
-        ls2, cs2, lc2, cc2 = (1, 0, 0, 0)
+        ls0, cs0, sgn = (2, 0, -1)          # sy
+        ls1, cs1, lc1, cc1 = (2, 1, 2, 2)   # cy.sx cy.cx
+        ls2, cs2, lc2, cc2 = (1, 0, 0, 0)   # cy.sz cy.cz
 
-        ls3, cs3, lc3, cc3 = (0, 1, 1, 1)
+        ls3, cs3, lc3, cc3 = (0, 1, 1, 1)   
 
     elif order == 'XZY':
 
@@ -684,19 +697,19 @@ def m_to_euler(m, order='XYZ'):
             Function = "m_to_euler",
             order = order,
             m = m)
-
+        
+        
     # ---------------------------------------------------------------------------
     # Compute the euler angles
 
     angles = np.zeros((len(ms), 3), ftype)   # Place holder for the angles in the order of their computation
     
-    # Computation depends upoin sin(angle 0) == ±1
+    # Computation depends upon sin(angle 0) == ±1
 
     neg_1  = np.where(np.abs(ms[:, cs0, ls0] + 1) < zero)[0] # sin(angle 0) = -1
     pos_1  = np.where(np.abs(ms[:, cs0, ls0] - 1) < zero)[0] # sin(angle 0) = +1
     rem    = np.delete(np.arange(len(ms)), np.concatenate((neg_1, pos_1)))
-
-
+    
     if len(neg_1) > 0:
         angles[neg_1, xyz[0]] = -pi/2 * sgn
         angles[neg_1, xyz[1]] = 0
@@ -711,7 +724,33 @@ def m_to_euler(m, order='XYZ'):
         angles[rem, xyz[0]] = sgn * np.arcsin(ms[rem, cs0, ls0])
         angles[rem, xyz[1]] = np.arctan2(-sgn * ms[rem, cs1, ls1], ms[rem, cc1, lc1])
         angles[rem, xyz[2]] = np.arctan2(-sgn * ms[rem, cs2, ls2], ms[rem, cc2, lc2])
-
+        
+    # ---------------------------------------------------------------------------
+    # At this stage, the result could be two 180 angles and a value ag
+    # This is equivalent to two 0 values and 180-ag
+    # Let's correct this
+    
+    # -180° --> 180°
+        
+    angles[abs(angles+np.pi) < zero] = np.pi
+    
+    # Let's change where we have two 180 angles
+    
+    idx = np.where(np.logical_and(abs(angles[:, 0]-np.pi) < zero, abs(angles[:, 1]-np.pi) < zero))[0]
+    angles[idx, 0] = 0
+    angles[idx, 1] = 0
+    angles[idx, 2] = np.pi - angles[idx, 2]
+    
+    idx = np.where(np.logical_and(abs(angles[:, 0]-np.pi) < zero, abs(angles[:, 2]-np.pi) < zero))[0]
+    angles[idx, 0] = 0
+    angles[idx, 2] = 0
+    angles[idx, 1] = np.pi - angles[idx, 1]
+    
+    idx = np.where(np.logical_and(abs(angles[:, 1]-np.pi) < zero, abs(angles[:, 2]-np.pi) < zero))[0]
+    angles[idx, 1] = 0
+    angles[idx, 2] = 0
+    angles[idx, 0] = np.pi - angles[idx, 0]
+    
     # ---------------------------------------------------------------------------
     # Returns the result
     
@@ -1244,7 +1283,7 @@ def e_to_matrix(e, order='XYZ'):
         
     return m.reshape(get_full_shape(main_shape, (3, 3)))
 
-    
+
 # -----------------------------------------------------------------------------------------------------------------------------
 # Rotate a vector with an euler
 
@@ -1650,6 +1689,9 @@ def tmatrix(location=0., matrix=np.identity(3, np.float), scale=1., count=None):
         () if count is None else count,
         error = error)
     
+    if main_shape == ():
+        return tmatrix(location, matrix, scale, count=1)[0]
+    
     # ----- Resulting array of matrices initialized as identity
     
     mats = np.resize(np.identity(4), get_full_shape(main_shape, (4, 4)))
@@ -1822,7 +1864,7 @@ def tmat_transform4(tmat, v4, one_one=False):
     # ----- One vertex per matrix
     if one_one:
         m_shape = get_main_shape(tmat.shape, (4, 4))
-        v_shape = get_main_shape(v4.shape, 4)
+        v_shape = get_main_shape(np.shape(v4), 4)
         
         if m_shape != v_shape:
             raise WError(f"with one_one argument = True, the sub shapes must be equal: (shape, 4, 4) and (shape, 4). Here {np.shape(tmat)} and {np.shape(v4)}.",
@@ -1864,26 +1906,42 @@ def tmat_transform43(tmat, v4, one_one=False):
     return np.delete(tmat_transform4(tmat, v4, one_one=one_one), 3, axis=-1)
 
 def tmat_transform(tmat, v3, one_one=False):
-    return tmat_transform43(tmat, np.insert(v3, 3, 1, axis=-1), one_one=one_one)
+    return tmat_transform43(tmat, np.insert(atleast_vector(v3), 3, 1, axis=-1), one_one=one_one)
 
 def tmat_inv_transform(tmat, v3, one_one=False):
-    return tmat_transform(np.linalg.inv(tmat), v3, one_one=one_one)
+    return tmat_transform(np.linalg.inv(tmat), atleast_vector(v3), one_one=one_one)
 
 # ---------------------------------------------------------------------------
 # Vectors transformations
 
 def tmat_vect_transform(tmat, vect, one_one=False):
-    return tmat_transform(tmat, vect, one_one=one_one) - location_from_tmat(tmat)
+    return tmat_transform(tmat, atleast_vector(vect), one_one=one_one) - location_from_tmat(tmat)
 
 def tmat_vect_inv_transform(tmat, vect, one_one=False):
-   return tmat_inv_transform(tmat, location_from_tmat(tmat) + vect, one_one=one_one) 
+   return tmat_inv_transform(tmat, location_from_tmat(tmat) + atleast_vector(vect), one_one=one_one) 
+
+# ---------------------------------------------------------------------------
+# Translation
+
+def tmat_translate(tmat, translation):
+    tm = np.array(tmat)
+    tm[..., 3, :3] += translation
+    return tm
 
 # ---------------------------------------------------------------------------
 # Composition
 
-def tmat_compose(before, after):
-    return np.matmul(after, before)
-
+def tmat_compose(before, after, center=0.):
+    
+    center = atleast_vector(center)
+    
+    # ----- Quick
+    if center is None:
+        return np.matmul(before, after)
+    
+    # ---- With pivot
+    loc = tmat_transform(before, center)
+    return tmat_translate(np.matmul(tmat_translate(before, -loc), after), loc)
 
 
 def dump(qs, title=""):
