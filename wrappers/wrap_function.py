@@ -130,3 +130,15 @@ def wrap(name, create=None, **kwargs):
                      name = name,
                      create = create,
                      **kwargs)
+        
+# ---------------------------------------------------------------------------
+# Get the wrapped
+
+def unwrap(thing):
+    if hasattr(thing, 'wrapped'):
+        return thing.wrapped
+    elif type(thing) is str:
+        return bpy.data.objects[thing]
+    else:
+        return thing
+        

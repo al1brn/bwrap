@@ -248,7 +248,6 @@ class Transformations():
     @location.setter
     def location(self, value):
         self.tmat[..., 3, :3] = value
-        #self.tmat[..., 3, :3] = np.resize(value, build_shape(self.shape, 3))
         self.lock_apply()
         
     @property 
@@ -257,7 +256,7 @@ class Transformations():
     
     @x.setter
     def x(self, value):
-        self.tmat[..., 3, 0] = value #np.resize(value, self.shape)
+        self.tmat[..., 3, 0] = value 
         self.lock_apply()
         
     @property 
@@ -266,7 +265,7 @@ class Transformations():
     
     @y.setter
     def y(self, value):
-        self.tmat[..., 3, 1] = value #np.resize(value, self.shape)
+        self.tmat[..., 3, 1] = value 
         self.lock_apply()
         
     @property 
@@ -275,7 +274,7 @@ class Transformations():
     
     @z.setter
     def z(self, value):
-        self.tmat[..., 3, 2] = value # np.resize(value, self.shape)
+        self.tmat[..., 3, 2] = value 
         self.lock_apply()
     
     # ---------------------------------------------------------------------------

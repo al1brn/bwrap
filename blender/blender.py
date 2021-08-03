@@ -75,11 +75,12 @@ def get_object_collections(obj):
 # Link an object to a collection
 # Unlink all the linked collections
 
-def put_object_in_collection(obj, collection=None):
+def put_object_in_collection(obj, collection=None, unlink=True):
 
-    colls = get_object_collections(obj)
-    for coll in colls:
-        coll.objects.unlink(obj)
+    if unlink:    
+        colls = get_object_collections(obj)
+        for coll in colls:
+            coll.objects.unlink(obj)
 
     coll = get_collection(collection, create=False)
 
@@ -89,6 +90,22 @@ def put_object_in_collection(obj, collection=None):
         coll.objects.link(obj)
 
     return obj
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# In same collections
+
+def copy_collections(source, target):
+    
+    s_colls = get_object_collections(source)
+    t_colls = get_object_collections(target)
+    for coll in s_colls:
+        if coll not in t_colls:
+            coll.objects.link(target)
+    
+    for coll in t_colls:
+        if coll not in s_colls:
+            coll.objects.unlink(target)
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Get a collection used by wrapanime
@@ -186,7 +203,12 @@ def create_object(name, what='CUBE', collection=None, parent=None, **kwargs):
 
     # Links exclusively to the requested collection
 
-    if collection is not None:
+    if collection is None:
+        try:
+            bpy.context.collection.objects.link(obj)
+        except:
+            pass
+    else:
         bpy.ops.collection.objects_remove_all()
         get_collection(collection).objects.link(obj)
 
@@ -311,11 +333,9 @@ def duplicate_object(obj, collection=None, link=False, modifiers=False, children
 
 def delete_object(obj_or_name, children=True):
 
-    wobj = get_object(obj_or_name, mandatory=False)
-    if wobj is None:
+    obj = get_object(obj_or_name, mandatory=False)
+    if obj is None:
         return
-
-    obj = wobj.wrapped
 
     def add_to_coll(o, coll):
         for child in o.children:

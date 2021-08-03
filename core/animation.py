@@ -972,8 +972,8 @@ def engine_handler(scene):
         
         Engine.animate(scene)
         return
-    # END OF DEBUG
-    
+        # END OF DEBUG
+        
     if  scene.bw_engine_animate:
         Engine.animate(scene)
 

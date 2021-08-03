@@ -21,8 +21,8 @@ import numpy as np
 import bpy
 
 from .wrappers.wrap_function import wrap
-from .objects.wcollection import WCollection
 from .objects.crowd import Crowd
+from .objects.duplicator import Duplicator
 
 from .core.animation import Interval, Engine, Animator
 

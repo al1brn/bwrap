@@ -8,6 +8,7 @@ Created on Tue Jul 13 14:03:31 2021
 
 import numpy as np
 
+from ..blender import blender
 from ..maths.transformations import Transformations, SlaveTransformations
 from ..maths.shapes import get_full_shape
 
@@ -47,7 +48,7 @@ class Crowd(Transformations):
     Plus the shortcuts: x, y, z, rx, ry, rz, rxd, ryd, rzd, sx, sy, sz
     """
     
-    def __init__(self, model, count=100):
+    def __init__(self, model, count=100, name=None):
         """Initialize the crowd with by creating count duplicates of the model mesh.
         
         The model can be the wrapped of an evaluated mesh to take into account the 
@@ -91,7 +92,11 @@ class Crowd(Transformations):
                 model = model,
                 count = count)
             
-        self.wobject = wrap(wmodel.name + " Crowd", create="CUBE")
+        if name is None:
+            name = "Crowd of " + wmodel.name
+            
+        self.wobject = wrap(name, create="CUBE")
+        blender.copy_collections(wmodel.wrapped, self.wobject.wrapped)
             
         # ----- Build the new geometry made of stacking vertices and polygons
         

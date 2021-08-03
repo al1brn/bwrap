@@ -294,7 +294,8 @@ def random_vectors(shape, bounds=[0, 5]):
     r = np.sqrt(1 - z*z)
     a = np.random.uniform(0., 2*np.pi, shape)
     
-    return np.stack((r*np.cos(a), r*np.sin(a), z), axis=-1)*np.expand_dims(np.random.uniform(bounds[0], bounds[1], shape), axis=-1)
+    R = bounds[0]+ (1 - np.random.uniform(0, 1, shape)**3)*(bounds[1] - bounds[0])
+    return np.stack((r*np.cos(a), r*np.sin(a), z), axis=-1)*np.expand_dims(R, axis=-1)
 
 def random_v4(shape, bounds=[-3, 3]):
     return np.insert(random_vectors(shape, bounds), 0, 1, axis=-1)
@@ -1944,15 +1945,5 @@ def tmat_compose(before, after, center=0.):
     return tmat_translate(np.matmul(tmat_translate(before, -loc), after), loc)
 
 
-def dump(qs, title=""):
-    print('-'*10, title)
-    n = 0
-    for q in qs:
-        if n > 10:
-            break
-        n += 1
-        ax, ag = axis_angle(q)
-        print(q, ax, f"{np.degrees(ag):.0f}°")
-    print()
 
 
