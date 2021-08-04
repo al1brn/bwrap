@@ -14,18 +14,9 @@ from ..core.class_enhance import expose
 
 class WCurveObject(WObject):
     
-    def __init__(self, wrapped):
-        super().__init__(wrapped)
-        self.wcurve = WCurve(self.wrapped.data, self.wrapped.is_evaluated)
-
-    # ---------------------------------------------------------------------------
-    # Data as a curve
-    """
-    @property
-    def wcurve(self):
-        wo = self.wrapped
-        return WCurve(wo.data, wo.is_evaluated)
-    """    
+    def __init__(self, wrapped, is_evaluated=None):
+        super().__init__(wrapped, is_evaluated)
+        self.wcurve = WCurve(self.name, self.is_evaluated)
 
     # ---------------------------------------------------------------------------
     # Implement directly the array of wsplines

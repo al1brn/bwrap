@@ -64,7 +64,7 @@ class WStruct():
     Wraps the management of the fcurves and key frames.
     """
 
-    def __init__(self, wrapped=None, name=None, coll=None):
+    def __init__(self, wrapped=None):
         """Blender Struct Wrapper
         
         Can be initialized either by a Struct or by a name in a Blender Collection.
@@ -81,12 +81,12 @@ class WStruct():
         Returns
         -------
         None.
-
         """
         
-        self.wrapped_ = wrapped
-        self.name_    = name
-        self.coll_    = coll
+        self.wrapped_    = wrapped
+        
+    # ---------------------------------------------------------------------------
+    # WID : To be overriden to safely access objects
 
     @property
     def wrapped(self):
@@ -98,29 +98,10 @@ class WStruct():
             The wrapped object.
         """
         
-        if self.wrapped_ is None:
-            return self.coll_[self.name_]
-        else:
-            return self.wrapped_
+        return self.wrapped_
 
     def __repr__(self):
         return f"[Wrapper {self.__class__.__name__} of {self.class_name} '{self.wrapped}']"
-    
-    @property
-    def name(self):
-        try:
-            return self.wrapped.name
-        except:
-            return None
-        
-    @name.setter
-    def name(self, value):
-        try:
-            self.wrapped.name = value
-            if self.name_ is not None:
-                self.name_ = self.wrapped.name
-        except:
-            pass
 
     @property
     def class_name(self):

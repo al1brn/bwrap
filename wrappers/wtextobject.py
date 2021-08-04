@@ -14,16 +14,9 @@ from ..core.class_enhance import expose
 
 class WTextObject(WObject):
     
-    def __init__(self, wrapped):
-        super().__init__(wrapped)
-        self.wtext = WText(self.wrapped.data, self.wrapped.is_evaluated)
-    
-    """
-    @property
-    def wtext(self):
-        wo = self.wrapped
-        return WText(wo.data, wo.is_evaluated)
-    """
+    def __init__(self, wrapped, is_evaluated=None):
+        super().__init__(wrapped, is_evaluated)
+        self.wtext = WText(self.name, self.is_evaluated)
 
 # Expose wmesh methods and properties  
 

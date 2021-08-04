@@ -16,9 +16,9 @@ from ..core.commons import WError
 
 class WMeshObject(WObject):
     
-    def __init__(self, wrapped):
-        super().__init__(wrapped)
-        self.wmesh = WMesh(self.wrapped.data, self.wrapped.is_evaluated)
+    def __init__(self, wrapped, is_evaluated=None):
+        super().__init__(wrapped, is_evaluated)
+        self.wmesh = WMesh(self.name, self.is_evaluated)
     
     """
     @property

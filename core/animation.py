@@ -9,6 +9,8 @@ Created on Thu Jan 28 14:12:35 2021
 import numpy as np
 
 import bpy
+from ..blender import depsgraph
+
 from ..blender.frames import get_frame
 from ..wrappers.wrap_function import wrap
 from ..maths.interpolation import BCurve, Easing
@@ -964,18 +966,11 @@ class Animator():
 # Execution of an action during an interval on a list of objects
 
 def engine_handler(scene):
-    if False:
-        # DEBUG MODE pour bw_engine_animate
-        print('-'*100)
-        print("--------- DEBUG IN animation module: engine_handler....")
-        print('-'*100)
-        
-        Engine.animate(scene)
-        return
-        # END OF DEBUG
-        
     if  scene.bw_engine_animate:
+        print(f"{scene.frame_current}", "-"*50)
+        depsgraph.depsgraph()
         Engine.animate(scene)
+        depsgraph.reset_depsgraph()
 
 # =============================================================================================================================
 # Registering the module
@@ -989,8 +984,10 @@ def register():
     bpy.types.Scene.bw_engine_animate = bpy.props.BoolProperty(description="Animate at frame change")
     bpy.types.Scene.bw_hide_viewport  = bpy.props.BoolProperty(description="Hide in viewport when hiding render")
 
-    bpy.app.handlers.frame_change_pre.clear()
-    bpy.app.handlers.frame_change_pre.append(engine_handler)
+    bpy.app.handlers.frame_change_post.clear()
+    bpy.app.handlers.frame_change_post.append(engine_handler)
+    #bpy.app.handlers.frame_change_pre.clear()
+    #bpy.app.handlers.frame_change_pre.append(engine_handler)
     print("Animation registered.")
 
 

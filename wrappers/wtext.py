@@ -21,11 +21,29 @@ class WText(WID):
     Other attributes come from the Blender TextCurve class.
     """
 
-    def __init__(self, wrapped, evaluated=False):
+    def __init__DEPR(self, wrapped, evaluated=False):
         if evaluated:
             super().__init__(wrapped, name=wrapped.name)
         else:
             super().__init__(name=wrapped.name, coll=bpy.data.curves)
+            
+    @property
+    def wrapped(self):
+        """The wrapped Blender instance.
+
+        Returns
+        -------
+        Struct
+            The wrapped object.
+        """
+        
+        return self.blender_object.data
+        
+        if self.wrapped_ is None:
+            return bpy.data.curves[self.name_]
+        else:
+            return self.wrapped_
+            
 
     @property
     def text(self):
@@ -65,10 +83,6 @@ class WText(WID):
     @property
     def name_full(self):
         return self.wrapped.name_full
-
-    @property
-    def is_evaluated(self):
-        return self.wrapped.is_evaluated
 
     @property
     def original(self):

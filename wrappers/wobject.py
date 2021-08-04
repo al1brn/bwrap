@@ -7,7 +7,6 @@ Created on Mon Jul 26 09:44:35 2021
 """
 
 import numpy as np
-import bpy
 
 from .wid import WID
 from .wmesh import WMesh
@@ -35,31 +34,35 @@ class WObject(WID, ObjectTransformations):
     In particular, wrapper of a curve object implements array access to splines wrappers.
     """
 
-    def __init__(self, wrapped):
+    def __init__(self, wrapped, is_evaluated = None):
+        
         
         # ----- WID initialization
-        
-        init = True
-        try:
-            if wrapped.is_evaluated:
-                super().__init__(wrapped)
-                init = False
-        except:
-            pass
-            
-        if init:
-            super().__init__(name=wrapped.name, coll=bpy.data.objects)
+
+        super().__init__(wrapped, is_evaluated)
             
         # ----- ObjectTransformations initialization
         
         ObjectTransformations.__init__(self, world=False)
+        
+    @property
+    def wrapped(self):
+        """The wrapped Blender instance.
+
+        Returns
+        -------
+        Struct
+            The wrapped object.
+        """
+        
+        return self.blender_object
+        
             
     # ---------------------------------------------------------------------------
     # Data
     
     def __repr__(self):
         return f"[Wrapper {self.__class__.__name__} of {self.object_type} object '{self.name}']"
-            
             
     # ---------------------------------------------------------------------------
     # Data
@@ -122,13 +125,13 @@ class WObject(WID, ObjectTransformations):
         # Supported types
         name = data.__class__.__name__
         if name == 'Mesh':
-            return WMesh(data, wo.is_evaluated)
+            return WMesh(self.name, self.is_evaluated)
         
         elif name == 'Curve':
-            return WCurve(data, wo.is_evaluated)
+            return WCurve(self.name, self.is_evaluated)
         
         elif name == 'TextCurve':
-            return WText(data, wo.is_evaluated)
+            return WText(self.name, self.is_evaluated)
         
         else:
             return None
@@ -453,10 +456,6 @@ class WObject(WID, ObjectTransformations):
     @property
     def name_full(self):
         return self.wrapped.name_full
-
-    @property
-    def is_evaluated(self):
-        return self.wrapped.is_evaluated
 
     @property
     def original(self):

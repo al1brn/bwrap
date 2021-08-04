@@ -12,10 +12,13 @@ import bpy
 from .wid import WID
 
 from ..blender import blender
+from ..blender import depsgraph 
+
 from ..maths.transformations import Transformations
 from ..objects.wpropcollection import WPropCollection
 from ..maths.shapes import get_full_shape
 from ..wrappers.wrap_function import wrap, unwrap
+
 
 from ..core.commons import WError
 
@@ -25,17 +28,8 @@ class WCollection(WID, Transformations):
     def __init__(self, wrapped, world=False, owner=False):
         
         # ----- WID initialization
-        
-        if type(wrapped) is str:
-            cname = wrapped
-        else:
-            cname = wrapped.name
-        
-        WID.__init__(self, name=cname, coll=bpy.data.collections)
-        
-        # DEBUG
-        #self.wrapped_ = bpy.data.collections[cname]
-        # END OF DEBUG
+
+        super().__init__(wrapped)
         
         # ----- Transformations initialization
         
@@ -45,6 +39,24 @@ class WCollection(WID, Transformations):
         self.world_ = world
         self.tmat_  = self.read_tmat()
         self.owner  = owner
+        
+    @property
+    def wrapped(self):
+        """The wrapped Blender instance.
+
+        Returns
+        -------
+        Struct
+            The wrapped object.
+        """
+        
+        return depsgraph.get_collection(self.name)
+        
+        if self.wrapped_ is None:
+            return bpy.data.collections[self.name_]
+        else:
+            return self.wrapped_
+        
         
     # ---------------------------------------------------------------------------
     # Plural access to the objects
@@ -185,15 +197,10 @@ class WCollection(WID, Transformations):
         -------
         None.
         """
-        
-        return
-        
         if self.locked == 0:
             objs = self.wrapped.objects
             for o in objs:
                 o.update_tag()
-
-        bpy.context.view_layer.update()
     
     def apply(self):
         self.write_tmat(self.tmat_)

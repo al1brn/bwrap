@@ -24,11 +24,22 @@ class WMesh(WID):
     """Wrapper of a Mesh structure.
     """
 
-    def __init__(self, wrapped, evaluated=False):
+    def __init__DEPR(self, wrapped, evaluated=False):
         if evaluated:
             super().__init__(wrapped, name=wrapped.name)
         else:
             super().__init__(name=wrapped.name, coll=bpy.data.meshes)
+            
+    @property
+    def wrapped(self):
+        """The wrapped Blender instance.
+
+        Returns
+        -------
+        Struct
+            The wrapped object.
+        """
+        return self.blender_object.data
             
     @staticmethod
     def get_mesh(thing, **kwargs):
@@ -40,17 +51,6 @@ class WMesh(WID):
             return thing.wmesh
         
         raise WError(f"Object {thing} is not a mesh!", **kwargs)
-
-    @property
-    def owner(self):
-        """The object owning this mesh
-        """
-        
-        for obj in bpy.data.objects:
-            if obj.data is not None:
-                if obj.data.name == self.name:
-                    return obj
-        return None
 
     # Mesh vertices update
 
@@ -354,7 +354,7 @@ class WMesh(WID):
         """
 
         mesh = self.wrapped
-        obj  = self.owner
+        obj  = self.blender_object
 
         # Clear
         obj.shape_key_clear()
@@ -661,10 +661,6 @@ class WMesh(WID):
     @property
     def name_full(self):
         return self.wrapped.name_full
-
-    @property
-    def is_evaluated(self):
-        return self.wrapped.is_evaluated
 
     @property
     def original(self):
