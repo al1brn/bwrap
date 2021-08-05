@@ -8,15 +8,145 @@ Created on Mon Jul 26 09:03:03 2021
 
 import numpy as np
 
+import bpy
+
+from ..blender import depsgraph
+
 from .wstruct import WStruct
 
-from ..core.plural import to_shape
+from ..core.commons import WError
+
+#from ..core.plural import to_shape
+
+# ---------------------------------------------------------------------------
+# Blender shape keys are organized
+#
+# object
+#      shape_keys (Key)
+#           key_blocks (Prop Collection of ShapeKey)
+#                data (Prop Collection of
+#                     ShapeKeyPoint
+#                     ShapeKeyBezierPoint
+#                     ShapeKeyCurvePoint
+#       
+# cube.data.shape_keys.key_blocks[].data[].co
+
+
+class WShapeKeys(WStruct):
+    
+    def __init__(self, object):
+        if type(object) is str:
+            name = object
+        else:
+            name = object.name
+            
+        super().__init__(name=name)
+        
+    @property
+    def wrapped(self):
+        return depsgraph.get_object(self.name).data.shape_keys
+    
+    @property
+    def key_blocks(self):
+        sks = depsgraph.get_object(self.name).data.shape_keys
+        return None if sks is None else sks.key_blocks
+    
+    # ---------------------------------------------------------------------------
+    # As an array of shape keys
+    
+    def __len__(self):
+        blocks = self.key_blocks
+        if blocks is None:
+            return 0
+        else:
+            return len(blocks)
+        
+    def __getitem__(self, index):
+        blocks = self.key_blocks
+        if blocks is None:
+            return None
+        else:
+            return blocks[index]
+        
+        
+class WMeshShapeKeys(WShapeKeys):
+        
+    # ---------------------------------------------------------------------------
+    # Vertices
+    
+    @property
+    def verts_count(self):
+        blocks = self.key_blocks
+        if blocks is None:
+            return 0
+        if len(blocks) == 0:
+            return 0
+        return len(blocks[0].data)
+    
+    def get_verts(self, index=None):
+        
+        n = self.verts_count
+        if n == 0:
+            return None
+        
+        if index is None:
+            verts = np.empty((len(self), n, 3), np.float)
+            for i in range(len(self)):
+                verts[i] = self.get_verts(i)
+            return verts
+        else:
+            verts = np.empty(n*3, np.float)
+            data = self[index].data
+            data.foreach_get('co', verts)
+            return verts.reshape(n, 3)
+        
+    def set_verts(self, value, index=None):
+        
+        n = self.verts_count
+        shape = np.shape(value)
+        
+        if index is None:
+            expected = (len(self), n, 3)
+        else:
+            expected = (n, 3)
+            
+        if shape != expected:
+            raise WError("The vertices array shape doesn't match the number of vertices of the objects",
+                    Object = self.name,
+                    index = index,
+                    shape_keys_count = len(self),
+                    vertices_count = n,
+                    expected_shape = expected,
+                    vertices_shape = shape)
+            
+        if index is None:
+            for i in range(len(self)):
+                self.set_verts(value[i], index=i)
+        else:
+            data = self[index].data
+            data.foreach_set('co', value.reshape(n*3))
+        
+        
+        
+                        
+    
+    
+        
+            
+    
+    
+            
+
+
+
+# wrapped = Shapekey (key_blocks item)
+
 
 # ---------------------------------------------------------------------------
 # Shape keys data blocks wrappers
 # wrapped = Shapekey (key_blocks item)
 
-class WShapekey(WStruct):
+class WShapekey_OLD(WStruct):
     """Wraps the key_blocks collection of a shapekey class
     """
 
@@ -91,10 +221,7 @@ class WShapekey(WStruct):
         if name in dir(self.wrapped.data[0]):
             return
         
-        raise RuntimeError(
-            error_title % "WShapekey" +
-            f"The attribut '{name}' doesn't exist for this shape key '{self.name}'."
-            )
+        raise WError(f"The attribut '{name}' doesn't exist for this shape key '{self.name}'.")
 
     @property
     def verts(self):
@@ -107,7 +234,7 @@ class WShapekey(WStruct):
         """
         
         data = self.wrapped.data
-        count = len(self.data)
+        count = len(data)
         a = np.empty(count*3, np.float)
         data.foreach_get("co", a)
         return a.reshape((count, 3))
@@ -115,9 +242,10 @@ class WShapekey(WStruct):
     @verts.setter
     def verts(self, value):
         data = self.wrapped.data
-        count = len(self.data)
-        a = to_shape(value, count*3)
-        data.foreach_set("co", a)
+        count = len(data)
+        a = np.empty((count, 3), np.float)
+        a[:] = value
+        data.foreach_set("co", a.reshape(count*3))
 
     @property
     def lefts(self):
@@ -131,7 +259,7 @@ class WShapekey(WStruct):
         
         self.check_attr("handle_left")
         data = self.wrapped.data
-        count = len(self.data)
+        count = len(data)
         a = np.empty(count*3, np.float)
         data.foreach_get("handle_left", a)
         return a.reshape((count, 3))
@@ -140,9 +268,10 @@ class WShapekey(WStruct):
     def lefts(self, value):
         self.check_attr("handle_left")
         data = self.wrapped.data
-        count = len(self.data)
-        a = to_shape(value, count*3)
-        data.foreach_set("handle_left", a)
+        count = len(data)
+        a = np.empty((count, 3), np.float)
+        a[:] = value
+        data.foreach_set("handle_left", a.reshape(count*3))
 
     @property
     def rights(self):
@@ -156,7 +285,7 @@ class WShapekey(WStruct):
         
         self.check_attr("handle_right")
         data = self.wrapped.data
-        count = len(self.data)
+        count = len(data)
         a = np.empty(count*3, np.float)
         data.foreach_get("handle_right", a)
         return a.reshape((count, 3))
@@ -165,9 +294,10 @@ class WShapekey(WStruct):
     def rights(self, value):
         self.check_attr("handle_right")
         data = self.wrapped.data
-        count = len(self.data)
-        a = to_shape(value, count*3)
-        data.foreach_set("handle_right", a)
+        count = len(data)
+        a = np.empty((count, 3), np.float)
+        a[:] = value
+        data.foreach_set("handle_right", a.reshape(count*3))
 
     @property
     def radius(self):
@@ -190,8 +320,9 @@ class WShapekey(WStruct):
     def radius(self, value):
         self.check_attr("radius")
         data = self.wrapped.data
-        count = len(self.data)
-        a = to_shape(value, count)
+        count = len(data)
+        a = np.empty(count, np.float)
+        a[:] = value
         data.foreach_set("radius", a)
 
     @property
@@ -206,7 +337,7 @@ class WShapekey(WStruct):
         
         self.check_attr("tilt")
         data = self.wrapped.data
-        count = len(self.data)
+        count = len(data)
         a = np.empty(count, np.float)
         data.foreach_get("tilt", a)
         return a
@@ -215,6 +346,7 @@ class WShapekey(WStruct):
     def tilts(self, value):
         self.check_attr("tilt")
         data = self.wrapped.data
-        count = len(self.data)
-        a = to_shape(value, count)
+        count = len(data)
+        a = np.empty(count, np.float)
+        a[:] = value
         data.foreach_set("tilt", a)

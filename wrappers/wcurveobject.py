@@ -17,6 +17,11 @@ class WCurveObject(WObject):
     def __init__(self, wrapped, is_evaluated=None):
         super().__init__(wrapped, is_evaluated)
         self.wcurve = WCurve(self.name, self.is_evaluated)
+        
+    def set_evaluated(self, value):
+        self.is_evaluated = value
+        self.wcurve.is_evaluated = value
+
 
     # ---------------------------------------------------------------------------
     # Implement directly the array of wsplines

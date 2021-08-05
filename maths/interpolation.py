@@ -301,6 +301,24 @@ class Easing():
         self.P1        = np.array((1/3, 0.)) # Bezier
         self.P2        = np.array((2/3, 1.)) # Bezier
         
+    @staticmethod
+    def check_easing(name, **kwargs):
+
+        synos = {
+            'QUADRATIC':   'QUAD',
+            'QUARTIC':     'QUART',
+            'QUINTIC':     'QUINT',
+            'EXPONENTIAL': 'EXPO',
+            'CIRCULAR':    'CIRC'
+            }
+        syno = synos.get(name)
+        if syno is not None: name = syno
+        
+        if not name in Easing.EASINGS:
+            raise WError(f"Incorrect easing code: {name}. Valid codes are {Easing.EASINGS.keys()}", **kwargs)
+            
+        return name
+        
     @property
     def name(self):
         """The easing code.
@@ -316,16 +334,7 @@ class Easing():
     @name.setter
     def name(self, value):
         
-        synos = {
-            'QUADRATIC':   'QUAD',
-            'QUARTIC':     'QUART',
-            'QUINTIC':     'QUINT',
-            'EXPONENTIAL': 'EXPO',
-            'CIRCULAR':    'CIRC'
-            }
-        syno = synos.get(value)
-        
-        self.name_ = value if syno is None else syno
+        self.name_ = Easing.check_easing(value, Class="Easing", Method="name", value=value)
         
         easing = self.EASINGS.get(self.name_)
         if easing is None:
@@ -1327,4 +1336,51 @@ class BCurve():
         
         plt.show()
         
- 
+        
+# =============================================================================================================================
+# Usefull interpolation
+
+def interpolation_function(shape="/", name=None):
+    
+    valid_shapes = ["/", "\\", "V", "^", "S", "2"]
+    
+    if not shape in valid_shapes:
+        raise WError(f"Incorrect shape code {shape}. Valid shapes are {valid_shapes}",
+                Function = "interpolation_function",
+                shape = shape,
+                name = name)
+        
+    if name is None:
+        if shape in ["/", "\\"]:
+            name = 'LINEAR'
+        else:
+            name = 'BEZIER'
+
+    name = Easing.check_easing(name, Function="interpolation_function", shape=shape)
+    
+    bc = BCurve()
+    
+    if shape in ["\\", "V", "2"]:
+        low  = 1
+        high = 0
+    else:
+        low  = 0
+        high = 1
+            
+    if shape in ['V', '^']:
+        ease1 = 'EASE_OUT'
+        ease2 = 'EASE_IN'
+    elif shape in ['/', '\\']:
+        ease1 = 'EASE_IN'
+    else:
+        ease1 = 'EASE_OUT'
+    
+            
+    bc.set_start_point((0, low))
+    bc.add((1, high), interpolation=name, easing=ease1)
+    
+    if shape in ['V', '^']:
+        bc.add((2, low), interpolation=name, easing=ease2)
+
+    return bc
+

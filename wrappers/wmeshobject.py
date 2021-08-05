@@ -10,6 +10,7 @@ import numpy as np
 
 from .wmesh import WMesh
 from .wobject import WObject
+from .wshapekey import WMeshShapeKeys
 from ..core.class_enhance import expose
 
 from ..core.commons import WError
@@ -20,12 +21,9 @@ class WMeshObject(WObject):
         super().__init__(wrapped, is_evaluated)
         self.wmesh = WMesh(self.name, self.is_evaluated)
     
-    """
-    @property
-    def wmesh(self):
-        wo = self.wrapped
-        return WMesh(wo.data, wo.is_evaluated)
-    """
+    def set_evaluated(self, value):
+        self.is_evaluated = value
+        self.wmesh.is_evaluated = value
 
     # ---------------------------------------------------------------------------
     # Origin to geometry
@@ -50,6 +48,25 @@ class WMeshObject(WObject):
         wmesh.verts = verts - origin
 
         self.location = np.array(self.location) + origin
+        
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # Get animation from shape keys
+    
+    @property
+    def wshape_keys(self):
+        return WMeshShapeKeys(self.name)
+    
+    def get_sk_animation(self, eval_times):
+        memo = self.eval_time
+        
+        verts = np.empty((len(eval_times), self.verts_count, 3), np.float)
+        for i, evt in enumerate(eval_times):
+            self.eval_time = evt
+            verts[i] = self.evaluated.verts
+        
+        self.eval_time = memo
+        
+        return verts
 
     # -----------------------------------------------------------------------------------------------------------------------------
     # The available groups

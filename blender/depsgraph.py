@@ -29,12 +29,12 @@ def reset_depsgraph():
     #bpy.context.view_layer.update()
     
 def get_object(name, evaluated=False):
+    
+    # DEBUG
+    #return bpy.data.objects[name]
+    
     if evaluated:
-        obj = depsgraph().objects.get(name)
-        if obj is None:
-            return bpy.data.objects[name]
-        else:
-            return obj
+        return bpy.data.objects[name].evaluated_get(depsgraph())        
     else:
         return bpy.data.objects[name]
     

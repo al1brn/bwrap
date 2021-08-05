@@ -36,9 +36,8 @@ class WID(WStruct):
             name = wrapped.name
             is_evaluated = wrapped.is_evaluated
             
-        super().__init__()
+        super().__init__(name=name)
         
-        self.name = name
         self.is_evaluated = is_evaluated
             
     # ---------------------------------------------------------------------------
@@ -66,37 +65,5 @@ class WID(WStruct):
         
         return type(self)(self.name, is_evaluated=True)
     
-    # ---------------------------------------------------------------------------
-    # Evaluated ID
 
-    @property
-    def evaluated_DEPR(self):
-        """Wraps the evaluated object.
-
-        Returns
-        -------
-        WID
-            Wrapped of the evaluated object.
-        """
-        
-        if self.wrapped.is_evaluated:
-            return self
-        
-        if depsgraph.render_mode():
-            return 
-        
-        graph = depsgraph.depsgraph()
-        
-        
-        return depsgraph.get_evaluated(self.wrapped)
-        
-        if DEPSGRAPH is None:
-            return self
-        else:
-            return self.__class__(self.wrapped.evaluated_get(DEPSGRAPH))
-            
-        # OLD
-            
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        return self.__class__(self.wrapped.evaluated_get(depsgraph))
 

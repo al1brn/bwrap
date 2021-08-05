@@ -11,6 +11,7 @@ import numpy as np
 from ..blender import blender
 from ..maths.transformations import Transformations, SlaveTransformations
 from ..maths.shapes import get_full_shape
+from ..maths.operations import morph, check_shape_keys
 
 from ..wrappers.wrap_function import wrap
 
@@ -48,32 +49,33 @@ class Crowd(Transformations):
     Plus the shortcuts: x, y, z, rx, ry, rz, rxd, ryd, rzd, sx, sy, sz
     """
     
-    def __init__(self, model, count=100, name=None):
+    def __init__(self, model, count=10, name=None, evaluated=False):
         """Initialize the crowd with by creating count duplicates of the model mesh.
-        
-        The model can be the wrapped of an evaluated mesh to take into account the 
-        modifiers applied on the model.
         
         These three initializations are valid:
             - Crowd("Model", 1000)
             - Crowd(bw.wrap("Model"), 1000)
-            - Crowd(bw.wrap("Model").evaluated, 1000)
+            - Crowd(bpy.data.objects["Model"], 1000)
             
         The crowd is created if if doesn't already exists
-        The name is based on the model name by suffixing with Crowd
+        If not provided, the name is based on the model name: 'Crowd of models'
 
         Parameters
         ----------
         model : str or Wrapper
             Name of an existing object or wrapper of an existing object. The wrapper version allows
             to use the evaluated version
-        count : TYPE, optional
-            DESCRIPTION. The default is 100.
+        count : shape, optional
+            Shape of the crowd. The default is 10.
+        name : str
+            Name of the crowd object. If not provided (default), 'Crowd of models' is used.
+        evaluated : bool
+            Take the evaluated vertices of the model. Default is False.
 
         Raises
         ------
         RuntimeError
-            If objects don't exist or are not meshes.
+            If the model doesn't exist or is not a mesh.
 
         Returns
         -------
@@ -92,8 +94,10 @@ class Crowd(Transformations):
                 model = model,
                 count = count)
             
+        wmodel.set_evaluated(evaluated)
+            
         if name is None:
-            name = "Crowd of " + wmodel.name
+            name = "Crowd of " + wmodel.name + 's'
             
         self.wobject = wrap(name, create="CUBE")
         blender.copy_collections(wmodel.wrapped, self.wobject.wrapped)
@@ -264,7 +268,7 @@ class Crowd(Transformations):
     # must match the number of vertices used for initialization.
     # The shape of verts is hence: (steps, v_count, 3)
     
-    def set_animation(self, animation, phases=None, speeds=1, seed=0):
+    def set_animation(self, shape_keys, interpolation_shape='/', interpolation_name=None):
         """Animate the duplicates by changing the base vertices use for each of them.
         
         When not animated, there is one copy of the vertices.
@@ -283,7 +287,7 @@ class Crowd(Transformations):
 
         Parameters
         ----------
-        animation : array of array of vertices
+        shape_keys : array of array of vertices
             An array fo shape (steps, v_count, 3) containing the possible versions of the vertices.
         phases : array of int, optional
             The phases to use for each duplicate. The default is None.
@@ -297,25 +301,43 @@ class Crowd(Transformations):
         None.
         """
         
-        self.animated  = True
-        self.steps     = len(animation)
-        n              = self.steps*self.v_count
-        self.animation = np.resize(np.column_stack(
-                    (animation.reshape(n, 3), np.ones(n))
-                ), (self.steps, self.v_count, 4))
-        
-        if seed is not None:
-            np.random.seed(seed)
+        if False:
+            self.animated  = True
+            self.steps     = len(shape_keys)
+            n              = self.steps*self.v_count
+            self.shape_keys = np.resize(np.column_stack(
+                        (shape_keys.reshape(n, 3), np.ones(n))
+                    ), (self.steps, self.v_count, 4))
             
-        if phases is None:
-            self.phases = np.random.randint(0, self.steps, self.shape)
-        else:
-            self.phases = np.resize(phases, self.shape)
+            if seed is not None:
+                np.random.seed(seed)
+                
+            if phases is None:
+                self.phases = np.random.randint(0, self.steps, self.shape)
+            else:
+                self.phases = np.resize(phases, self.shape)
+                
+            if speeds is None:
+                self.speeds = np.random.randint(1, self.steps, self.shape)
+            else:
+                self.speeds = np.resize(speeds, self.shape)
             
-        if speeds is None:
-            self.speeds = np.random.randint(1, self.steps, self.shape)
         else:
-            self.speeds = np.resize(speeds, self.shape)
+            self.steps, n = check_shape_keys(shape_keys, Class="Crowd", Method="set_animation")
+            if n != self.v_count:
+                raise WError(f"Incorrect number of vertices ({n})in the shape keys.",
+                        Class = "Crowd",
+                        Method = "set_animation",
+                        shape_keys_shape = np.shape(shape_keys),
+                        expected_count = self.v_count,
+                        shape_keys_count = n)
+                
+            
+            self.animated  = True
+            self.shape_keys = np.insert(shape_keys, 3, 1, axis=-1) # To 4-vectors
+            
+            self.interp_shape = interpolation_shape
+            self.interp_name  = interpolation_name
             
         # ----- Reshape the base vertices
         self.base_verts = np.resize(self.base_verts, get_full_shape(self.shape, (self.v_count, 4)))
@@ -323,7 +345,7 @@ class Crowd(Transformations):
     # ---------------------------------------------------------------------------
     # Set an animation
     
-    def animate(self, frame):
+    def animate(self, t):
         """Change the base verts with the vertices corresponding to the frame.
         
         See methode set_animation
@@ -339,9 +361,14 @@ class Crowd(Transformations):
         """
         
         if self.animated:
-            indices = (self.phases + frame*self.speeds).astype(np.int) % self.steps
-            self.base_verts = self.animation[indices]
-            self.lock_apply()
+            if False:
+                indices = (self.phases + frame*self.speeds).astype(np.int) % self.steps
+                self.base_verts = self.animation[indices]
+                self.lock_apply()
+            else:
+                self.base_verts = morph(self.shape_keys, t, interpolation_shape=self.interp_shape, interpolation_name=self.interp_name)
+                self.lock_apply()
+                
 
 
         

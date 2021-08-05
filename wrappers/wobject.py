@@ -12,7 +12,6 @@ from .wid import WID
 from .wmesh import WMesh
 from .wcurve import WCurve
 from .wtext import WText
-from .wshapekey import WShapekey
 
 from ..maths.transformations import ObjectTransformations
 
@@ -45,6 +44,7 @@ class WObject(WID, ObjectTransformations):
         
         ObjectTransformations.__init__(self, world=False)
         
+        
     @property
     def wrapped(self):
         """The wrapped Blender instance.
@@ -56,7 +56,9 @@ class WObject(WID, ObjectTransformations):
         """
         
         return self.blender_object
-        
+    
+    def set_evaluated(self, value):
+        self.is_evaluated = value
             
     # ---------------------------------------------------------------------------
     # Data
@@ -221,7 +223,7 @@ class WObject(WID, ObjectTransformations):
             Full name of the shape key.
         """
         
-        return WShapekey.sk_name(name, step)
+        return name if step is None else f"{name} {step:3d}"
 
     # -----------------------------------------------------------------------------------------------------------------------------
     # Has been the shape_keys structure created ?

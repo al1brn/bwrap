@@ -17,6 +17,13 @@ class WTextObject(WObject):
     def __init__(self, wrapped, is_evaluated=None):
         super().__init__(wrapped, is_evaluated)
         self.wtext = WText(self.name, self.is_evaluated)
+        
+    def set_evaluated(self, value):
+        self.is_evaluated = value
+        self.wtext.is_evaluated = value
+           
+            
+        
 
 # Expose wmesh methods and properties  
 
