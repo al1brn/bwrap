@@ -46,6 +46,10 @@ except:
 
 def get_full_shape(main_shape, item_shape):
     
+    return (tuple(main_shape) if hasattr(main_shape, '__len__') else (main_shape,)) + (tuple(item_shape) if hasattr(item_shape, '__len__') else (item_shape,))
+    
+    # ---- OLD
+    
     if main_shape == ():
         if item_shape == ():
             return ()
@@ -81,13 +85,7 @@ def get_main_shape(full_shape, item_shape):
     ish = item_shape if hasattr(item_shape, '__len__') else (item_shape,)
     if len(ish) > len(fsh):
         return ()
-        raise WError("The shapes are not compatible with main and item shapes management.",
-                Function = "get_main_shape",
-                full_shape = full_shape,
-                item_shape = item_shape,
-                error = "len(item_shape) > len(full_shape)"
-                     )
-    
+
     return tuple([fsh[i] for i in range(len(fsh)-len(ish))])
 
 # ---------------------------------------------------------------------------

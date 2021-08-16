@@ -24,6 +24,20 @@ class WNurbsSpline(WSpline):
     
     Caution: verts are 3-vectors. To set and get the 4-verts, use verts4 property.
     """
+    
+    def copy_from(self, other):
+        
+        super().copy_from(other)
+        
+        self.points.add(len(other.points) - len(self.points))
+        
+        for p, o in zip(self.points, other.points):
+            p.co              = o.co
+            p.radius          = o.radius
+            p.tilt            = o.tilt
+            p.weight          = o.weight
+            p.weight_softbody = o.weight_softbody
+    
 
     @property
     def verts4(self):

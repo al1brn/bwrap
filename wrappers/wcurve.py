@@ -11,12 +11,13 @@ import bpy
 from .wid import WID
 from .wbezierspline import WBezierSpline
 from .wnurbsspline import WNurbsSpline
+from .wmaterials import WMaterials
         
 # ---------------------------------------------------------------------------
 # Curve wrapper
 # wrapped : Curve
 
-class WCurve(WID):
+class WCurve(WID, WMaterials):
     """Curve data wrapper.
     
     In addition to wrap the Curve class, the wrapper also behaves as an array
@@ -25,12 +26,6 @@ class WCurve(WID):
     The items are wrapper of splines.
     """
 
-    def __init__DEPR(self, wrapped, evaluated=False):
-        if evaluated:
-            super().__init__(wrapped, name=wrapped.name)
-        else:
-            super().__init__(name=wrapped.name, coll=bpy.data.curves)
-            
     @property
     def wrapped(self):
         """The wrapped Blender instance.
@@ -238,11 +233,11 @@ class WCurve(WID):
     
     @classmethod
     def exposed_methods(cls):
-        return ["new", "delete", "set_splines_count", "set_verts_count"]
+        return ["copy_materials_from", "new", "delete", "set_splines_count", "set_verts_count"]
 
     @classmethod
     def exposed_properties(cls):
-        return {}
+        return {"materials": 'RO'}
     
     # ===========================================================================
     # Generated source code for WCurve class

@@ -9,12 +9,13 @@ Created on Mon Jul 26 09:42:08 2021
 import bpy
 
 from .wid import WID
+from .wmaterials import WMaterials
 
 # ---------------------------------------------------------------------------
 # Text wrapper
 # wrapped : TextCurve
 
-class WText(WID):
+class WText(WID, WMaterials):
     """TextCurve wrapper.
     
     Simple wrapper limited to provide the text attribute.
@@ -66,12 +67,12 @@ class WText(WID):
     
     @classmethod
     def exposed_methods(cls):
-        return []
+        return ["copy_materials_from"]
 
     @classmethod
     def exposed_properties(cls):
-        return {"text": 'RW'}
-        
+        return {"text": 'RW', "materials": 'RO'}
+
         
     # ===========================================================================
     # Generated source code for WText class

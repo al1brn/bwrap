@@ -44,6 +44,11 @@ class WObject(WID, ObjectTransformations):
         
         ObjectTransformations.__init__(self, world=False)
         
+        if self.wrapped.data is None:
+            self.object_type = 'Empty'
+        else:
+            self.object_type = type(self.wrapped.data).__name__
+        
         
     @property
     def wrapped(self):
@@ -72,22 +77,6 @@ class WObject(WID, ObjectTransformations):
     @property
     def supported(self):
         return self.object_type in ['Mesh', 'Curve', 'Text', 'Empty']
-
-    @property
-    def object_type(self):
-        """Blender Object type (Mesh, Curve, Text, Empty)    
-
-        Returns
-        -------
-        str
-            Blender object type.
-        """
-
-        data = self.wrapped.data
-        if data is None:
-            return 'Empty'
-        else:
-            return data.__class__.__name__
 
     @property
     def is_mesh(self):
@@ -125,11 +114,11 @@ class WObject(WID, ObjectTransformations):
             return None
         
         # Supported types
-        name = data.__class__.__name__
+        name = self.object_type
         if name == 'Mesh':
             return WMesh(self.name, self.is_evaluated)
         
-        elif name == 'Curve':
+        elif name in ['Curve', 'SurfaceCurve']:
             return WCurve(self.name, self.is_evaluated)
         
         elif name == 'TextCurve':
@@ -204,250 +193,13 @@ class WObject(WID, ObjectTransformations):
     # Shape keys management
 
     # -----------------------------------------------------------------------------------------------------------------------------
-    # Indexed shape key name
-
-    @staticmethod
-    def sk_name(name, step=None):
-        """Stepped shape key name. 
-
-        Parameters
-        ----------
-        name : str
-            Base name of the shape key name.
-        step : int, optional
-            The step number. The default is None.
-
-        Returns
-        -------
-        str
-            Full name of the shape key.
-        """
-        
-        return name if step is None else f"{name} {step:3d}"
-
-    # -----------------------------------------------------------------------------------------------------------------------------
     # Has been the shape_keys structure created ?
-
-    @property
-    def has_sk(self):
-        """The object has or not shape keys.
-        """
-        
-        return self.wrapped.data.shape_keys is not None
-
-    @property
-    def shape_keys(self):
-        """The Blender shapee_keys block.
-        """
-        
-        return self.wrapped.data.shape_keys
-
-    @property
-    def sk_len(self):
-        """Number of shape keys.
-        """
-        
-        sks = self.shape_keys
-        if sks is None:
-            return 0
-        return len(sks.key_blocks)
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Get a shape key
-    # Can create it if it doesn't exist
-
-    def get_sk(self, name, step=None, create=True):
-        """The a shape key by its name, and possible its step.
-        
-        Can create the shape key if it doesn't exist.
-
-        Parameters
-        ----------
-        name : str
-            Base name of the shape key.
-        step : int, optional
-            Step of the shape key if in a series. The default is None.
-        create : bool, optional
-            Create the shape key if it doesn't exist. The default is True.
-
-        Returns
-        -------
-        WShapekey
-            Wrapper of the shape or None if it doesn't exist.
-        """
-
-        fname = WShapekey.sk_name(name, step)
-        obj   = self.wrapped
-        data  = obj.data
-
-        if data.shape_keys is None:
-            if create:
-                obj.shape_key_add(name=fname)
-                obj.data.shape_keys.use_relative = False
-            else:
-                return None
-
-        # Does the shapekey exists?
-
-        sk = data.shape_keys.key_blocks.get(fname)
-
-        # No !
-
-        if (sk is None) and create:
-
-            eval_time = data.shape_keys.eval_time
-
-            if step is not None:
-                # Ensure the value is correct
-                data.shape_keys.eval_time = step*10
-
-            sk = obj.shape_key_add(name=fname)
-
-            # Less impact as possible :-)
-            obj.data.shape_keys.eval_time = eval_time
-
-        # Depending upon the data type
-
-        return WShapekey(sk)
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Create a shape
-
-    def create_sk(self, name, step=None):
-        """Create a shape key.
-        
-        Equivalent to a call to get_sk with create=True.
-
-        Parameters
-        ----------
-        name : str
-            Base name of the shape key.
-        step : int, optional
-            Step of the shape key if in a series. The default is None.
-
-        Returns
-        -------
-        WShapekey
-            Wrapper of the shape or None if it doesn't exist.
-        """
-        
-        return self.get_sk(name, step, create=True)
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Does a shape key exist?
-
-    def sk_exists(self, name, step):
-        """Looks if a shape key exists.
-
-        Parameters
-        ----------
-        name : str
-            Base name of the shape key.
-        step : int, optional
-            Step of the shape key if in a series. The default is None.
-
-        Returns
-        -------
-        bool
-            True if the shape key exists.
-        """
-        
-        return self.get_sk(name, step, create=False) is not None
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Set the eval_time property to the shape key
-
-    def set_on_sk(self, name, step=None):
-        """Set the evaluation time of the object on the specified shape key.
-        
-        The method raises an error if the shape key doesn't exist. Call sk_exists
-        before for a safe call.
-
-        Parameters
-        ----------
-        name : str
-            Base name of the shape key.
-        step : int, optional
-            Step of the shape key if in a series. The default is None.
-
-        Raises
-        ------
-        RuntimeError
-            If the shape key doesn't exist.
-
-        Returns
-        -------
-        TYPE
-            DESCRIPTION.
-        """
-
-        sk = self.get_sk(name, step, create=False)
-        if sk is None:
-            raise WError(f"The shape key '{self.sk_name(name, step)}' doesn't exist in object '{self.name}'!",
-                         Class = "WObject",
-                         Method = "set_on_sk",
-                         name = name,
-                         step = step)
-
-        self.wrapped.data.shape_keys.eval_time = sk.frame
-        return self.wrapped.data.shape_keys.eval_time
-
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Delete a shape key
-
-    def delete_sk(self, name=None, step=None):
-        """Delete a shape key.
-        
-        If name is None, all the shape keys are deleted.
-
-        Parameters
-        ----------
-        name : str, optional
-            Base name of the shape key. The default is None.
-        step : int, optional
-            Step of the shape key if in a series. The default is None.
-
-        Returns
-        -------
-        None.
-        """
-
-        if not self.has_sk:
-            return
-
-        if name is None:
-            self.wrapped.shape_key_clear()
-        else:
-            sk = self.get_sk(name, step, create=False)
-            if sk is not None:
-                self.wrapped.shape_key_remove(sk.wrapped)
-                
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Shape_key eval time
     
     @property
-    def eval_time(self):
-        return self.wrapped.data.shape_keys.eval_time
-    
-    @eval_time.setter
-    def eval_time(self, value):
-        self.wrapped.data.shape_keys.eval_time = value
-        
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Get animation from shape keys
-    
-    def get_sk_animation(self, eval_times):
-        memo = self.eval_time
-        
-        verts = np.empty((len(eval_times), self.verts_count, 3), np.float)
-        for i, evt in enumerate(eval_times):
-            self.eval_time = evt
-            verts[i] = self.evaluated.verts
-        
-        self.eval_time = memo
-        
-        return verts
-    
+    def keyshapable(self):
+        return self.object_type in ['Mesh', 'Curve', 'SurfaceCurve']
+
+
     # ===========================================================================
     # Generated source code for WObject class
 

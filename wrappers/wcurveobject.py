@@ -8,11 +8,12 @@ Created on Mon Jul 26 19:24:15 2021
 
 from .wcurve import WCurve
 from .wobject import WObject
+from .wshapekeys import WShapeKeys
 
 from ..core.class_enhance import expose
 
 
-class WCurveObject(WObject):
+class WCurveObject(WObject, WShapeKeys):
     
     def __init__(self, wrapped, is_evaluated=None):
         super().__init__(wrapped, is_evaluated)
@@ -21,7 +22,21 @@ class WCurveObject(WObject):
     def set_evaluated(self, value):
         self.is_evaluated = value
         self.wcurve.is_evaluated = value
-
+        
+    
+    # ---------------------------------------------------------------------------
+    # Add splines from another curve
+    
+    def copy_splines_from(self, other, add=False):
+        
+        if not add:
+            self.set_splines_count(0)
+            
+        wother = WCurveObject(other, other.is_evaluated)
+            
+        for spline in wother:
+            sp = self.new(spline_type=spline.type)
+            sp.copy_from(spline)
 
     # ---------------------------------------------------------------------------
     # Implement directly the array of wsplines

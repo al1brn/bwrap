@@ -29,6 +29,21 @@ class WBezierSpline(WSpline):
     When lefts and rights handles are not given they are computed.
     """
     
+    def copy_from(self, other):
+        
+        super().copy_from(other)
+        
+        self.bezier_points.add(len(other.bezier_points) - len(self.bezier_points))
+        
+        for p, o in zip(self.bezier_points, other.bezier_points):
+            p.co                = o.co
+            p.handle_left       = o.handle_left
+            p.handle_right      = o.handle_right
+            p.handle_left_type  = o.handle_left_type
+            p.handle_right_type = o.handle_right_type
+            p.radius            = o.radius
+            p.tilt              = o.tilt
+    
     @property
     def verts(self):
         """Vertices of the curve.

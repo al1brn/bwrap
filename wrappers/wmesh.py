@@ -12,6 +12,7 @@ import bpy
 from .wid import WID
 
 from ..core.plural import to_shape, getattrs, setattrs
+from .wmaterials import WMaterials
 
 from ..core.commons import WError
 
@@ -20,7 +21,7 @@ from ..core.commons import WError
 # Mesh mesh wrapper
 # wrapped : data block of mesh object
 
-class WMesh(WID):
+class WMesh(WID, WMaterials):
     """Wrapper of a Mesh structure.
     """
 
@@ -242,41 +243,7 @@ class WMesh(WID):
         polygons.foreach_get("normal", a)
         return np.reshape(a, (len(polygons), 3))
 
-    # ---------------------------------------------------------------------------
-    # Materials
-    
-    def copy_materials_from(self, other):
-        """Copy the list of materials from another object.
 
-        Parameters
-        ----------
-        other : object with materials
-            The object to copy the materials from.
-
-        Returns
-        -------
-        None.
-        """
-        
-        self.wrapped.materials.clear()
-        wother = WMesh.get_mesh(other, Class="WMesh", Method="copy_materials_from")
-        for mat in wother.materials:
-            self.wrapped.materials.append(mat)
-   
-            
-    @property
-    def material_indices(self):
-        """Material indices from the faces.
-        """
-        
-        inds = np.zeros(self.poly_count)
-        self.wrapped.polygons.foreach_get("material_index", inds)
-        return inds
-    
-    @material_indices.setter
-    def material_indices(self, value):
-        inds = np.resize(value, self.poly_count)
-        self.wrapped.polygons.foreach_set("material_index", inds)
         
     # ---------------------------------------------------------------------------
     # uv management
@@ -471,6 +438,23 @@ class WMesh(WID):
         self.new_geometry(verts, polys, edges)
 
     # ---------------------------------------------------------------------------
+    # Materials indices
+        
+    @property
+    def material_indices(self):
+        """Material indices from the faces.
+        """
+        
+        inds = np.zeros(self.poly_count)
+        self.wrapped.polygons.foreach_get("material_index", inds)
+        return inds
+    
+    @material_indices.setter
+    def material_indices(self, value):
+        inds = np.resize(value, self.poly_count)
+        self.wrapped.polygons.foreach_set("material_index", inds)            
+
+    # ---------------------------------------------------------------------------
     # To python source code
 
     def python_source_code(self):
@@ -649,7 +633,7 @@ class WMesh(WID):
         return {"verts_count": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
              "bevel_weights": 'RW',"edge_indices": 'RO', "edge_indices": 'RO', "poly_count": 'RO',
              "poly_indices": 'RO', "poly_vertices": 'RO', "poly_centers": 'RO', "normals": 'RO', 
-             "material_indices": 'RW', "uvmaps": 'RO'}
+             "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO'}
         
     # ===========================================================================
     # Generated source code for WMesh class

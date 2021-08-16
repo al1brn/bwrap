@@ -89,7 +89,7 @@ def wrap(name, create=None, **kwargs):
         if data_class == 'Mesh':
             return WMeshObject(obj)
         
-        elif data_class == 'Curve':
+        elif data_class in ['Curve', 'SurfaceCurve']:
             return WCurveObject(obj)
         
         elif data_class == 'TextCurve':

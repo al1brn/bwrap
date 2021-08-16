@@ -64,6 +64,27 @@ class WSpline(WStruct):
         else:
             return self.wrapped.points
         
+    # ---------------------------------------------------------------------------
+    # Copy from another spline
+    
+    def copy_from(self, other):
+        
+        self.tilt_interpolation   = other.tilt_interpolation
+        self.radius_interpolation = other.radius_interpolation
+        self.type                 = other.type
+        self.order_u              = other.order_u
+        self.order_v              = other.order_v
+        self.resolution_u         = other.resolution_u
+        self.resolution_v         = other.resolution_v
+        self.use_cyclic_u         = other.use_cyclic_u
+        self.use_cyclic_v         = other.use_cyclic_v
+        self.use_endpoint_u       = other.use_endpoint_u
+        self.use_endpoint_v       = other.use_endpoint_v
+        self.use_bezier_u         = other.use_bezier_u
+        self.use_bezier_v         = other.use_bezier_v
+        self.use_smooth           = other.use_smooth
+        self.material_index       = other.material_index
+        
     # ===========================================================================
     # Generated source code for WSpline class
 
