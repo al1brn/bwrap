@@ -1872,9 +1872,9 @@ def tmat_transform4(tmat, v4, one_one=False):
                 Function = "tmat_transform4",
                 tmat_shape = np.shape(tmat),
                 v4_shape = np.shape(v4),
-                one_one = one_one,
-                tmat = tmat,
-                v4 = v4)
+                one_one = one_one)
+                #tmat = tmat,
+                #v4 = v4)
             
         return tmat_transform4(tmat, 
                     np.reshape(v4, get_full_shape(v_shape, (1, 4))), 
@@ -1885,6 +1885,23 @@ def tmat_transform4(tmat, v4, one_one=False):
         return np.matmul(v4, tmat)
     
     # ----- Check the shapes compatibility
+    
+    try:
+        return np.matmul(v4, tmat)
+    except:
+        raise WError(f"shapes are not compatible with multiplication Here {np.shape(tmat)} and {np.shape(v4)}.",
+                Function = "tmat_transform4",
+                tmat_shape = np.shape(tmat),
+                v4_shape = np.shape(v4),
+                one_one = one_one)
+                #tmat = tmat,
+                #v4 = v4)
+    
+    # OLD
+        
+    
+    
+    
     
     m_shape = get_main_shape(tmat.shape, (4, 4))
     v_shape = get_main_shape(v4.shape, (1, 4))   # CAUTION: (1, 4) not 4
@@ -1900,7 +1917,7 @@ def tmat_transform4(tmat, v4, one_one=False):
             tmat_shape = np.shape(tmat),
             v4_shape = np.shape(v4),
             one_one = one_one,
-            tmat = tmat,
+            #tmat = tmat,
             v4 = v4)
     
 def tmat_transform43(tmat, v4, one_one=False):

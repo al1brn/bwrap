@@ -11,8 +11,9 @@ import bpy
 
 from .wid import WID
 
-from ..core.plural import to_shape, getattrs, setattrs
+from ..core.plural import getattrs, setattrs
 from .wmaterials import WMaterials
+from .wshapekeys import WShapeKeys
 
 from ..core.commons import WError
 
@@ -21,7 +22,7 @@ from ..core.commons import WError
 # Mesh mesh wrapper
 # wrapped : data block of mesh object
 
-class WMesh(WID, WMaterials):
+class WMesh(WID, WMaterials, WShapeKeys):
     """Wrapper of a Mesh structure.
     """
 
@@ -109,7 +110,7 @@ class WMesh(WID, WMaterials):
     @xs.setter
     def xs(self, values):
         locs = self.verts
-        locs[:, 0] = to_shape(values, self.vcount)
+        locs[:, 0] = values
         self.verts = locs
 
     @property
@@ -122,7 +123,7 @@ class WMesh(WID, WMaterials):
     @ys.setter
     def ys(self, values):
         locs = self.verts
-        locs[:, 1] = to_shape(values, self.vcount)
+        locs[:, 1] = values
         self.verts = locs
 
     @property
@@ -135,7 +136,7 @@ class WMesh(WID, WMaterials):
     @zs.setter
     def zs(self, values):
         locs = self.verts
-        locs[:, 2] = to_shape(values, self.vcount)
+        locs[:, 2] = values
         self.verts = locs
 
     # vertices attributes
@@ -242,8 +243,6 @@ class WMesh(WID, WMaterials):
         a = np.empty(len(polygons)*3, np.float)
         polygons.foreach_get("normal", a)
         return np.reshape(a, (len(polygons), 3))
-
-
         
     # ---------------------------------------------------------------------------
     # uv management

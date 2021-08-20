@@ -36,15 +36,26 @@ from ..core.commons import WError
 class WShapeKeys():
     
     # -----------------------------------------------------------------------------------------------------------------------------
+    # Wrapped is either the object or the data !
+    
+    @property
+    def sk_data(self):
+        w = self.wrapped
+        if hasattr(w, 'data'):
+            return w.data
+        else:
+            return w
+    
+    # -----------------------------------------------------------------------------------------------------------------------------
     # Shape_key eval time
     
     @property
     def eval_time(self):
-        return self.wrapped.data.shape_keys.eval_time
+        return self.sk_data.shape_keys.eval_time
     
     @eval_time.setter
     def eval_time(self, value):
-        self.wrapped.data.shape_keys.eval_time = value
+        self.sk_data.shape_keys.eval_time = value
     
     # ---------------------------------------------------------------------------
     # All the shape key names
@@ -57,7 +68,7 @@ class WShapeKeys():
         if not self.has_sk:
             return []
         
-        sks = {sk.name: sk.frame for sk in self.wrapped.data.shape_keys.key_blocks}
+        sks = {sk.name: sk.frame for sk in self.sk_data.shape_keys.key_blocks}
 
         return list(dict(sorted(sks.items(), key=lambda item: item[1])).keys())
     
@@ -88,14 +99,14 @@ class WShapeKeys():
         """The object has or not shape keys.
         """
         
-        return self.wrapped.data.shape_keys is not None
+        return self.sk_data.shape_keys is not None
 
     @property
     def shape_keys(self):
         """The Blender shape_keys block.
         """
         
-        return self.wrapped.data.shape_keys
+        return self.sk_data.shape_keys
     
     def create_shape_keys(self, basis="basis"):
         
@@ -141,8 +152,8 @@ class WShapeKeys():
         """
         
         fname = WShapeKeys.sk_name(name, step)
-        obj   = self.wrapped
-        data  = obj.data
+        obj   = self.blender_object
+        data  = self.sk_data
 
         if data.shape_keys is None:
             if create:
@@ -253,9 +264,9 @@ class WShapeKeys():
                          name = name,
                          step = step)
 
-        self.wrapped.data.shape_keys.eval_time = sk.frame
+        self.sk_data.shape_keys.eval_time = sk.frame
         
-        return self.wrapped.data.shape_keys.eval_time
+        return self.sk_data.shape_keys.eval_time
 
     # -----------------------------------------------------------------------------------------------------------------------------
     # Delete a shape key
@@ -298,7 +309,7 @@ class WShapeKeys():
         if len(key_names) == 0:
             return None
         
-        return KeyShapes.Read(self.wrapped, key_names)
+        return KeyShapes.FromShapeKeys(self.blender_object, key_names)
     
     # ---------------------------------------------------------------------------
     # ---------------------------------------------------------------------------
@@ -358,7 +369,7 @@ class WShapeKeys():
             self.get_sk(name, i).frame = i*10
             
     def get_series_key_shapes(self, name):
-        return self.get_key_shapes(self.series_names)
+        return self.get_key_shapes(self.series_names(name))
             
     # ---------------------------------------------------------------------------
     # -----------------------------------------------------------------------------------------------------------------------------

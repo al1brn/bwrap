@@ -22,11 +22,11 @@ from ..core.commons import WError
 # Group transo class utility
 
 class GroupTransfo():
-    def __init__(self, indices, center):
+    def __init__(self, crowd, indices, pivot):
+        self.crowd   = crowd
         self.indices = indices
-        self.center  = center
-        self.transfo = None
-        self.pivot   = None
+        self.pivot   = pivot
+        self.transfo = SlaveTransformations(crowd)
         
     def __repr__(self):
         return f"<GroupTransfo: {self.transfo}, pivot: {self.pivot}, indices: {np.shape(self.indices)}>"
@@ -37,12 +37,15 @@ class GroupTransfo():
 # MeshCrowd and CurveCrowd implement specificites
 
 class Crowd(Transformations):
-    """Manages a crowd of copies of a mesh model in a single mesh object.
     
-    The model can be the evaluated version of the mesh to take the modifiers into account.
+    """Manages a crowd of copies of a model made of vertices in a single object.
     
-    The geometry of the model are duplicated as required by the argument count.
-    The individual copies can be later on animated using the set_animation method.
+    The model can be either:
+        - A single model which is duplicated according the shape of the Tranformation
+        - An array of models. At each frame, one version is selected for each duplicate
+        - As many models as the shape of the transfpormations
+        
+    Additional transformation can be made on groups
     
     Copies of the model can be considered as individual objects which van be transformed
     individually using the method of the Transformations class:
@@ -50,10 +53,30 @@ class Crowd(Transformations):
         - rotations
         - scales
     Plus the shortcuts: x, y, z, rx, ry, rz, rxd, ryd, rzd, sx, sy, sz
+    
+    Examples width a shape of (100, 70) of duplicates
+    
+    - SINGLE : Crowd of a single shape (default)
+        model    = 10 vertices --> (10, 3)
+        produces an array of shape (100, 70, 10, 3)
+        
+    - ANIMATION : Crowd of a deformed mesh with different shapes
+        model    = 5 times 10 vertices --> (5, 10, 3)
+        uses indices of shape (100, 70) of int between 0 and 4 
+        produces an array of shape (100, 70, 10, 3)
+        
+    - VARIABLE : Versions can have different shapes
+        model = list of models width various shapes
+        uses indices of shape (100, 70) of int between 0 and 4 
+        produces an array of shape (100 x 70 x ?, 3)
+        
+    - INDIVIDUALS : each individual has its own shape
+        model = array(100, 70) of objects
+        produces an array of shape (100 x 70 x ?, 3)
     """
     
-    def __init__(self, model, count=10, name=None, evaluated=False):
-        """Initialize the crowd with by creating count duplicates of the model mesh.
+    def __init__(self, shape, mode, models, indices=None):
+        """Initialize the crowd with by creating count duplicates of the model.
         
         These three initializations are valid:
             - Crowd("Model", 1000)
@@ -86,48 +109,16 @@ class Crowd(Transformations):
         """
         
         # ----- Super initialization
+        super().__init__(count=shape)
         
-        super().__init__(count=count)
+        # ----- Model initialization
         
-        # ----- Wrap the model create the crowd
+        self.set_mode(mode, models, indices)
         
-        wmodel = wrap(model)
-        if wmodel.object_type not in  ['Mesh', 'Curve', 'SurfaceCurve']:
-            raise WError(f"Crowd init error: {model} must be a mesh, a curve or a surface.",
-                Class = "Crowd",
-                Method = "__init__",
-                model = model,
-                count = count)
-            
-        wmodel.set_evaluated(evaluated)
-            
-        if name is None:
-            name = "Crowd of " + wmodel.name + 's'
-            
-        if wmodel.object_type == 'Mesh':
-            self.wobject = wrap(name, create = "CUBE" )
-            self.otype = 'Mesh'
-            
-        elif wmodel.object_type == 'Curve':
-            self.wobject = wrap(name, create = "BEZIER" )
-            self.otype = 'Curve'
-            
-        elif wmodel.object_type == 'SurfaceCurve':
-            self.wobject = wrap(name, create = "SURFACE" )
-            self.otype = 'Surface'
-            
-        blender.copy_collections(wmodel.wrapped, self.wobject.wrapped)
-
-        # ----- Materials
-        self.wobject.copy_materials_from(wmodel)   
+        # ----- Group transformations
         
-        # ----- Keep model track
-        self.wmodel = wmodel
+        self.group_transfos = []
         
-        # ----- No animation yet
-        self.animated = False
-
-
         
     def __repr__(self):
         s = "<"
@@ -179,78 +170,159 @@ class Crowd(Transformations):
         
         return self.wobject.up_axis
     
-    
     # ---------------------------------------------------------------------------
-    # Set an animation
-    # The animation is made of steps set of vertices. The number of vertices
-    # must match the number of vertices used for initialization.
-    # The shape of verts is hence: (steps, v_count, 3)
+    # Change the mode
     
-    def set_animation(self, keyshapes):
-        """Animate the duplicates by changing the base vertices use for each of them.
+    def set_mode(self, mode, models, indices=None):
         
-        When not animated, there is one copy of the vertices.
-        When animated, there are several versions of the base vertices.
-        The animate method select one of the available version for each of the duplicates.
+        self.mode = mode
         
-        Phases ans speeds are use to compute the index of the version to use:
-            - version of duplicate i at frame f: (phases[i] + f * speeds[i]) % (number of versions)
+        # Store the models as 4-vectors
+        
+        if mode in ['SINGLE', 'ANIMATION']:
+            self.models = np.insert(models, 3, 1, axis=-1)
+            if len(np.shape(self.models))== 2:
+                self.models = np.expand_dims(self.models, axis=0)
+
+            if len(np.shape(self.models)) != 3:
+                raise WError(f"Model shape {np.shape(self.models)} is incorrect fro Crow initialization.\n {mode} required a shape (steps, vertices, 3).",
+                        Class="Crowd", Method="set_mode", mode=mode, models_shape=np.shape(models))
+                
+            if mode == 'ANIMATION':
+                self.models_indices = np.zeros(self.shape, np.float)
+                self.base_shape = get_full_shape(self.shape, (len(self.models[0]), 4))
+                
+            self.verts_count = self.size
+                
+        elif mode == 'VARIABLE':
             
-        If no phases is provided, random phases are generated. If the animation must be synchronized
-        pass 0 as an argument.
-        If no speeds is None, random speeds are generated.
-        
-        This mechanism is an alternative to the use of eval_time on shape keys with a Duplicator.
-        Performances can be higher for simple animations.
+            # ----- Indices to the available models
+            
+            inds = np.zeros(self.shape, int)
+            inds[:] = indices
+            inds = inds.reshape(np.size(inds))
 
-        Parameters
-        ----------
-        points : array of array of vertices
-            An array fo shape (steps, v_count, 3) containing the possible versions of the vertices.
-        phases : array of int, optional
-            The phases to use for each duplicate. The default is None.
-        speeds : array of int, optional
-            The animation speed of each duplicate. The default is 1.
-        seed : any, optional
-            Random seed if not None. The default is 0.
+            # ----- Will store max size with filter on valid vertices
+            
+            max_len = 0
+            self.verts_count = 0
+            for model in models:
+                self.verts_count += len(model)
+                max_len = max(max_len, len(model))
+            
+            self.var_indices = np.zeros(0, int)
+            for i, i_model in enumerate(inds):
+                self.var_indices = np.append(self.var_indices, np.arange(i*max_len, i*max_len + len(models[i_model])))
+                
+            self.models = np.zeros((self.size, max_len, 4))
+            self.models[..., 3] = 1
+            
+            for i, index in enumerate(inds):
+                self.models[i, :len(models[index]), :3] = models[index]
+                
+            self.models= self.models.reshape(get_full_shape(self.shape, (max_len, 4)))
+            self.models_verts_count = self.size * max_len
+                
+        elif mode == 'INDIVIDUALS':
+            
+            mdls = np.zeros(self.shape, object)
+            mdls[:] = models
+            
+            mdls = mdls.reshape(np.size(mdls))
+            
+            self.set_mode('VARIABLE', mdls, np.arange(len(mdls)).reshape(self.shape))
+            self.mode = 'INDIVIDUALS'
 
-        Returns
-        -------
-        None.
-        """
-        
-        self.animated  = True
-        self.keyshapes = keyshapes
-        n = self.keyshapes.points_per_shape
-
-        if n != self.v_count:
-            raise WError(f"Incorrect number of vertices ({n})in the shape keys.",
-                    Class = "Crowd",
-                    Method = "set_animation",
-                    keyshapes = keyshapes,
-                    expected_count = self.v_count,
-                    passed_count = n)
+        else:
+            raise WError(f"Unknwon Crowd mode: {mode}. Valid modes are 'SINGLE', 'ANIMATION', 'VARIABLE', 'INDIVIDUALS'",
+                        Class="Crowd", Method="set_mode", mode=mode, models_shape=np.shape(models))
             
     # ---------------------------------------------------------------------------
-    # Animated at time t
+    # Add a group of vertices which can be additionally transformed
     
-    def animate(self, t):
-        """Change the base verts with the vertices corresponding to the frame.
-        
-        See methode set_animation
+    def add_group_transformation(self, indices, pivot):
 
-        Parameters
-        ----------
-        frame : int
-            The frame at which the animation is computed.
-
-        Returns
-        -------
-        None.
-        """
-        
+        self.group_transfos.append(GroupTransfo(self, indices, pivot))
+            
+    # ---------------------------------------------------------------------------
+    # Set the vertices once transformed
+    
+    def set_vertices(self, verts):
         pass
     
+    # ---------------------------------------------------------------------------
+    # Overrides matrices transformations
+        
+    def apply(self):
+        """Overrides the super class method.
+        
+        The transformations matrices are applies on the base vertices
+
+        Returns
+        -------
+        None.
+        """
+        
+        # The slave transformation can call apply()
+        mem_locked = self.locked
+        self.locked = 1
+        
+        if self.mode in ['SINGLE', 'ANIMATION']:
+        
+            # ----------------------------------------------------------------------------------------------------
+            # SINGLE MODE : Models is an array of shape (1, verts, 4)
+            
+            if self.mode == 'SINGLE':
+                
+                verts = self.transform_verts43(self.models)
+                
+            # ----------------------------------------------------------------------------------------------------
+            # ANIMATION : Models is an array of shape (n, verts, 4)
+            # The animation_indices is used to extrapolate intermediary shapes to build a full base
+
+            else:
+
+                # ----- Interpolation
+    
+                imax = len(self.models)-1
+                if imax == 0:
+                    base = self.models[np.zeros(self.shape, int)]
+                else:
+                    t   = np.clip(self.models_indices, 0, imax)
+                    i0  = np.floor(t).astype(int)
+                    i0[i0 == imax] = imax-1
+                    p  = np.expand_dims(np.expand_dims(t - i0, axis=-1), axis=-1)
+                    
+                    base = self.models[i0]*(1-p) + self.models[i0+1]*p
+                    
+                verts = self.transform_verts43(base)
+                
+            
+            # ----------------------------------------------------------------------------------------------------
+            # Group transformations
+            
+            for gt in self.group_transfos:
+                verts[..., gt.indices, :] = self.compose(gt.transfo, center=gt.pivot).transform_verts43(self.verts[gt.indices])
+
+            # ----------------------------------------------------------------------------------------------------
+            # We have the vertices
+            
+            self.set_vertices(verts)
+            
+        # ----------------------------------------------------------------------------------------------------
+        # VARIABLE OF INDIVIDUALS : Models is at the target shape (shape, max_verts, 4)
+        # Some unused verts must be filtered using var_indices
+            
+        elif self.mode in ['VARIABLE', 'INDIVIDUALS']:
+            verts = self.transform_verts43(self.models)
+            self.set_vertices(verts.reshape(self.models_verts_count, 3)[self.var_indices])
+        
+        # ----------------------------------------------------------------------------------------------------
+        # Restore locked state
+
+        self.locked = mem_locked
+    
+
 
 # ====================================================================================================
 # Crowd: duplicates a mesh in a single mesh
@@ -271,7 +343,7 @@ class MeshCrowd(Crowd):
     Plus the shortcuts: x, y, z, rx, ry, rz, rxd, ryd, rzd, sx, sy, sz
     """
     
-    def __init__(self, model, count=10, name=None, evaluated=False):
+    def __init__(self, model, shape=10, name=None):
         """Initialize the crowd with by creating count duplicates of the model mesh.
         
         These three initializations are valid:
@@ -304,14 +376,41 @@ class MeshCrowd(Crowd):
         None.
         """
         
+        # ----- Wrap the model create the crowd
+        
+        wmodel = wrap(model)
+        if wmodel.object_type != 'Mesh':
+            raise WError(f"MeshCrowd init error: {wmodel.name} must be a mesh, not {wmodel.object_type}",
+                Class = "MeshCrowd",
+                Method = "__init__",
+                model = model,
+                shape = shape)
+            
+        if name is None:
+            name = "Crowd of " + wmodel.name + 's'
+            
+        if wmodel.object_type == 'Mesh':
+            self.wobject = wrap(name, create = "CUBE" )
+            self.otype = 'Mesh'
+            
+        blender.copy_collections(wmodel.wrapped, self.wobject.wrapped)
+
+        # ----- Materials
+        self.wobject.copy_materials_from(wmodel)   
+        
+        # ----- Keep model track
+        self.wmodel = wmodel
+        
         # ---------------------------------------------------------------------------
         # ----- Super initialization
-        
-        super().__init__(model, count, name, evaluated)
-        
+
         # ----- Vertices from the model
-        
         verts = np.array(self.wmodel.verts)
+        
+        super().__init__(shape=shape, mode='SINGLE', models=self.wmodel.verts)
+        
+        # ----- Create the new mesh
+        
         self.v_count = len(verts)
         self.total_verts = self.size * self.v_count
         
@@ -342,9 +441,9 @@ class MeshCrowd(Crowd):
         
         # ---------------------------------------------------------------------------
         # ----- Groups
-
+        
         group_indices = self.wmodel.group_indices()
-        self.groups = {group_name: GroupTransfo(group_indices[group_name], center=self.wmodel.group_center(group_name)) for group_name in group_indices}
+        self.groups = {group_name: {'indices': group_indices[group_name], 'center': self.wmodel.group_center(group_name)} for group_name in group_indices}
             
         # ---------------------------------------------------------------------------
         # ----- Base vertices as 4-vectors
@@ -361,65 +460,34 @@ class MeshCrowd(Crowd):
             s += "\n"
             s += f"Animation of {self.steps} steps: {self.base_verts.shape}"
         return s + ">"    
+    
+    # ---------------------------------------------------------------------------
+    # Set the vertices to transform
+    
+    def set_vertices(self, verts):
+        self.wobject.verts = verts
         
     # ---------------------------------------------------------------------------
     # Vertex groups can benefit from additional transformations
     
-    def group_transformation(self, group_name, center_group_name=None):
-        
+    def add_mesh_group_transformation(self, group_name, center_group_name=None):
+
+
         if not group_name in self.groups:
             raise WError(f"The model object of '{self.wobject.name}' doesn't have a vertex group named '{group_name}'")
-            
+
         if center_group_name is None:
             center_group_name = group_name
         else:
             if not center_group_name in self.groups:
                 raise WError(f"The model object of '{self.wobject.name}' doesn't have a vertex group named '{center_group_name}'")
-            
-            
-        gt = self.groups[group_name]
-        if gt.transfo is None:
-            gt.transfo = SlaveTransformations(self)
-            gt.pivot   = self.groups[center_group_name].center
-
-        return gt.transfo
+                
+        self.add_group_transformation(self.groups[center_group_name]['indices'], self.groups[center_group_name]['center'])
         
     # ---------------------------------------------------------------------------
-    # Overrides matrices transformations
-        
-    def apply(self):
-        """Overrides the super class method.
-        
-        The transformations matrices are applies on the base vertices
-
-        Returns
-        -------
-        None.
-        """
-        
-        # The slave transformation can call apply()
-        mem_locked = self.locked
-        self.locked = 1
-        
-        verts = self.transform_verts43(self.base_verts)
-        
-        # ----- Group transformation
-        
-        for group_name, gt in self.groups.items():
-            if gt.transfo is not None:
-                verts[..., gt.indices, :] = self.compose(gt.transfo, center=gt.pivot).transform_verts43(self.base_verts[gt.indices])
-            
-        self.wobject.wdata.verts = verts
-        
-        self.locked = mem_locked
+    # Animation with keyshapes
     
-    # ---------------------------------------------------------------------------
-    # Set an animation
-    # The animation is made of steps set of vertices. The number of vertices
-    # must match the number of vertices used for initialization.
-    # The shape of verts is hence: (steps, v_count, 3)
-    
-    def set_animation(self, keyshapes):
+    def animate_with_keyshapes(self, name=None):
         """Animate the duplicates by changing the base vertices use for each of them.
         
         When not animated, there is one copy of the vertices.
@@ -452,37 +520,11 @@ class MeshCrowd(Crowd):
         None.
         """
         
-        super().set_animation(keyshapes)
+        kss = self.wmodel.wdata.get_key_shapes(name)
+        if kss is None:
+            raise WError(f"The object '{self.wobject.name}' doen't have shape keys named {name}.")
         
-        # With animation, each instance has now its own base verts
-            
-        self.base_verts = np.resize(self.base_verts, get_full_shape(self.shape, (self.v_count, 4)))
-            
-    # ---------------------------------------------------------------------------
-    # Animated at time t
-    
-    def animate(self, t):
-        """Change the base verts with the vertices corresponding to the frame.
-        
-        See methode set_animation
-
-        Parameters
-        ----------
-        frame : int
-            The frame at which the animation is computed.
-
-        Returns
-        -------
-        None.
-        """
-        
-        if not self.animated:
-            return
-        
-        kss = self.keyshapes.interpolate(t)
-        self.base_verts[..., 1:] = kss.verts
-        
-        self.lock_apply()            
+        self.set_mode('ANIMATION', kss.verts)
 
     
 # ====================================================================================================
