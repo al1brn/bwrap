@@ -7,6 +7,7 @@ Created on Tue Jul 13 14:03:31 2021
 """
 
 import numpy as np
+import bpy
 
 from ..blender import blender
 from ..maths.transformations import Transformations, SlaveTransformations
@@ -37,6 +38,8 @@ class GroupTransfo():
 # MeshCrowd and CurveCrowd implement specificites
 
 class Crowd(Transformations):
+    
+    SUPPORTED = ['Mesh', 'Curve', 'TextCurve']
     
     """Manages a crowd of copies of a model made of vertices in a single object.
     
@@ -75,7 +78,7 @@ class Crowd(Transformations):
         produces an array of shape (100 x 70 x ?, 3)
     """
     
-    def __init__(self, shape, mode, models, indices=None):
+    def __init__(self, model, shape=10, name=None, animation_key=None):
         """Initialize the crowd with by creating count duplicates of the model.
         
         These three initializations are valid:
@@ -108,22 +111,262 @@ class Crowd(Transformations):
         None.
         """
         
+        # ---------------------------------------------------------------------------
         # ----- Super initialization
+        
         super().__init__(count=shape)
         
-        # ----- Model initialization
+        # ---------------------------------------------------------------------------
+        # ----- Wrap the model create the crowd
         
-        self.set_mode(mode, models, indices)
+        wmodel = wrap(model)
+        if wmodel.object_type not in Crowd.SUPPORTED:
+            raise WError(f"Crowd initialization error: {wmodel.name} must be in {Crowd.SUPPORTED}, not {wmodel.object_type}",
+                Class = "Crowd",
+                Method = "__init__",
+                model = model,
+                shape = shape)
+            
+        self.set_model(wmodel)
+            
+        if name is None:
+            name = "Crowd of " + self.wmodel.name + 's'
+            
+        if self.is_mesh:
+            self.set_mesh_model(wmodel, mode='SINGLE', name = name, animation_key=animation_key)
+            
+        if self.is_curve:
+            self.set_curve_model(wmodel, mode='SINGLE', name = name, animation_key=animation_key)
+            
+        if self.is_text:
+            self.wobject = wrap(name, create = "BEZIER" )
         
         # ----- Group transformations
         
         self.group_transfos = []
-        
-        
+
+
+    # ====================================================================================================
+    # Content
+    
     def __repr__(self):
-        s = "<"
-        s += f"Crowd of {self.size} [{self.shape}] {self.otype}."
-        return s + ">"    
+        if len(self.shape) > 1:
+            size = f"{self.shape} ({self.size} duplicates) of"
+        else:
+            size = f"of {self.size}"
+        s  = f"<Crowd {size} '{self.wmodel.name}', type={self.wmodel.object_type}: '{self.wobject.name}'\n"
+        s += f"   model:{self.wmodel}\n"
+        s += f"   vertices per duplicate: {self.dupli_verts}\n"
+        s += f"   total vertices        : {self.total_verts}\n"
+        s += f"   mode: {self.mode}"
+        if self.mode == 'ANIMATION':
+            s += f" with {self.models.shape[0]} shapes\n"
+        return s + ">"
+        
+    # ====================================================================================================
+    # Capture model
+    
+    def set_model(self, wmodel):
+        
+        self.wmodel = wmodel
+    
+    
+    # ====================================================================================================
+    # Initialize a mesh
+    
+    def set_mesh_model(self, wmodel, mode='SINGLE', name=None, animation_key=None):
+        
+        self.set_model(wmodel)
+            
+        if self.wmodel.object_type != 'Mesh':
+            raise WError(f"Crowd initialization error: {self.wmodel.name} is not a Mesh ({self.wmodel.object_type})",
+                Class = "Crowd",
+                Method = "set_mesh_model",
+                wmodel = wmodel,
+                mode = mode,
+                name = name,
+                animation_key = animation_key)
+            
+        if name is None:
+            name = "Crowd of " + self.wmodel.name + 's'
+            
+        # ----- Create the recipient mesh
+            
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            obj = wrap(name)
+            if obj.object_type != 'Mesh':
+                obj.select_set(True)
+                bpy.ops.object.delete() 
+                obj = None
+                
+        if obj is None:
+            obj = wrap(name, create="CUBE")
+            
+        self.wobject = obj
+        blender.copy_collections(wmodel.wrapped, self.wobject.wrapped)
+        self.wobject.material_indices = self.wmodel.material_indices # Will be properly broadcasted
+            
+        # ---------------------------------------------------------------------------
+        # ----- Create the geometry
+
+        # ----- Vertices from the model
+        
+        verts = np.array(self.wmodel.verts)
+        
+        # ----- Create the new mesh
+        
+        self.dupli_verts = len(verts)
+        self.total_verts = self.size * self.dupli_verts
+        
+        # ---------------------------------------------------------------------------
+        # ----- Build the new geometry
+        
+        # ----- Polygons
+        
+        polys = self.wmodel.poly_indices
+        self.p_count = len(polys)
+        
+        faces = [[index + i*self.dupli_verts for index in face] for i in range(self.size) for face in polys]
+
+        # ----- New geometry
+        
+        self.wobject.new_geometry(np.resize(verts, (self.total_verts, 3)), faces)
+        
+        
+        # ----- uv mapping
+        
+        for name in self.wmodel.uvmaps:
+            uvs = self.wmodel.get_uvs(name)
+            self.wobject.create_uvmap(name)
+            self.wobject.set_uvs(name, np.resize(uvs, (self.size*len(uvs), 2)))
+
+        self.wobject.copy_materials_from(wmodel)   
+            
+        # ----- Groups
+        
+        group_indices = self.wmodel.group_indices()
+        self.groups = {group_name: {'indices': group_indices[group_name], 'center': self.wmodel.group_center(group_name)} for group_name in group_indices}
+            
+        # ---------------------------------------------------------------------------
+        # Initialize the models vertices
+        
+        if animation_key is None:
+            self.set_mode('SINGLE', verts)
+        else:
+            kverts = self.wmodel.wshape_keys.verts(animation_key)
+            if kverts is None:
+                raise WError(f"Crowd initialization error: {self.wmodel.name} doesn't have shape keys namde '{animation_key}'",
+                    Class = "Crowd",
+                    Method = "set_mesh_model",
+                    wmodel = wmodel,
+                    mode = mode,
+                    name = name,
+                    animation_key = animation_key)
+            self.set_mode('ANIMATION', kverts)
+            
+        
+    # ====================================================================================================
+    # Initialize a curve
+    
+    def set_curve_model(self, wmodel, mode='SINGLE', name=None, animation_key=None):
+        
+        self.wmodel = wrap(wmodel)
+            
+        if self.wmodel.object_type != 'Curve':
+            raise WError(f"Crowd initialization error: {self.wmodel.name} is not a Curve ({self.wmodel.object_type})",
+                Class = "Crowd",
+                Method = "set_curve_model",
+                wmodel = wmodel,
+                mode = mode,
+                name = name,
+                animation_key = animation_key)
+            
+        if name is None:
+            name = "Crowd of " + self.wmodel.name + 's'
+            
+        # ----- Create the recipient mesh
+        
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            obj = wrap(name)
+            if obj.object_type != 'Curve':
+                obj.select_set(True)
+                bpy.ops.object.delete() 
+                obj = None
+                
+        if obj is None:
+            obj = wrap(name, create="BEZIER")
+            
+        self.wobject = obj
+        blender.copy_collections(wmodel.wrapped, self.wobject.wrapped)
+        #self.wobject.material_indices = self.wmodel.material_indices # Will be properly broadcasted
+            
+        # ---------------------------------------------------------------------------
+        # ----- Get the model geometry
+        
+        profile  = self.wmodel.wsplines.profile
+        nsplines = len(profile)
+        verts    = self.wmodel.verts
+        
+        self.dupli_verts = len(verts)
+        self.total_verts = self.size * self.dupli_verts
+
+        # ---------------------------------------------------------------------------
+        # ----- Set the model geometry
+        
+        self.wobject.profile = np.resize(profile, (self.size*nsplines, 2))
+        
+        #self.wobject.set_verts_types(np.resize(verts, (self.total_verts, 3)), np.resize(types, (self.size*len(types), 2)) )
+        
+        # ----- Groups
+        
+        #group_indices = self.wmodel.group_indices()
+        #self.groups = {group_name: {'indices': group_indices[group_name], 'center': self.wmodel.group_center(group_name)} for group_name in group_indices}
+            
+        # ---------------------------------------------------------------------------
+        # Initialize the models vertices
+
+        if animation_key is None:
+            self.set_mode('SINGLE', verts)
+        else:
+            kverts = self.wmodel.wshape_keys.verts(animation_key)
+            if kverts is None:
+                raise WError(f"Crowd initialization error: {self.wmodel.name} doesn't have shape keys namde '{animation_key}'",
+                    Class = "Crowd",
+                    Method = "set_mesh_model",
+                    wmodel = wmodel,
+                    mode = mode,
+                    name = name,
+                    animation_key = animation_key)
+            self.set_mode('ANIMATION', kverts)
+    
+    # ---------------------------------------------------------------------------
+    # Type
+    
+    @property
+    def is_curve(self):
+        return self.wmodel.object_type == 'Curve'
+
+    @property
+    def is_mesh(self):
+        return self.wmodel.object_type == 'Mesh'
+    
+    @property
+    def is_text(self):
+        return self.wmodel.object_type == 'CurveText'
+
+    @property
+    def is_mesh_text(self):
+        if self.is_text:
+            return self.wobject.object_type == 'Mesh'
+        return False
+
+    @property
+    def is_curve_text(self):
+        if self.is_text:
+            return self.wobject.object_type == 'Curve'
+        return False
 
     # ---------------------------------------------------------------------------
     # Euler order
@@ -173,9 +416,19 @@ class Crowd(Transformations):
     # ---------------------------------------------------------------------------
     # Change the mode
     
-    def set_mode(self, mode, models, indices=None):
+    def set_mode(self, mode, verts, indices=None):
         
         self.mode = mode
+        
+        # ----- curve verts can have additional info
+        
+        models = verts[..., :3]
+        self.radius_tilt = None
+        
+        if self.is_curve:
+            if verts.shape[-1] == 5:
+                self.radius_tilt = verts[..., 3:5]
+                
         
         # Store the models as 4-vectors
         
@@ -248,8 +501,13 @@ class Crowd(Transformations):
     # Set the vertices once transformed
     
     def set_vertices(self, verts):
-        pass
-    
+        
+        if self.is_mesh:
+            self.wobject.verts = verts
+            
+        elif self.is_curve:
+            self.wobject.verts = verts.reshape(self.total_verts, 3)
+            
     # ---------------------------------------------------------------------------
     # Overrides matrices transformations
         
@@ -268,13 +526,14 @@ class Crowd(Transformations):
         self.locked = 1
         
         if self.mode in ['SINGLE', 'ANIMATION']:
-        
+            
             # ----------------------------------------------------------------------------------------------------
             # SINGLE MODE : Models is an array of shape (1, verts, 4)
             
             if self.mode == 'SINGLE':
                 
-                verts = self.transform_verts43(self.models)
+                base = self.models
+                verts = self.transform_verts43(self.models[..., :4])
                 
             # ----------------------------------------------------------------------------------------------------
             # ANIMATION : Models is an array of shape (n, verts, 4)
@@ -288,15 +547,20 @@ class Crowd(Transformations):
                 if imax == 0:
                     base = self.models[np.zeros(self.shape, int)]
                 else:
-                    t   = np.clip(self.models_indices, 0, imax)
+                    #t   = np.clip(self.models_indices, 0, imax)
+
+                    t   = np.array(self.models_indices, np.float)
+                    
                     i0  = np.floor(t).astype(int)
-                    i0[i0 == imax] = imax-1
+                    i0[i0 < 0]     = 0
+                    i0[i0 >= imax] = imax-1
                     p  = np.expand_dims(np.expand_dims(t - i0, axis=-1), axis=-1)
                     
                     base = self.models[i0]*(1-p) + self.models[i0+1]*p
                     
-                verts = self.transform_verts43(base)
+                verts = self.transform_verts43(base[..., :4])
                 
+                print("APPLY\n", verts)
             
             # ----------------------------------------------------------------------------------------------------
             # Group transformations
@@ -306,6 +570,11 @@ class Crowd(Transformations):
 
             # ----------------------------------------------------------------------------------------------------
             # We have the vertices
+            
+            if self.models.shape[:-1] == 6:
+                verts = np.insert(verts, (4, 4), 0, axis=-1)
+                verts[..., 4] = base[..., 4]
+                verts[..., 5] = base[..., 5]
             
             self.set_vertices(verts)
             
@@ -321,13 +590,57 @@ class Crowd(Transformations):
         # Restore locked state
 
         self.locked = mem_locked
+        
+    # ---------------------------------------------------------------------------
+    # Animation with keyshapes
+    
+    def animate_with_keyshapes(self, name=None):
+        """Animate the duplicates by changing the base vertices use for each of them.
+        
+        When not animated, there is one copy of the vertices.
+        When animated, there are several versions of the base vertices.
+        The animate method select one of the available version for each of the duplicates.
+        
+        Phases ans speeds are use to compute the index of the version to use:
+            - version of duplicate i at frame f: (phases[i] + f * speeds[i]) % (number of versions)
+            
+        If no phases is provided, random phases are generated. If the animation must be synchronized
+        pass 0 as an argument.
+        If no speeds is None, random speeds are generated.
+        
+        This mechanism is an alternative to the use of eval_time on shape keys with a Duplicator.
+        Performances can be higher for simple animations.
+
+        Parameters
+        ----------
+        points : array of array of vertices
+            An array fo shape (steps, v_count, 3) containing the possible versions of the vertices.
+        phases : array of int, optional
+            The phases to use for each duplicate. The default is None.
+        speeds : array of int, optional
+            The animation speed of each duplicate. The default is 1.
+        seed : any, optional
+            Random seed if not None. The default is 0.
+
+        Returns
+        -------
+        None.
+        """
+        
+        if self.is_mesh:
+            verts = self.wmodel.wdata.get_mesh_vertices(name=name)
+            
+        elif self.is_curve:
+            verts = self.wmodel.wdata.get_curve_vertices(name=name)
+            
+        self.set_mode('ANIMATION', verts)
     
 
 
 # ====================================================================================================
 # Crowd: duplicates a mesh in a single mesh
 
-class MeshCrowd(Crowd):
+class MeshCrowd_OLDOLD(Crowd):
     """Manages a crowd of copies of a mesh model in a single mesh object.
     
     The model can be the evaluated version of the mesh to take the modifiers into account.
@@ -449,17 +762,6 @@ class MeshCrowd(Crowd):
         # ----- Base vertices as 4-vectors
 
         self.base_verts = np.insert(verts, 3, 1, axis=-1)
-        
-    # ---------------------------------------------------------------------------
-    # A pretty repr
-            
-    def __repr__(self):
-        s = "<"
-        s += f"Crowd of {self.size} [{self.shape}] meshes of {self.v_count} vertices, vertices: {self.total_verts}"
-        if self.animated:
-            s += "\n"
-            s += f"Animation of {self.steps} steps: {self.base_verts.shape}"
-        return s + ">"    
     
     # ---------------------------------------------------------------------------
     # Set the vertices to transform
@@ -528,7 +830,7 @@ class MeshCrowd(Crowd):
 
     
 # ====================================================================================================
-# Crowd: duplicates a mesh in a single mesh
+# Crowd: duplicates a curve in a single mesh
 
 class CurveCrowd(Transformations):
     """Manages a crowd of copies of a mesh model in a single mesh object.

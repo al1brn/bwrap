@@ -32,8 +32,7 @@ class WSpline(WStruct):
         
         return self.wrapped.type == 'BEZIER'
     
-    @property
-    def count(self):
+    def __len__(self):
         """The number of points.
 
         Returns
@@ -46,6 +45,12 @@ class WSpline(WStruct):
             return len(self.wrapped.bezier_points)
         else:
             return len(self.wrapped.points)
+        
+    def __getitem__(self, index):
+        if self.use_bezier:
+            return self.wrapped.bezier_points[index]
+        else:
+            return self.wrapped.points[index]
     
     @property
     def points(self):

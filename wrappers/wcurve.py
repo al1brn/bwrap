@@ -6,12 +6,16 @@ Created on Mon Jul 26 09:38:15 2021
 @author: alain
 """
 
+#import numpy as np
+
 import bpy
 
 from .wid import WID
-from .wbezierspline import WBezierSpline
-from .wnurbsspline import WNurbsSpline
+#from .wbezierspline import WBezierSpline
+#from .wnurbsspline import WNurbsSpline
+from .wsplines import WSplines
 from .wmaterials import WMaterials
+from .wshapekeys import WShapeKeys
         
 # ---------------------------------------------------------------------------
 # Curve wrapper
@@ -37,207 +41,81 @@ class WCurve(WID, WMaterials):
         """
         
         return self.blender_object.data
-        
-        if self.wrapped_ is None:
-            return bpy.data.curves[self.name_]
-        else:
-            return self.wrapped_
-            
+    
+    # ===========================================================================
+    # Splines
+    
+    @property
+    def wsplines(self):
+        return WSplines(self.wrapped)
 
+    # ===========================================================================
+    # Implement WSpline
+    
     # ---------------------------------------------------------------------------
-    # WCurve is a collection of splines
+    # WCurve as a collection of splines
 
     def __len__(self):
-        """Number of splines.
-
-        Returns
-        -------
-        int
-            Number fo splines.
-        """
-        
-        return len(self.wrapped.splines)
+        return len(self.wsplines)
 
     def __getitem__(self, index):
-        """The wrapper of the indexed spline.
-
-        Parameters
-        ----------
-        index : int
-            Valid index within the colleciton of spines.
-
-        Returns
-        -------
-        WSpline
-            Wrapper of the indexed spline.
-        """
-        
-        return WCurve.spline_wrapper(self.wrapped.splines[index])
-
-    # ---------------------------------------------------------------------------
-    # Utility function to wrap a BEZIER ot NURBS spline.
-    
-    @staticmethod
-    def spline_wrapper(spline):
-        """Utility function to wrap a BEZIER ot NURBS spline.
-    
-        Parameters
-        ----------
-        spline : Blender spline
-            The spline to wrap with a WBezierSpline ot WNurbsSpline wrapper.
-    
-        Returns
-        -------
-        WSpline
-            The wrapper of the spline.
-        """
-        
-        return WBezierSpline(spline) if spline.type == 'BEZIER' else WNurbsSpline(spline)
+        return self.wsplines[index]
 
     # ---------------------------------------------------------------------------
     # Add a spline
 
     def new(self, spline_type='BEZIER'):
-        """Create a new spline of the given type.
-
-        Parameters
-        ----------
-        spline_type : str, optional
-            A valide spline type. The default is 'BEZIER'.
-
-        Returns
-        -------
-        spline : WSpline
-            Wrapper of the newly created spline.
-        """
-        
-        splines = self.wrapped.splines
-        spline  = WCurve.spline_wrapper(splines.new(spline_type))
-        self.wrapped.id_data.update_tag()
-        return spline
+        return self.wsplines(spline_type)
 
     # ---------------------------------------------------------------------------
     # Delete a spline
 
     def delete(self, index):
-        """Delete the spline at the given index.
-
-        Parameters
-        ----------
-        index : int
-            Index of the spline to delete.
-
-        Returns
-        -------
-        None.
-        """
-        
-        splines = self.wrapped.splines
-        if index <= len(splines)-1:
-            splines.remove(splines[index])
-        self.wrapped.id_data.update_tag()
-        return
-    
-    # ---------------------------------------------------------------------------
-    # Set the number of splines
-    
-    def set_splines_count(self, count, spline_type='BEZIER'):
-        """Set the number of splines within the curve.
-        
-        The current number fo splines is either reduced or increased to 
-        match the target count.
-
-        Parameters
-        ----------
-        count : int
-            Number of splines.
-        spline_type : TYPE, optional
-            DESCRIPTION. The default is 'BEZIER'.
-
-        Returns
-        -------
-        None.
-        """
-
-        current = len(self)
-        
-        # Delete the splines which are too numerous
-        for i in range(current - count):
-            self.delete(len(self)-1)
-            
-        # Create new splines
-        for i in range(current, count):
-            self.new(spline_type)
-            
-        self.wrapped.id_data.update_tag()
+        self.wsplines.delete(index)
         
     # ---------------------------------------------------------------------------
-    # Set the number of vertices per spline
+    # Vertices management from wsplines
+        
+    @property
+    def profile(self):
+        return self.wsplines.profile
     
-    def set_verts_count(self, count, index=None):
-        """Set the number of vertices for one or all the splines.
-
-        Parameters
-        ----------
-        count : int
-            Number of vertices.
-        index : int, optional
-            Index of the spline to manage. All the splines if None. The default is None.
-
-        Returns
-        -------
-        array of ints
-            Indices of the modified splines.
-        """
+    @profile.setter
+    def profile(self, profile):
+        self.wsplines.profile = profile
         
-        # ----- All the splines or only one
-        if index is None:
-            splines = self
-            created = [i for i in range(len(self))]
-        else:
-            splines = [self[index]]
-            created = [index]
+    def set_profile(self, types='BEZIER', lengths=2, count=None):
+        self.wsplines.set_profile(types, lengths, count)
         
-        # ----- Nothing to do
-        ok = True
-        for ws in splines:
-            if len(ws) != count:
-                ok = False
-                break
-            
-        if ok: return created
-        
-        # ----- Save the existing splines
-        saves = [spline.save() for spline in splines]
-
-        # ----- Clear
-        if index is None:
-            self.wrapped.splines.clear()
-        else:
-            self.delete(index)
-
-        # ----- Rebuild the splines
-        created = []
-        for save in saves:
-            spline = self.new(save["type"])
-            spline.restore(save, count)
-            created.append(len(self)-1)
-
-        # ---- OK
-        self.wrapped.id_data.update_tag()
-        
-        return created
+    @property
+    def ext_verts(self):
+        return self.wsplines.ext_verts
+    
+    @property
+    def verts(self):
+        return self.wsplines.verts
+    
+    @verts.setter
+    def verts(self, verts):
+        self.wsplines.verts = verts
+    
+    # ===========================================================================
+    # Shape keys
+    
+    @property
+    def wshape_keys(self):
+        return WShapeKeys(self.wrapped)
     
     # ===========================================================================
     # Properties and methods to expose to WMeshObject
     
     @classmethod
     def exposed_methods(cls):
-        return ["copy_materials_from", "new", "delete", "set_splines_count", "set_verts_count"]
+        return ["copy_materials_from", "new", "delete", "set_profile"]
 
     @classmethod
     def exposed_properties(cls):
-        return {"materials": 'RO'}
+        return {"materials": 'RO', "wsplines": 'RO', "wshape_keys": 'RO', "profile": 'RW', "ext_verts": 'RO', "verts": 'RW'}
     
     # ===========================================================================
     # Generated source code for WCurve class

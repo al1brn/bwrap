@@ -22,7 +22,7 @@ from ..core.commons import WError
 # Mesh mesh wrapper
 # wrapped : data block of mesh object
 
-class WMesh(WID, WMaterials, WShapeKeys):
+class WMesh(WID, WMaterials):
     """Wrapper of a Mesh structure.
     """
 
@@ -616,6 +616,10 @@ class WMesh(WID, WMaterials, WShapeKeys):
                     break
 
         return np.arange(len(verts))[idx]
+    
+    @property
+    def wshape_keys(self):
+        return WShapeKeys(self.wrapped)
         
     # ===========================================================================
     # Properties and methods to expose to WMeshObject
@@ -632,7 +636,7 @@ class WMesh(WID, WMaterials, WShapeKeys):
         return {"verts_count": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
              "bevel_weights": 'RW',"edge_indices": 'RO', "edge_indices": 'RO', "poly_count": 'RO',
              "poly_indices": 'RO', "poly_vertices": 'RO', "poly_centers": 'RO', "normals": 'RO', 
-             "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO'}
+             "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO', "wshape_keys": 'RO'}
         
     # ===========================================================================
     # Generated source code for WMesh class

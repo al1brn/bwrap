@@ -8,12 +8,11 @@ Created on Mon Jul 26 19:24:15 2021
 
 from .wcurve import WCurve
 from .wobject import WObject
-from .wshapekeys import WShapeKeys
 
 from ..core.class_enhance import expose
 
 
-class WCurveObject(WObject, WShapeKeys):
+class WCurveObject(WObject):
     
     def __init__(self, wrapped, is_evaluated=None):
         super().__init__(wrapped, is_evaluated)

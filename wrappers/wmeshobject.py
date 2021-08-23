@@ -10,12 +10,11 @@ import numpy as np
 
 from .wmesh import WMesh
 from .wobject import WObject
-from .wshapekeys import WShapeKeys
 from ..core.class_enhance import expose
 
 from ..core.commons import WError
 
-class WMeshObject(WObject, WShapeKeys):
+class WMeshObject(WObject):
     
     def __init__(self, wrapped, is_evaluated=None):
         super().__init__(wrapped, is_evaluated)

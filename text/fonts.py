@@ -17,291 +17,25 @@ Created on Thu Aug 12 22:57:37 2021
 import os
 import numpy as np
 
+from ..core.breader import DataType, Struct, BFileReader, Flags
+
 from ..maths.closed_faces import closed_faces
 
-INT8    =  0
-INT16   =  1
-INT32   =  2
-INT64   =  3
+INT8    =  DataType.INT8
+INT16   =  DataType.INT16
+INT32   =  DataType.INT32
+INT64   =  DataType.INT64
 
-UINT8   = 10
-UINT16  = 11
-UINT32  = 12
+UINT8   = DataType.UINT8
+UINT16  = DataType.UINT16
+UINT32  = DataType.UINT32
 
-FIXED   = 20
-SFRAC   = 21
+FIXED   = DataType.FIXED
+SFRAC   = DataType.SFRAC
 
-
-def defs_str(obj, defs):
-    s = ""
-    sepa = ""
-    for k in defs:
-        s += sepa + f"{k}: {getattr(obj, k)}"
-        sepa = ", "
-    return s
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# Base structure being read 
-
-class Struct():
-    def __init__(self, reader, defs):
-        
-        reader.read_struct(self, defs)
-        self._lock = 0
-        
-    def __repr__(self):
-        
-        if self._lock > 0:
-            return "<self>"
-        
-        self._lock += 1
-            
-        s = f"<Struct {type(self).__name__}:\n"
-        for k in dir(self):
-            if (k[0] != '_') and ((k.upper() != k) or (len(k) >= 8)) and k not in ['ttf']:
-                v = getattr(self, k)
-                sv = f"{v}"
-                if len(sv) > 30:
-                    sv = sv[:30] + " ..."
-                    if hasattr(v, '__len__'):
-                        sv += f" ({len(v)})"
-                s += f"     {k:25s}: {sv}\n"
-                
-        self._lock -= 1
-                
-        return s + ">"
-    
-# =============================================================================================================================
-# Flags reading
-
-class Flags():
-    def __init__(self, dtype, names):
-        self.dtype = dtype
-        self.names = names
-        
-    def read(self, reader, struct):
-        
-        flags = reader.read(self.dtype)
-        
-        bit = 1
-        for i, nm in enumerate(self.names):
-            if nm is not None:
-                setattr(struct, nm, flags & bit > 0)
-            bit = bit << 1
-            
-        return flags
-    
 
 # =============================================================================================================================
-# The binary reader
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# The base class and the node class
-
-class BReader():
-    def __init__(self, owner=None, base_offset=0, name="Binary reader"):
-        
-        self.owner       = owner
-        self.base_offset = base_offset
-        self.name        = name
-        
-        self.breaders    = {}
-        self.current     = []
-        
-        self.opens       = 0
-        self.stack       = []
-        
-        self.open()
-
-    # =============================================================================================================================
-    # Nodes management
-        
-    @property
-    def top(self):
-        return self if self.owner is None else self.owner
-    
-    def new_reader(self, name, base_offset):
-        self.breaders[name] = BReader(self, base_offset, name)
-        return self.breaders[name]
-    
-    @property
-    def file_name(self):
-        return self.top.file_name
-    
-    # =============================================================================================================================
-    # Basics
-        
-    def open(self):
-        self.opens += 1
-        self.owner.open()
-        self.offset = 0
-        
-    def close(self):
-        
-        if self.opens == 0:
-            raise RuntimeError("BReader close error: impossible to close a closed reader")
-
-        self.opens -= 1
-        self.owner.close()
-        
-    @property
-    def offset(self):
-        return self.owner.offset - self.base_offset
-    
-    @offset.setter
-    def offset(self, value):
-        self.owner.offset = self.base_offset + value
-        
-    def read_bytes(self, count):
-        return self.top.file.read(count)
-        
-    def push(self):
-        self.stack.append(self.offset)
-        
-    def pop(self):
-        if len(self.stack) == 0:
-            raise RuntimeError("BReader pop error: impossible to pop an empty stack.")
-        self.offset = self.stack.pop()
-        
-    # =============================================================================================================================
-    # Common methods
-        
-    @staticmethod
-    def to_int(bts):
-        r = 0
-        for b in bts:
-            r = (r << 8) + b
-        return r
-    
-    def read(self, dtype):
-
-        if dtype == UINT8:
-            return self.to_int(self.read_bytes(1))
-        elif dtype == UINT16:
-            return self.to_int(self.read_bytes(2))
-        elif dtype == UINT32:
-            return self.to_int(self.read_bytes(4))
-        
-        if dtype == INT8:
-            i = self.to_int(self.read_bytes(1))
-            if i > 0x7F:
-                return i - 0x100
-            else:
-                return i
-        elif dtype == INT16:
-            i = self.to_int(self.read_bytes(2))
-            if i > 0x7FFF:
-                return i - 0x10000
-            else:
-                return i
-        elif dtype == INT32:
-            i = self.to_int(self.read_bytes(4))
-            if i > 0x7FFFFFFF:
-                return i - 0x100000000
-            else:
-                return i
-        elif dtype == INT64:
-            return self.to_int(self.read_bytes(8))
-        
-        elif issubclass(type(dtype), Flags):
-            return dtype.read(self, self.current[-1])
-        
-        elif dtype == FIXED:
-            return self.read(INT32)/65536.
-        elif dtype == SFRAC:
-            return self.read(INT16)/0x4000
-        
-        elif type(dtype) is list:
-            return [self.read(dtype[1]) for i in range(dtype[0])]
-        
-        elif type(dtype) is dict:
-            return dtype["function"](self.read(dtype["dtype"]))
-        
-        elif type(dtype).__name__ == 'function':
-            return dtype(self)
-
-        elif type(dtype) is str:
-            bts = self.read_bytes(int(dtype))
-            s = ""
-            for b in bts:
-                s += chr(b)
-            return s
-
-        else:
-            raise RuntimeError(f"Unknwon data type {dtype}")
-        
-    def read_struct(self, obj, defs=None, offset=None):
-
-        if offset is not None:
-            self.offset = offset
-            
-        if defs is None:
-            defs = obj._defs
-
-        self.current.append(obj)        
-        for k in defs:
-            setattr(obj, k, self.read(defs[k]))
-        self.current.pop()
-            
-        return obj
-    
-    def read_table(self, count, defs):
-
-        table = []
-        for i in range(count):
-            table.append(Struct(self, defs))
-            
-        return table
-    
-    def read_array(self, count, dtype):
-
-        table = []
-        for i in range(count):
-            table.append(self.read(dtype))
-            
-        return table        
-
-# -----------------------------------------------------------------------------------------------------------------------------
-# Top class which actually read bytes
-       
-class BFileReader(BReader):
-    
-    def __init__(self, file_name):
-        self.file_name_ = file_name
-        self.file = None
-        super().__init__()
-        
-    def open(self):
-        self.opens += 1
-        if self.opens == 1:
-            self.file = open(self.file_name, "br")
-        self.offset = 0
-        
-    def close(self):
-        if self.opens == 0:
-            raise RuntimeError("BReader close error: impossible to close a closed reader")
-        self.opens -= 1
-        if self.opens == 0:
-            self.file.close()
-            self.file = None
-            
-    @property
-    def file_name(self):
-        return self.file_name_
-        
-    @property
-    def offset(self):
-        return self.file.tell()
-    
-    @offset.setter
-    def offset(self, value):
-        self.file.seek(value)
-    
-        
-
-    
-# =============================================================================================================================
-# cmap table
+# A ttf table
     
 class MainTable(Struct):
     def __init__(self, ttf, name, defs):
@@ -320,10 +54,9 @@ class MainTable(Struct):
     def __repr__(self):
         return f"'{self.name}' --> " + super().__repr__()
         
-        
     
 # =============================================================================================================================
-# cmap table
+# cmap tables
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # cmap format 0
@@ -825,6 +558,7 @@ class Glyphe():
         self.yMax       = 0
         self.contours   = []
         self.beziers_   = None
+        self.rasters    = {}
         self.glyf_index = None
         
         if glyf is not None:
@@ -951,7 +685,7 @@ class Glyphe():
 
     @property
     def width(self):
-        return self.xMax-self.xMin
+        return self.xMax - self.xMin
     
     @property
     def after(self):
@@ -1015,6 +749,10 @@ class Glyphe():
     
     def raster(self, delta=10):
         
+        vf = self.rasters.get(delta)
+        if vf is not None:
+            return vf
+        
         verts         = None
         closed_curves = []
         
@@ -1042,10 +780,8 @@ class Glyphe():
             # ----- Compute the n curves to form the final closed curve
             
             closed_curve = []
-            first_point = 0 if verts is None else len(verts)
             for index in range(n):
-                #print("    curve", index, "/", n-1)
-                
+
                 # Estimate the number of points for the curve
                 # The lesser the cross product, the lesser the precision
                 
@@ -1068,32 +804,24 @@ class Glyphe():
                     verts = np.append(verts, ras_verts, axis=0)
                     
                 # Extend the closed curve
-                # Need one 
                 
                 closed_curve.extend([vert0 + i for i in range(len(ras_verts))])
                 
-                # If this is the last curve, the last index must loop to the first point of the curve
-                #if index == n-1:
-                #    closed_curve[-1] = first_point
-                    
-                #print("    verts", verts.shape, "closed_curve", closed_curve[:5], closed_curve[-5:])
                 
             closed_curves.append(closed_curve)
             
-        if False:
-            print("vertices = np.array([")
-            for v in verts:
-                print(f"    [{v[0]}, {v[1]}],")
-            print("])")
-            print("faces = [")
-            for c in closed_curves:
-                print(f"    {c},")
-            print("]")
-            
         # ---------------------------------------------------------------------------
         # Compute the holed faces with the curve
-            
-        return np.insert(verts, 2, 0, axis=1), closed_faces(verts, closed_curves)
+        
+        verts = np.insert(verts, 2, 0, axis=1)
+        faces = closed_faces(verts, closed_curves)
+
+        # ---------------------------------------------------------------------------
+        # In cache
+        
+        self.rasters[delta] = [verts, faces]
+        
+        return verts, faces
     
     # ===========================================================================
     # DEBUG on matplotlib
@@ -1221,7 +949,7 @@ class Glyphe():
         plt.show()    
 
 
-# -----------------------------------------------------------------------------------------------------------------------------
+# =============================================================================================================================
 # glyf
 
 class Glyf(Struct):
@@ -1372,61 +1100,64 @@ class Glyf(Struct):
             # =========================
             
             self.glyphe = Glyphe(self.ttf, self)
-                
-            # ----- The raw points of the glyf
-            self.raw_points = np.stack((np.cumsum(self.xCoordinates), np.cumsum(self.yCoordinates)), axis=1)
             
-            # ----- Let's normalize the coordinates in a normalized square
-            r = 1 / (ttf.os_2.sTypoAscender - ttf.os_2.sTypoDescender)
-            self.points = self.raw_points * r
-            self.xMin = self.xMin * r
-            self.yMin = self.yMin * r
-            self.xMax = self.xMax * r
-            self.yMax = self.yMax * r
-            
-            # ---- Create the contours with the intermediary points
-            
-            self.contours = []
-            contour = None
-            last_flag = 0x00
-            for index in range(len(self.points)):
+            if False:
                 
-                # Current point
-                pt = np.array(self.points[index])
+                # ----- The raw points of the glyf
+                self.raw_points = np.stack((np.cumsum(self.xCoordinates), np.cumsum(self.yCoordinates)), axis=1)
                 
-                # First of the contour
-                if contour is None:
-                    contour   = [pt]
-                    last_flag = self.flags[index]
-                    flag0     = last_flag
+                # ----- Let's normalize the coordinates in a normalized square
+                #r = 1 / (ttf.os_2.sTypoAscender - ttf.os_2.sTypoDescender)
+                r = 1
+                self.points = self.raw_points * r
+                self.xMin = self.xMin * r
+                self.yMin = self.yMin * r
+                self.xMax = self.xMax * r
+                self.yMax = self.yMax * r
+                
+                # ---- Create the contours with the intermediary points
+                
+                self.contours = []
+                contour = None
+                last_flag = 0x00
+                for index in range(len(self.points)):
                     
-                # Add an intermediary point to altern on and off curve points
-                else:
-                    if self.flags[index] & 0x01:
-                        if last_flag & 0x01:
-                            contour.append((contour[-1] + pt)/2)
+                    # Current point
+                    pt = np.array(self.points[index])
+                    
+                    # First of the contour
+                    if contour is None:
+                        contour   = [pt]
+                        last_flag = self.flags[index]
+                        flag0     = last_flag
+                        
+                    # Add an intermediary point to altern on and off curve points
                     else:
-                        if (last_flag & 0x01) == 0:
-                            contour.append((contour[-1] + pt)/2)
-                    contour.append(pt)
-                    last_flag = self.flags[index]
-                    
-                # Last point of the curve
-                if index in self.endPtsOfContours:
-                    
-                    # Intermediary point with the first one 
-                    if (last_flag & 0x01) == (flag0 & 0x01):
-                        contour.append((contour[0] + pt)/2)
+                        if self.flags[index] & 0x01:
+                            if last_flag & 0x01:
+                                contour.append((contour[-1] + pt)/2)
+                        else:
+                            if (last_flag & 0x01) == 0:
+                                contour.append((contour[-1] + pt)/2)
+                        contour.append(pt)
+                        last_flag = self.flags[index]
                         
-                    # Ensure flag 0 is on curve
-                    if (flag0 & 0x01) == 0:
-                        cont = list(contour)
-                        contour = [cont[1:]]
-                        contour.append(cont[0])
+                    # Last point of the curve
+                    if index in self.endPtsOfContours:
                         
-                    # Let's start a new contour
-                    self.contours.append(contour)
-                    contour = None
+                        # Intermediary point with the first one 
+                        if (last_flag & 0x01) == (flag0 & 0x01):
+                            contour.append((contour[0] + pt)/2)
+                            
+                        # Ensure flag 0 is on curve
+                        if (flag0 & 0x01) == 0:
+                            cont = list(contour)
+                            contour = [cont[1:]]
+                            contour.append(cont[0])
+                            
+                        # Let's start a new contour
+                        self.contours.append(contour)
+                        contour = None
                     
             self.loaded = True
             
@@ -1794,7 +1525,8 @@ class Ttf(Struct):
             self.get_glyphe(code)
             
         # Default ratio for the end user metrics
-        self.ratio        = 1/1560
+        self.base_ratio   = 1/1560
+        self.scale        = 1.
         
         # ---------------------------------------------------------------------------
         # ----- Loaded = ok
@@ -1908,37 +1640,89 @@ class Ttf(Struct):
     # Metrics interface
     
     @property
-    def ratio(self):
-        return self.ratio_
+    def scale(self):
+        return self.scale_
     
-    @ratio.setter
-    def ratio(self, value):
-        self.ratio_ = value
-        self.space_width = self.get_glyphe(32).xwidth * self.ratio_
+    @scale.setter
+    def scale(self, value):
+        self.scale_ = value
+        self.ratio = self.scale_ * self.base_ratio
+        
+        self.space_width = self.get_glyphe(32).xwidth * self.ratio
         h = self.hhea.lineGap
         if h == 0:
             h = self.get_glyphe(ord("M")).ascent *1.5
-        self.line_height = h * self.ratio_
+        self.line_height = h * self.ratio
+        
+    def char_raw_metrics(self, c):
+        glyf_index = self.code_to_glyf_index(ord(c))
+        if glyf_index is None:
+            return 0, 0, 0, 0
+        
+        glyf = self.get_glyf(glyf_index)
+        return glyf.xMin, glyf.xMax, self.hmtx[glyf_index][0], self.hmtx[glyf_index][1]
     
     def char_xwidth(self, c):
-        return self.get_glyphe(ord(c)).xwidth * self.ratio_
-
+        _, _, aw, _ = self.char_raw_metrics(c)
+        return aw * self.ratio
+        
     def char_width(self, c):
-        return self.get_glyphe(ord(c)).width * self.ratio_
+        _, xMax, _, _ = self.char_raw_metrics(c)
+        return xMax * self.ratio
 
-    def char_after(self, c):
-        return self.get_glyphe(ord(c)).after * self.ratio_
-    
-    def char_wa(self, c):
-        gl = self.get_glyphe(ord(c))
-        return gl.width * self.ratio_, gl.after * self.ratio_
+    def char_lsb(self, c):
+        _, _, _, lsb = self.char_raw_metrics(c)
+        return lsb * self.ratio
+
     
     # ===========================================================================
-    # Char_beziers
+    # Access to the curves
     
-    def char_beziers(self, c):
+    def mesh_char(self, c, delta=10, location=(0, 0, 0)):
+        vf = self.get_glyphe(ord(c)).raster(delta)
+        if vf is None:
+            return None
+        
+        return location + vf[0] * self.ratio, vf[1]
+    
+    def curve_char(self, c, location=(0, 0, 0)):
         beziers = self.get_glyphe(ord(c)).beziers
-        return [bz*self.ratio_ for bz in beziers]
+        return [location + bz*self.ratio for bz in beziers]
+    
+    # ===========================================================================
+    # Several chars with location
+    
+    def mesh_chars(self, chars, locations=None, delta=10):
+        
+        if locations is None:
+            w = np.array([self.char_xwidth(c) for c in chars])
+            locations = np.zeros((len(chars), 3), np.float)
+            locations[1:, 0] = np.cumsum(w[:-1])
+            
+        verts = np.zeros((0, 3), np.float)
+        faces = []
+        for c, location in zip(chars, locations):
+            vf = self.mesh_char(c, delta, location)
+            if vf is not None:
+                n = len(verts)
+                verts = np.append(verts, vf[0], axis=0)
+                faces.extend([[n + f for f in face] for face in vf[1]])
+                              
+        return verts, faces
+            
+    def curve_chars(self, chars, locations=None):
+        
+        if locations is None:
+            w = np.array([self.char_xwidth(c) for c in chars])
+            locations = np.zeros((len(chars), 3), np.float)
+            locations[1:, 0] = np.cumsum(w[:-1])
+            
+        curves = []
+        for c, location in zip(chars, locations):
+            curves.extend(self.curve_char(c, location))
+                              
+        return curves
+    
     
     # ===========================================================================
     # Geometry
@@ -2071,112 +1855,60 @@ class Ttc(Struct):
 # =============================================================================================================================
 # Read font (either ttf or ttc)
 
-def load_font(file_name):
-    
-    fname, ftype = os.path.splitext(file_name)
-        
-    reader = BFileReader(file_name)
+class Font():
+    def __init__(self, file_name):
 
-    if ftype.lower() == '.ttf':
-        font = Ttf(reader)
-    elif ftype.lower() == '.ttc':
-        font = Ttc(reader)
-        
-    reader.close()
-        
-    if font.font is None:
-        return None
-    else:
-        return font
-
-    
-# =============================================================================================================================
-# Some tests
-
-def tests():
-    
-    fonts_folder = "/System/Library/Fonts/"
-    
-    fname_test = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
-
-    def read_font(file_name):
-    
-        reader = BFileReader(file_name)
-        
-        fname, ftype = os.path.splitext(file_name)
-        fname = fname.split()[-1]
-        if ftype.lower() == '.ttf':
-            print("Open ttf:", fname)
-            font = Ttf(reader)
-        elif ftype.lower() == '.ttc':
-            print("Open collection:", fname)
-            font = Ttc(reader)
-            
-        reader.close()
-            
-        print("   Read ttc:", font)
-        
-        return font
-        
-        
-    ZapfDingbats= "ZapfDingbats.ttf"
-    NewYork= "NewYork.ttf"
-    Arial = "Supplemental/Arial Unicode.ttf"
-    Helvetica = "Helvetica.ttc"
-    AppleSDGothicNeo = "AppleSDGothicNeo.ttc"
-    HelveticaNeue = "HelveticaNeue.ttc"
-    Noteworthy ="Noteworthy.ttc"
-    MarkerFelt = "MarkerFelt.ttc"
-    
-    def test_font(file_name, all_coll = False):
-        
-        def plot_ttf(ttf, index=None):
-            if ttf.loaded:
-                label = f"{ttf.font_family} - {ttf.font_sub_family}"
-                if index is not None:
-                    label += f" ({index})"
-                #ttf.plot_word("Cet été passé @ où", xlabel=label)
-                #ttf.plot_word("ABC abc 12345", xlabel=label)
-                c = "C"
-                glyphe = ttf.get_glyphe(ord(c))
-                glyphe.plot_bezier(True, title=ttf.font_family, xLabel="A")
-                glyphe.plot_raster(delta=10, show_points=False, title=ttf.font_family, xLabel="A")
-                #glyphe.plot(True, title=ttf.font_family, xLabel="A")
-                
-            else:
-                print("     ", ttf.status)
+        self.reader = BFileReader(file_name)
         
         fname, ftype = os.path.splitext(file_name)
         
-        if ftype.lower() == '.ttf':
-            print("True type font:", fname)
-            ttf = read_font(fonts_folder + file_name)
-            plot_ttf(ttf)
+        self.collection = ftype.lower() == '.ttc'
+        
+        if self.collection:
+            self.ttc = Ttc(self.reader)
+        else:
+            self.ttf = Ttf(self.reader)
             
-        elif ftype.lower() == '.ttc':
-            print("True type collection:", file_name)
-            font = read_font(fonts_folder + file_name)
-            if all_coll:
-                for i, ttf in enumerate(font.fonts):
-                    plot_ttf(ttf, i)
+        self.reader.close()
+            
+    @property
+    def loaded(self):
+        if self.collection:
+            return self.ttc.font is not None
+        else:
+            return self.ttf.loaded
+        
+    @property
+    def font(self):
+        if self.loaded:
+            if self.collection:
+                return self.ttc.font
             else:
-                plot_ttf(font.fonts[0], 0)
-            
+                return self.ttf
+        else:
+            return None
         
+    def __len__(self):
+        if self.loaded:
+            if self.collection:
+                return len(self.ttc)
+            else:
+                return 1
+        else:
+            return 0
         
-    
-    def testall():
+    def __getitem__(self, index):
+        if self.collection:
+            return self.ttc[index]
+        else:
+            return self.ttf
         
-        dirList = os.listdir(fonts_folder) # current directory
+    @property
+    def family(self):
+        return [font.font_family for font in self]
         
-        i = 0
-        wd = 0
-        for file_name in dirList:
-            if not os.path.isdir(file_name):
-                test_font(file_name, True)
-    
-    test_font(MarkerFelt, all_coll=False)  
-    #testall()
-    
-        
-#tests()
+    @property
+    def sub_family(self):
+        return [font.font_sub_family for font in self]
+
+
