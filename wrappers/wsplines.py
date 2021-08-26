@@ -313,6 +313,10 @@ class WSplines(WStruct):
             profile = self.profile
         return np.sum(profile[:, 0] * profile[:, 1])
     
+    @property
+    def verts_dim(self):
+        return 5 if self.has_nurbs else 3
+    
     def set_types(self, type='BEZIER', lengths=2):
         pass
     

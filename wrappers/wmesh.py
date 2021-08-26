@@ -22,7 +22,7 @@ from ..core.commons import WError
 # Mesh mesh wrapper
 # wrapped : data block of mesh object
 
-class WMesh(WID, WMaterials):
+class WMesh(WID):
     """Wrapper of a Mesh structure.
     """
 
@@ -97,6 +97,10 @@ class WMesh(WID, WMaterials):
         
         self.wrapped.vertices.foreach_set("co", verts.reshape(self.verts_count*3))
         self.mark_update()
+        
+    @property
+    def verts_dim(self):
+        return 3
         
     # x, y, z vertices access
 
@@ -248,6 +252,10 @@ class WMesh(WID, WMaterials):
     # uv management
     
     @property
+    def uvs_size(self):
+        return np.sum([len(face) for face in self.poly_indices])
+    
+    @property
     def uvmaps(self):
         return [uvl.name for uvl in self.wrapped.uv_layers]
     
@@ -298,6 +306,22 @@ class WMesh(WID, WMaterials):
             
     def get_poly_uvs_indices(self, poly_index):
         return self.wrapped.polygons[poly_index].loop_indices
+    
+    # ---------------------------------------------------------------------------
+    # Get / set all uvmaps
+    
+    @property
+    def all_uvs(self):
+        uvmaps = {}
+        for name in self.wrapped.uv_layers:
+            uvmaps[name] = self.get_uvs(name)
+        return uvmaps
+    
+    @all_uvs.setter
+    def all_uvs(self, value):
+        for name, uvs in value.items():
+            self.get_uvmap(name, create=True)
+            self.set_uvs(name, uvs)
 
     # ---------------------------------------------------------------------------
     # Set new points
@@ -438,19 +462,24 @@ class WMesh(WID, WMaterials):
 
     # ---------------------------------------------------------------------------
     # Materials indices
+    
+    @property
+    def wmaterials(self):
+        return WMaterials(self)
         
     @property
     def material_indices(self):
         """Material indices from the faces.
         """
         
-        inds = np.zeros(self.poly_count)
+        inds = np.zeros(self.poly_count, int)
         self.wrapped.polygons.foreach_get("material_index", inds)
         return inds
     
     @material_indices.setter
     def material_indices(self, value):
-        inds = np.resize(value, self.poly_count)
+        inds = np.zeros(self.poly_count, int)
+        inds[:] = value
         self.wrapped.polygons.foreach_set("material_index", inds)            
 
     # ---------------------------------------------------------------------------
@@ -626,17 +655,17 @@ class WMesh(WID, WMaterials):
     
     @classmethod
     def exposed_methods(cls):
-        return ["copy_materials_from", "get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
+        return ["get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
              "detach_geometry", "copy_mesh", "python_source_code",
              "get_floats", "set_floats", "get_ints", "set_ints"]
 
     @classmethod
     def exposed_properties(cls):
-        return {"verts_count": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
+        return {"verts_count": 'RO', "verts_dim": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
              "bevel_weights": 'RW',"edge_indices": 'RO', "edge_indices": 'RO', "poly_count": 'RO',
-             "poly_indices": 'RO', "poly_vertices": 'RO', "poly_centers": 'RO', "normals": 'RO', 
-             "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO', "wshape_keys": 'RO'}
+             "poly_indices": 'RO', "poly_vertices": 'RO', "poly_centers": 'RO', "normals": 'RO', "wmaterials" : 'RO',
+             "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO', "wshape_keys": 'RO', "all_uvs": 'RW', "uvs_size": 'RO'}
         
     # ===========================================================================
     # Generated source code for WMesh class

@@ -6,9 +6,7 @@ Created on Mon Jul 26 09:38:15 2021
 @author: alain
 """
 
-#import numpy as np
-
-import bpy
+import numpy as np
 
 from .wid import WID
 #from .wbezierspline import WBezierSpline
@@ -21,7 +19,7 @@ from .wshapekeys import WShapeKeys
 # Curve wrapper
 # wrapped : Curve
 
-class WCurve(WID, WMaterials):
+class WCurve(WID):
     """Curve data wrapper.
     
     In addition to wrap the Curve class, the wrapper also behaves as an array
@@ -98,6 +96,14 @@ class WCurve(WID, WMaterials):
     @verts.setter
     def verts(self, verts):
         self.wsplines.verts = verts
+        
+    @property
+    def verts_count(self):
+        return self.wsplines.verts_count
+
+    @property
+    def verts_dim(self):
+        return self.wsplines.verts_dim
     
     # ===========================================================================
     # Shape keys
@@ -105,17 +111,41 @@ class WCurve(WID, WMaterials):
     @property
     def wshape_keys(self):
         return WShapeKeys(self.wrapped)
+
+    # ===========================================================================
+    # Materials
+    
+    @property
+    def wmaterials(self):
+        return WMaterials(self)
+        
+    @property
+    def material_indices(self):
+        """Material indices from the splines.
+        """
+        
+        inds = np.zeros(len(self.wrapped.splines), int)
+        self.wrapped.splines.foreach_get("material_index", inds)
+        return inds
+    
+    @material_indices.setter
+    def material_indices(self, value):
+        inds = np.zeros(len(self.wrapped.splines), int)
+        inds[:] = value
+        self.wrapped.splines.foreach_set("material_index", inds)            
+    
     
     # ===========================================================================
     # Properties and methods to expose to WMeshObject
     
     @classmethod
     def exposed_methods(cls):
-        return ["copy_materials_from", "new", "delete", "set_profile"]
+        return ["new", "delete", "set_profile"]
 
     @classmethod
     def exposed_properties(cls):
-        return {"materials": 'RO', "wsplines": 'RO', "wshape_keys": 'RO', "profile": 'RW', "ext_verts": 'RO', "verts": 'RW'}
+        return {"materials": 'RO', "wsplines": 'RO', "wshape_keys": 'RO', "profile": 'RW', "ext_verts": 'RO', "verts": 'RW',
+                "wmaterials": 'RO', "material_indices": 'RW', "verts_count": 'RO', "verts_dim": 'RO'}
     
     # ===========================================================================
     # Generated source code for WCurve class
