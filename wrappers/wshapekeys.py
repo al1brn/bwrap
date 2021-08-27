@@ -551,7 +551,7 @@ class WShapeKeys(WStruct):
                 ri = ri.reshape(nverts, 3)
                 
                 index = 0
-                for t, n in profile:
+                for t, n, st in profile:
                     verts[i_sk, 3*index       :3*index + n, ] = co[index]
                     verts[i_sk, 3*index + n   :3*index + 2*n] = le[index]
                     verts[i_sk, 3*index + 2*n :3*index + 3*n] = ri[index]
@@ -572,7 +572,7 @@ class WShapeKeys(WStruct):
                 co = co.reshape(nverts, 3)
 
                 index = 0
-                for t, n in profile:
+                for t, n, st in profile:
                     verts[i_sk, index :index + n, :3] = co[index]
                     verts[i_sk, index :index + n, 3]  = ra[index]
                     verts[i_sk, index :index + n, 4]  = ti[index]
@@ -585,7 +585,7 @@ class WShapeKeys(WStruct):
             i_data = 0
             index  = 0
             
-            for t, n in profile:
+            for t, n, st in profile:
                 
                 if t == 3:
                     

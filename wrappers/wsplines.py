@@ -166,25 +166,43 @@ class WSplines(WStruct):
     # - Bezier     : type 3
     # - Non Bezier : type 1
     # 
-    # The curve profile is  an array of couples : (spline type, vertices count)
-    #
+    # The curve profile is  an array of triplets : (spline type, vertices count, spline type index)
+    # Note that BEZIER splines are necessary (3, ?, 0)
+    # 
     # This array can then be used to read the vertices
     # Note that:
     # np.min(profile[:, 0]) == 3          : True if only bezier splines
     # np.max(profile[:, 0]) == 3          : True if only non bezier splines
     # np.sum(profile[:, 0] * profile[:, 1]) : gives the total number of vertices
     
+    @staticmethod
+    def spline_type_index(type):
+        if type == 'BEZIER':
+            return 0
+        elif type == 'POLY':
+            return 1
+        elif type == 'BSPLINE':
+            return 2
+        elif type == 'CARDINAL':
+            return 3
+        else:
+            return 4
+        
+    @staticmethod
+    def spline_type(index):
+        return ['BEZIER', 'POLY', 'BSPLINE', 'CARDINAL', 'NURBS'][index]
+    
     @property
     def profile(self):
         
         splines = self.wrapped
         
-        profile = np.zeros((len(splines), 2), int)
+        profile = np.zeros((len(splines), 3), int)
         for i, spline in enumerate(splines):
             if spline.type == 'BEZIER':
-                profile[i] = (3, len(spline.bezier_points))
+                profile[i] = (3, len(spline.bezier_points), 0)
             else:
-                profile[i] = (1, len(spline.points))
+                profile[i] = (1, len(spline.points), WSplines.spline_type_index(spline.type))
                 
         return profile
     
@@ -209,22 +227,21 @@ class WSplines(WStruct):
             
             spline = splines[i_spline]
             
-            if spline.type == 'BEZIER':
-                ok = profile[i_spline, 0] == 3
-                points = spline.bezier_points
-            else:
-                ok = profile[i_spline, 0] == 1
-                points = spline.points
-                
-            if ok:
-                n = len(points)
-                if n < profile[i_spline, 1]:
-                    points.add(n - len(points))
-                ok = len(points) == profile[i_spline, 1]
-                
-            if not ok:
+            if spline.type != WSplines.spline_type(profile[i_spline, 2]):
                 break
             
+            if spline.type == 'BEZIER':
+                points = spline.bezier_points
+            else:
+                points = spline.points
+                
+            n = len(points)
+            if n < profile[i_spline, 1]:
+                points.add(n - len(points))
+                
+            if len(points) != profile[i_spline, 1]:
+                break
+                
             index += 1
             
         # ---------------------------------------------------------------------------
@@ -238,11 +255,12 @@ class WSplines(WStruct):
         # We must then create the missing splines
         
         for i in range(index, len(profile)):
+            
+            spline = splines.new(WSplines.spline_type(profile[i, 2]))
+
             if profile[i, 0] == 3:
-                spline = splines.new('BEZIER')
                 points = spline.bezier_points
             else:
-                spline = splines.new('BSPLINE')
                 points = spline.points
                 
             n = profile[i, 1]
@@ -260,9 +278,12 @@ class WSplines(WStruct):
     def set_profile(self, types='BEZIER', lengths=2, count=None):
         
         if type(types) is str:
-            atypes = [3 if types == 'BEZIER' else 1]
+            atypes = [WSplines.spline_type_index(types)]
         else:
-            atypes = [3 if t == 'BEZIER' else 1 for t in types]
+            atypes = [WSplines.spline_type_index(t) for t in types]
+            
+        acount = [3 if i == 0 else 1 for i in atypes]
+
             
         if hasattr(lengths, '__len__'):
             alengths = lengths
@@ -272,15 +293,12 @@ class WSplines(WStruct):
         if count is None:
             count = max(len(atypes), len(alengths))
         
-        profile = np.array((count, 2), int)
-        profile[:, 0] = atypes
+        profile = np.array((count, 3), int)
+        profile[:, 0] = acount
         profile[:, 1] = alengths
+        profile[:, 2] = atypes
         
         self.profile = profile
-        
-        # To override the non bezier splines default creation type
-        
-        self.types = types
         
         self.update_tag()
         
@@ -291,22 +309,22 @@ class WSplines(WStruct):
     def only_bezier(self, profile=None):
         if profile is None:
             profile = self.profile
-        return np.min(profile) == 3
+        return np.min(profile[:, 0]) == 3
     
     def only_nurbs(self, profile=None):
         if profile is None:
             profile = self.profile
-        return np.max(profile) == 1
+        return np.max(profile[:, 0]) == 1
     
     def has_bezier(self, profile=None):
         if profile is None:
             profile = self.profile
-        return np.max(profile) == 3
+        return np.max(profile[:, 0]) == 3
         
     def has_nurbs(self, profile=None):
         if profile is None:
             profile = self.profile
-        return np.min(profile) == 1
+        return np.min(profile[:, 0]) == 1
     
     def verts_count(self, profile=None):
         if profile is None:
@@ -425,7 +443,7 @@ class WSplines(WStruct):
 
     @verts.setter
     def verts(self, verts):
-
+        
         splines = self.wrapped
         
         extended = verts.shape[-1] >= 5
@@ -450,17 +468,20 @@ class WSplines(WStruct):
                     a[:, 3] = verts[index:index+n, 5]
                 else:
                     spline.points.foreach_get('co', a.reshape(n*4))
-                    
+
                 # ----- The 3-vertices
                     
                 a[:, :3] = verts[index:index+n, :3]
                 spline.points.foreach_set('co', a.reshape(n*4))
-                
+
                 # ----- Radius and tilt
                 
                 if extended:
-                    spline.points.foreach_set('radius', verts[index:index+n, 3])
-                    spline.points.foreach_set('tilt',   verts[index:index+n, 4])
+                    rt = np.array(verts[index:index+n, 3])
+                    spline.points.foreach_set('radius', rt)
+                    
+                    rt = np.array(verts[index:index+n, 4])
+                    spline.points.foreach_set('tilt',   rt)
                     
                 # -----  Next segment
 

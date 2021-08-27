@@ -59,6 +59,6 @@ class WMaterials(WStruct):
     def copy_materials_from(self, other, append=False):
         mat_names = self.mat_names
         wmat = WMaterials(other)
-        for mat in wmat:
+        for mat in wmat.wrapped:
             if append or (mat.name not in mat_names):
                 self.wrapped.append(mat)

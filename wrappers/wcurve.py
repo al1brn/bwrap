@@ -99,7 +99,7 @@ class WCurve(WID):
         
     @property
     def verts_count(self):
-        return self.wsplines.verts_count
+        return self.wsplines.verts_count()
 
     @property
     def verts_dim(self):
@@ -133,6 +133,43 @@ class WCurve(WID):
         inds = np.zeros(len(self.wrapped.splines), int)
         inds[:] = value
         self.wrapped.splines.foreach_set("material_index", inds)            
+
+    # ===========================================================================
+    # Copy main properties
+    
+    def copy_from(self, other):
+
+        self.wrapped.bevel_depth            = other.bevel_depth 
+        self.wrapped.bevel_factor_end       = other.bevel_factor_end 
+        self.wrapped.bevel_factor_mapping_end = other.bevel_factor_mapping_end 
+        self.wrapped.bevel_factor_mapping_start = other.bevel_factor_mapping_start 
+        self.wrapped.bevel_factor_start     = other.bevel_factor_start 
+        self.wrapped.bevel_mode             = other.bevel_mode 
+        self.wrapped.bevel_object           = other.bevel_object 
+        self.wrapped.bevel_resolution       = other.bevel_resolution 
+        self.wrapped.dimensions             = other.dimensions 
+        self.wrapped.extrude                = other.extrude 
+        self.wrapped.fill_mode              = other.fill_mode 
+        self.wrapped.offset                 = other.offset 
+        self.wrapped.path_duration          = other.path_duration 
+        self.wrapped.render_resolution_u    = other.render_resolution_u 
+        self.wrapped.render_resolution_v    = other.render_resolution_v 
+        self.wrapped.resolution_u           = other.resolution_u 
+        self.wrapped.resolution_v           = other.resolution_v 
+        self.wrapped.taper_object           = other.taper_object 
+        self.wrapped.taper_radius_mode      = other.taper_radius_mode 
+        self.wrapped.twist_mode             = other.twist_mode 
+        self.wrapped.twist_smooth           = other.twist_smooth 
+        self.wrapped.use_auto_texspace      = other.use_auto_texspace 
+        self.wrapped.use_deform_bounds      = other.use_deform_bounds 
+        self.wrapped.use_fill_caps          = other.use_fill_caps 
+        self.wrapped.use_fill_deform        = other.use_fill_deform 
+        self.wrapped.use_map_taper          = other.use_map_taper 
+        self.wrapped.use_path               = other.use_path 
+        self.wrapped.use_path_clamp         = other.use_path_clamp 
+        self.wrapped.use_path_follow        = other.use_path_follow 
+        self.wrapped.use_radius             = other.use_radius 
+        self.wrapped.use_stretch            = other.use_stretch         
     
     
     # ===========================================================================

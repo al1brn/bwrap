@@ -697,7 +697,7 @@ class SlaveTransformations(Transformations):
         self.mother = transformations
         
     def __repr__(self):
-        return f"Slave transformations {self.shape} on: {self.mother}"
+        return f"<Slave transformations {self.shape}>"
     
     def apply(self):
         self.mother.lock_apply()
