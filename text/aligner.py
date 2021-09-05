@@ -122,7 +122,6 @@ def align(token_wa, width=None, align_x='LEFT', variable_widths=False, keep_with
         # ----- The width of the tokens interval
 
         line_width = comp_interval_width(start_index, last_index)
-        print(start_index, last_index, line_width)
     
         # ----- Difference with the target width
         
@@ -256,7 +255,7 @@ class lines_iter():
 
 def vertical_align(xyw, height=None, align_y='TOP', line_height=1.):
     
-    xyw[:, 1] * line_height
+    xyw[:, 1] *= line_height
     text_height = -np.min(xyw[:, 1]) + line_height
     
     if height is None:
@@ -1030,8 +1029,6 @@ class Token():
             ch1 = ch0 + len(word.text)
             
             xyw = align(chars_wa[ch0:ch1], width=w_xyw[2], align_x=align_x, variable_widths=False)
-            if word.text == "là!":
-                print(word.text, align_x, word.width, words_wa[word.word_index], w_xyw[2], "-->", xyw[:, 0])
             xyw[:, 0] += w_xyw[0]
             xyw[:, 1]  = w_xyw[1]
             

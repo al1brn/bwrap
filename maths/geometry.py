@@ -37,6 +37,26 @@ ftype = np.float
 zero = 1e-6
 
 # -----------------------------------------------------------------------------------------------------------------------------
+# Waiting for numpy version 1.20
+
+def broadcast_shapes(*args):
+    mx = 20
+    shape = [0] * mx
+    n = 0
+    
+    for sh in args:
+        for i, v in enumerate(reversed(sh)):
+            n = max(i+1, n)
+            if (shape[i] == 0) or (shape[i] == 1):
+                shape[i] = v
+            elif v != 1:
+                if shape[i] != v:
+                    raise RuntimeError(f"Impossible to broadcast shapes: {args}")
+                shape[i] = v
+                
+    return tuple(v for v in reversed(shape[:n]))
+
+# -----------------------------------------------------------------------------------------------------------------------------
 # At least as vector
 
 def atleast_vector(v):
@@ -195,6 +215,69 @@ def stra(array):
     isint = np.issubdtype(np.array(array).dtype, np.integer)
     return f"<array {np.shape(array)} of {'int' if isint else 'float'}>"
 
+# -----------------------------------------------------------------------------------------------------------------------------
+# A test utility
+
+def v_test(f, v, w=None, ref=None, no_ref=False):
+
+    if w is None:
+        sw = ""
+        r = f(v)
+    else:
+        sw = v_str(w, "w", "5.1f")
+        r = f(v, w)
+        
+    if ref is None:
+        okref = True
+        sok = ""
+    else:
+        idx = tuple([0 for i in range(len(np.shape(r)) - len(np.shape(ref)))])
+        n = np.linalg.norm(r[idx] - ref)
+        okref = n < 0.000001 
+        sok = "ok" if  okref else f"KO: {r} != {ref}"
+    
+    if np.shape(v) == (3,):
+        print('-'*30)
+        print(v_str(v, "v", "5.1f"), sw, '-->', r)
+        print()
+        ref = None if no_ref else r
+        for vshape in [(1, 3), (2, 3), (2, 2, 3)]:
+            vs = np.resize(v, vshape)
+            if w is not None:
+                for wshape in [(3,), (1, 3)]:
+                    v_test(f, vs, np.resize(w, wshape), ref=ref)
+                for i in range(len(vshape)-1):
+                    wshape = list(vshape)
+                    wshape[i] = 1
+                    v_test(f, vs, np.resize(w, wshape), ref=ref)
+            
+                v_test(f, vs, np.resize(w, vshape), ref=ref)
+            else:
+                v_test(f, vs, None, ref=ref)
+    else:
+        sr= f"{r}".split("\n")[0]
+        if ref is not None:
+            if okref:
+                sr = sok
+            else:
+                sr = sok + " " + sr
+                
+        sshapes = f"{np.shape(v)}"
+        if w is not None:
+            sshapes += f" {np.shape(w)}"
+                
+        if (not okref) or (not no_ref):
+            print(f"{sshapes:20s}: ", sr)
+        
+def test_f1(f, no_ref=False):
+    for v in [(0, 0, 1), (0, 1, 0), (1, 0, 0), (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]:
+        v_test(f, v, None, no_ref=no_ref)
+    
+def test_f2(f, no_ref=False):
+    for v in [(0, 0, 1), (0, 1, 0), (1, 0, 0), (1, 1, 0), (1, 0, 1), (0, 1, 1), (1, 1, 1)]:
+        for w in [(1, 0, 0), (0, 1, 1), (1, 1, 1)]:
+            print(v, w)
+            v_test(f, v, w, no_ref=no_ref)
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -219,33 +302,20 @@ def vect_norm(v):
         The normalized vectors.
     """
     
-    if len(np.shape(v)) == 0:
+    if np.shape(v) == ():
         return np.abs(v)
     
     else: 
         return np.linalg.norm(v, axis=-1)
     
 # -----------------------------------------------------------------------------------------------------------------------------
-# Mulitplication of a vector by a scalar
+# Multiplication of a vector by a scalar
 
 def scalar_mult(n, v):
-    
-    #return np.atleast_2d(v) * np.expand_dims(np.atleast_1d(n), axis=-1)
-    
-    def error():
-        return f"scalar_mult: \n\tn= {stra(n)}\n\tv= {stra(v)}"
-    
-    main_shape = broadcast_shape(np.shape(n), get_main_shape(np.shape(v), 3), error=error)
-    full_shape = get_full_shape(main_shape, 3)
-
-    res = np.empty(full_shape, np.float)
-    res[:] = v
-    
-    return (res * np.expand_dims(np.atleast_1d(n), axis=-1))
-
+    return v * np.expand_dims(n, axis=-1)
 
 # -----------------------------------------------------------------------------------------------------------------------------
-# Noramlizd vectors
+# Noramlized vectors
 
 def vect_normalize(v, null_replace=None):
     """Normalize and array of vector.
@@ -265,26 +335,28 @@ def vect_normalize(v, null_replace=None):
         The normalized vectors.
     """
     
-    main_shape = get_main_shape(np.shape(v), 3)
-    full_shape = get_full_shape(main_shape, 3)
+    vs = np.array(v, np.float)
+    nv = np.linalg.norm(vs, axis=-1)
     
-    count = 1 if main_shape == () else np.product(main_shape)
+    if len(np.shape(vs)) <= 1:
+        if nv < zero:
+            if null_replace is None:
+                return vs
+            else:
+                return null_replace
+        else:
+            return vs / nv
     
-    vs = np.resize(v, (count, 3))
-    ns = np.linalg.norm(vs, axis=-1)
+    inulls = nv < zero
+    nv[inulls] = 1
     
-    # Replace the null values by one
-    nulls = np.where(ns < zero)
-    ns[nulls] = 1.
-    
-    # Divide the vectors by the norms
-    vs = vs / np.expand_dims(ns, axis=len(vs.shape)-1)
-    
-    # Replace the null vectors by something if required
     if null_replace is not None:
-        vs[nulls] = np.array(null_replace)
+        if np.shape(null_replace) == (3,):
+            vs[inulls] = null_replace
+        else:
+            vs[inulls] = null_replace[inulls]
         
-    return vs.reshape(full_shape)
+    return vs / np.expand_dims(nv, axis=-1)
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Some randomization
@@ -359,8 +431,30 @@ def get_axis(axis):
     
     return vect_normalize(axis)
 
+# ----------------------x-------------------------------------------------------------------------------------------------------
+# Utility function which broadcat arguments
 
-# -----------------------------------------------------------------------------------------------------------------------------
+def broadcasted_args(a, a_item_shape, b, b_item_shape, a_type=np.float, b_type=np.float):
+    
+    a_shape = np.shape(a)[:len(a_item_shape)]
+    b_shape = np.shape(b)[:len(b_item_shape)]
+    shape = broadcast_shape(a_shape, b_shape)
+
+    if a_shape == shape:
+        ra = a
+    else:
+        ra = np.empty(shape + a_item_shape, a_type)
+        ra[:] = a
+        
+    if b_shape == shape:
+        rb = b
+    else:
+        rb = np.empty(shape + b_item_shape, b_type)
+        rb[:] = b
+
+    return ra, rb        
+
+# ----------------------x-------------------------------------------------------------------------------------------------------
 # Dot product between arrays of vectors
 
 def vect_dot(v, w):
@@ -390,24 +484,23 @@ def vect_dot(v, w):
         The dot products.
     """
     
+    # ----- We have one scalar
+    
+    if (np.shape(v) == ()) or (np.shape(w) == ()):
+        return np.array(w)*np.array(v)
+    
     # ----- One of the argument is a single vector
     
-    if len(np.shape(v)) <= 1 or len(np.shape(w)) <= 1:
-        if len(np.shape(v)) <= 1:
-            return np.dot(w, v)
-        else:
-            return np.dot(v, w)
-        
-    # ----- Otherwise, shapes must match
+    elif np.shape(v) == (3,):
+        return np.dot(w, v)
+
+    elif np.shape(w) == (3,):
+        return np.dot(v, w)
     
-    if np.shape(v) != np.shape(w):
-        raise WError(f"The array of vectors don't have the same shape: {np.shape(v)} and {np.shape(w)}",
-            Function = "vect_dot",
-            v = v,
-            w = w)
-        
-    # ----- Ok
-    return np.einsum('...i,...i', v, w)
+    vs, ws = broadcasted_args(v, (3,), w, (3,))
+    
+    return np.einsum('...i,...i', vs, ws)
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Cross product between arrays of vectors
@@ -425,19 +518,52 @@ def vect_cross(v, w):
     vector or array of vectors
     """
     
-    # ----- One of the argument is a single vector
-    
-    if len(np.shape(v)) == 1 or len(np.shape(w)) == 1:
-        return np.cross(v, w)
-    
-    # ----- Otherwise, shapes must match
-    if np.shape(v) != np.shape(w):
-        raise WError(f"The array of vectors don't have the same shape: {np.shape(v)} and {np.shape(w)}",
-            Function = "vect_cross",
-            v = v,
-            w = w)
-        
     return np.cross(v, w)
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# We sometimes need a perpendiculaur vector
+
+def perp_vector(v):
+    return vect_normalize(vect_cross(v, (0, 0, 1)), null_replace=(0, 1, 0))
+
+# -----------------------------------------------------------------------------------------------------------------------------
+# Axis perpendicular to two vectors and angle between them
+
+def vect_axis_angle(v, w):
+    """Compute the axis perpendicular to a couple of vectors and the angle between them.
+    
+    These values can then be use to compute the quaternion rotating one vector to the other.
+
+    Parameters
+    ----------
+    v: vector or array of vectors
+    w: vector or array of vectors
+
+    Returns
+    -------
+    vector or array of vectors
+        The axis perpendiculat to the two vectors
+    float or array of float
+        The angle between the vectors
+    """
+    
+    nv    = vect_normalize(v)
+    nw    = vect_normalize(w)
+    angle = np.arccos(np.clip(vect_dot(nv, nw), -1, 1))
+    axis  = np.cross(nv, nw)
+    nrms  = np.linalg.norm(axis, axis=-1)
+    
+    if np.shape(nrms) == ():
+        if nrms < zero:
+            return perp_vector(v), 0.
+        else:
+            return axis / nrms, angle
+    else:
+        inulls = nrms < zero
+        axis[inulls] = perp_vector(np.resize(v, np.shape(axis))[inulls])
+        nrms[inulls] = 1
+        
+        return axis / np.expand_dims(nrms, axis=-1), angle
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Angles between vectors
@@ -462,7 +588,7 @@ def vect_angle(v, w):
 # -----------------------------------------------------------------------------------------------------------------------------
 # Plane (ie vector perppendicular to the two vectors)
 
-def vect_perpendicular(v, w, null_replace=(0, 0, 1)):
+def vect_perpendicular(v, w, null_replace=None):
     """Compute a normalized vector perpendicular to a couple of vectors.
 
     Parameters
@@ -480,7 +606,7 @@ def vect_perpendicular(v, w, null_replace=(0, 0, 1)):
         The normalized vectors perpendicular to the given vectors.
     """
     
-    return vect_normalize(vect_cross(v, w), null_replace=null_replace)
+    return vect_normalize(vect_cross(v, w), null_replace=perp_vector(v) if null_replace is None else null_replace)
 
 
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -629,7 +755,7 @@ def m_to_euler(m, order='XYZ'):
         # sz                 | cz.cx              | -cz.sx
         # -sy.cz             | sy.sz.cx + cy.sx   | -sy.sz.sx + cy.cx
 
-        xyz = [1, 2, 0]
+        xyz = [2, 0, 1]
 
         ls0, cs0, sgn = (1, 0, +1)
         ls1, cs1, lc1, cc1 = (1, 2, 1, 1)
@@ -643,6 +769,8 @@ def m_to_euler(m, order='XYZ'):
         # sz.cy + cz.sx.sy   | cz.cx              | sz.sy - cz.sx.cy
         # -cx.sy             | sx                 | cx.cy
 
+        xyz = [1, 0, 2]
+        xyz = [2, 0, 1]
         xyz = [0, 1, 2]
 
         ls0, cs0, sgn = (2, 1, +1)
@@ -658,6 +786,7 @@ def m_to_euler(m, order='XYZ'):
         # sx.sz.cy - cx.sy   | sx.cz              | sx.sz.sy + cx.cy
 
         xyz = [2, 1, 0]
+        
 
         ls0, cs0, sgn = (0, 1, -1)
         ls1, cs1, lc1, cc1 = (0, 2, 0, 0)
@@ -685,7 +814,7 @@ def m_to_euler(m, order='XYZ'):
         # cx.sz + sx.sy.cz   | cx.cz - sx.sy.sz   | -sx.cy
         # sx.sz - cx.sy.cz   | sx.cz + cx.sy.sz   | cx.cy
 
-        xyz = [2, 0, 1]
+        xyz = [1, 2, 0]
 
         ls0, cs0, sgn = (0, 2, +1)
         ls1, cs1, lc1, cc1 = (0, 1, 0, 0)
@@ -698,7 +827,6 @@ def m_to_euler(m, order='XYZ'):
             Function = "m_to_euler",
             order = order,
             m = m)
-        
         
     # ---------------------------------------------------------------------------
     # Compute the euler angles
@@ -738,19 +866,19 @@ def m_to_euler(m, order='XYZ'):
     # Let's change where we have two 180 angles
     
     idx = np.where(np.logical_and(abs(angles[:, 0]-np.pi) < zero, abs(angles[:, 1]-np.pi) < zero))[0]
-    angles[idx, 0] = 0
-    angles[idx, 1] = 0
-    angles[idx, 2] = np.pi - angles[idx, 2]
+    angles[idx, xyz[0]] = 0
+    angles[idx, xyz[1]] = 0
+    angles[idx, xyz[2]] = np.pi - angles[idx, 2]
     
     idx = np.where(np.logical_and(abs(angles[:, 0]-np.pi) < zero, abs(angles[:, 2]-np.pi) < zero))[0]
-    angles[idx, 0] = 0
-    angles[idx, 2] = 0
-    angles[idx, 1] = np.pi - angles[idx, 1]
+    angles[idx, xyz[0]] = 0
+    angles[idx, xyz[2]] = 0
+    angles[idx, xyz[1]] = np.pi - angles[idx, 1]
     
     idx = np.where(np.logical_and(abs(angles[:, 1]-np.pi) < zero, abs(angles[:, 2]-np.pi) < zero))[0]
-    angles[idx, 1] = 0
-    angles[idx, 2] = 0
-    angles[idx, 0] = np.pi - angles[idx, 0]
+    angles[idx, xyz[1]] = 0
+    angles[idx, xyz[2]] = 0
+    angles[idx, xyz[0]] = np.pi - angles[idx, 0]
     
     # ---------------------------------------------------------------------------
     # Returns the result
@@ -817,14 +945,8 @@ def m_to_quat(m):
     q[..., 1] = (m[..., 1, 2] - m[..., 2, 1]) / q4
     q[..., 2] = (m[..., 2, 0] - m[..., 0, 2]) / q4
     q[..., 3] = (m[..., 0, 1] - m[..., 1, 0]) / q4
-
-    
-    
-    
-    
     
     q = np.zeros(get_full_shape(get_main_shape(np.shape(m), (3, 3)), 4))
-    
     
     q[..., 0] = np.sqrt(1 + m[..., 0, 0] + m[..., 1, 1] + m[..., 2, 2]) / 2
 
@@ -1307,6 +1429,7 @@ def e_rotate(e, v, order='XYZ'):
     """
     
     return m_rotate(e_to_matrix(e, order), v)
+
 
 # -----------------------------------------------------------------------------------------------------------------------------
 # Convert euler to a quaternion
@@ -1894,31 +2017,7 @@ def tmat_transform4(tmat, v4, one_one=False):
                 tmat_shape = np.shape(tmat),
                 v4_shape = np.shape(v4),
                 one_one = one_one)
-                #tmat = tmat,
-                #v4 = v4)
-    
-    # OLD
-        
-    
-    
-    
-    
-    m_shape = get_main_shape(tmat.shape, (4, 4))
-    v_shape = get_main_shape(v4.shape, (1, 4))   # CAUTION: (1, 4) not 4
 
-    #m_shape = sub_shape(tmat.shape, 2)
-    #v_shape = sub_shape(v4.shape, 2)
-    
-    if m_shape == v_shape:
-        return np.matmul(v4, tmat)
-    
-    raise WError(f"shapes are not compatible with multiplication Here {np.shape(tmat)} and {np.shape(v4)}.",
-            Function = "tmat_transform4",
-            tmat_shape = np.shape(tmat),
-            v4_shape = np.shape(v4),
-            one_one = one_one,
-            #tmat = tmat,
-            v4 = v4)
     
 def tmat_transform43(tmat, v4, one_one=False):
     return np.delete(tmat_transform4(tmat, v4, one_one=one_one), 3, axis=-1)

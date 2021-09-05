@@ -8,8 +8,6 @@ Created on Thu Aug 26 18:28:15 2021
 
 import numpy as np
 
-#from ..wrappers.wmeshobject import WMeshObject
-#from ..wrappers.wcurveobject import WCurveObject
 from ..wrappers.wrap_function import wrap
 
 # =============================================================================================================================
@@ -32,7 +30,7 @@ class Stacker():
 
         self.mat_offset   = 0        
         self.mat_count_   = 0
-        self.mat_indices_ = 0
+        self.mat_indices_ = []
         
         # Mesh
         
@@ -67,7 +65,7 @@ class Stacker():
         
     @property
     def faces(self):
-        return None
+        return self.faces_
     
     @faces.setter
     def faces(self, value):
@@ -123,6 +121,7 @@ class Stacker():
     
     def get_uvs(self, name):
         uvs = self.uvs_.get(name)
+        #print("stacker get_uvs", name, len(uvs), [len(uv) for uv in uvs])
         if uvs is None:
             uvs = self.empty_uvs
             self.uvs_[name] = uvs
@@ -137,7 +136,13 @@ class Stacker():
     
     def get_shifted_faces(self, offset):
         return [[offset + f for f in face] for face in self.faces]
+
+    # ----------------------------------------------------------------------------------------------------
+    # Specific to curves
     
+    def setup_spline(self, spline_index, target_spline):
+        pass
+
 
 # =============================================================================================================================
 # Object stacker
@@ -146,7 +151,6 @@ class Stacker():
 class ObjectStacker(Stacker):
     
     def __init__(self, name):
-        
         self.wobject = wrap(name)
         super().__init__(self.wobject.verts_count)
         
@@ -191,6 +195,65 @@ class ObjectStacker(Stacker):
     
     def get_uvs(self, name):
         return self.wobject.get_uvs(name)
+    
+    def setup_spline(self, spline_index, target_spline):
+        target_spline.copy_from(self.wobject.data.splines[spline_index])
+    
+    
+# =============================================================================================================================
+# A char stacker as a mesh
+
+class MeshCharStacker(Stacker):
+    
+    def __init__(self, char, vfu):
+        
+        super().__init__(len(vfu[0]))
+        
+        self.char   = char
+        
+        self.verts_ = vfu[0]
+        self.nverts = len(self.verts)
+        
+        self.faces_ = vfu[1]
+        self.mat_indices_ = np.zeros(len(self.faces_), int)
+        
+        self.uvs_ = {"uv_chars": vfu[2]}
+        self.uvs_size_ = len(vfu[2])
+        
+    @property
+    def name(self):
+        return self.char
+
+# =============================================================================================================================
+# A char stacker as a curve
+
+class CurveCharStacker(Stacker):
+    
+    def __init__(self, char, beziers):
+        
+        verts = np.zeros((0, 3), np.float)
+        profile = np.zeros((len(beziers), 3), int)
+        for i, bz in enumerate(beziers):
+            verts = np.append(verts, bz[:, 0], axis=0)
+            verts = np.append(verts, bz[:, 1], axis=0)
+            verts = np.append(verts, bz[:, 2], axis=0)
+            profile[i] = (3, len(bz), 0)
+            
+        super().__init__(len(verts))
+        
+        self.char     = char
+        self.verts_   = verts
+        self.profile_ = profile
+        
+        self.mat_indices_ = np.zeros(len(beziers), int)
+        
+    @property
+    def name(self):
+        return self.char
+    
+    def setup_spline(self, spline_index, target_spline):
+        target_spline.use_cyclic_u = True
+        target_spline.fill_mode    = 'FULL'
 
 
 # =============================================================================================================================
@@ -206,6 +269,15 @@ class Stack():
         
         self.mat_count   = 0
         self.mat_indices = np.zeros(0, int)
+        
+    def reset(self):
+        
+        del self.stackers
+        self.stackers  = []
+        
+        self.mat_count   = 0
+        self.mat_indices = np.zeros(0, int)
+        
         
     def __repr__(self):
         
@@ -271,6 +343,7 @@ class Stack():
     
     @indices.setter
     def indices(self, indices):
+        indices = np.array(indices)
         rg = np.arange(len(indices))
         for i, stacker in enumerate(self):
             stacker.inst_indices = rg[indices == i]
@@ -283,6 +356,8 @@ class Stack():
 
         if indices is None:        
             indices = self.indices
+            
+        indices = np.reshape(indices, np.size(indices))
             
         n = len(indices)
         nrg = np.arange(n)
@@ -490,7 +565,7 @@ class Stack():
         
         for i_stacker, (index, size) in zip(indices, slices):
             stacker = self[i_stacker]
-            vs = stacker.wobject.ext_verts
+            vs = stacker.verts
             if vs.shape[-1] == 3:
                 verts[index:index+size, :3] = vs
             else:
@@ -506,9 +581,16 @@ class Stack():
         # ----- Splines attributes
         
         for i_stacker, (index, size) in zip(indices, prof_slices):
-            sps = self[i_stacker].wobject.data.splines
+            stacker = self[i_stacker]
             for i_spl in range(size):
-                wsplines[index + i_spl].copy_from(sps[i_spl])
+                stacker.setup_spline(spline_index = i_spl, target_spline=wsplines[index + i_spl])
+                
+            continue
+            
+            if hasattr(self[i_stacker], 'wobject'):
+                sps = self[i_stacker].wobject.data.splines
+                for i_spl in range(size):
+                    wsplines[index + i_spl].copy_from(sps[i_spl])
                 
         # ----- Material indices
         # Since spline.copy_from copy the material_index attribute
@@ -518,7 +600,8 @@ class Stack():
         
         # ----- Curve parameter read from the first object
         
-        wtarget.wdata.copy_from(self[0].wobject.wdata)
+        if hasattr(self[0], 'wobject'):
+            wtarget.wdata.copy_from(self[0].wobject.wdata)
         
     # ====================================================================================================
     # Get the crowd base vertices

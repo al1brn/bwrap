@@ -300,7 +300,7 @@ class InterpolationPolynom():
     
     Each interval is interpolated by a polynom of degree 3 to 
     produce a continuous curve between intervals.
-    First and last interval are only of degree 2?
+    First and last interval are only of degree 2.
     """
     
     def __init__(self, x, y, periodic=False):

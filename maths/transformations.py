@@ -199,6 +199,11 @@ class Transformations():
     def size(self):
         return np.product(self.shape)
     
+    def resize(self, shape):
+        if type(shape) is int:
+            shape = (shape,)
+        self.tmat_ = np.resize(self.tmat_, shape + (4, 4))
+    
     # ---------------------------------------------------------------------------
     # Number of dimensions       
     

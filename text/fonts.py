@@ -157,35 +157,10 @@ class CMap4(Struct):
                     idRangeOffset = self.idRangeOffset[i]
 
                     if idRangeOffset == 0:
-                        
                         return self.idDelta[i] + code
-                    
                     else:
-                        if False:
-                            print("segments", len(self.endCode))
-                            for iseg in range(len(self.startCode)):
-                                for ic in range(self.startCode[iseg], self.endCode[iseg]+1):
-                                    ro = self.idRangeOffset[iseg]
-                                    s = f"{ic:4d}: seg: {iseg:3d}, idRangeOffset {ro:4d}"
-                                    if ro == 0:
-                                        iglyf = self.idDelta[iseg] + ic
-                                    else:
-                                        ofs = ro // 2 + (ic - self.startCode[iseg])
-                                        s += f", diff: {(ic - self.startCode[iseg])}, ofs: {ofs}"
-                                        iglyf = self.idRangeOffset[iseg + ofs]
-                                    s += f" --> {iglyf}"
-                                    print(s)
-    
-                            raise RuntimeError("idRangeOffset not yet supported")
-                        
                         ofs = idRangeOffset//2 + (code - self.startCode[i])
-                        #print("search for", code, len(self.endCode))
-                        #print(self.startCode[:20])
-                        #print(self.endCode[:20])
-                        #print("idRangeOffset", idRangeOffset, (code - self.startCode[i]), ofs, "segment", i, "-->", self.idRangeOffset[i + ofs])
                         return self.idRangeOffset[i + ofs]
-                    
-                        raise RuntimeError("idRangeOffset not yet supported")
                 else:
                     break
         
@@ -747,7 +722,7 @@ class Glyphe():
     # Rasterization
     # Points and faces
     
-    def raster(self, delta=10):
+    def raster(self, scale=1., delta=10, lowest_geometry=True, return_uvmap=False):
         
         vf = self.rasters.get(delta)
         if vf is not None:
@@ -764,8 +739,6 @@ class Glyphe():
             # Short for len(contour)
             n = len(contour)
 
-            #print('-'*20, "\nNew contour of length", n)
-            
             # ----- Compute intermediary points at index based on the precision
 
             def comp_points(index, prec):
@@ -788,6 +761,12 @@ class Glyphe():
                 v0 = contour[(index+1)%n, 0] - contour[index, 0]
                 v1 = contour[index, 1] - contour[index, 0]
                 prec = np.sqrt(abs(v0[0]*v1[1] - v0[1]*v1[0])) / delta
+                
+                # Not point on straigth lines
+                # But we can need more geometry, to deform the char for instance
+                
+                if not lowest_geometry:
+                    prec = max(prec, np.linalg.norm(contour[(index+1)%n, 0] - contour[index, 0])/delta)
                 
                 # Compute the points
                 # No need of the last point which will be the first of the
@@ -815,13 +794,33 @@ class Glyphe():
         
         verts = np.insert(verts, 2, 0, axis=1)
         faces = closed_faces(verts, closed_curves)
-
+        
         # ---------------------------------------------------------------------------
         # In cache
+        # NOTE Comment not to use a cache
         
-        self.rasters[delta] = [verts, faces]
+        #self.rasters[delta] = [verts, faces]
         
-        return verts, faces
+        if not return_uvmap:
+            return verts*scale, faces
+        
+        # ---------------------------------------------------------------------------
+        # Compute uv map
+        
+        ratio  = 1 / 2048
+        center = (1024 - self.width/2, 256)
+
+        nuvs = 0
+        for face in faces:
+            nuvs += len(face)
+        uvs = np.zeros((nuvs, 2), np.float)
+
+        index = 0        
+        for face in faces:
+            uvs[index:index+len(face)] = (verts[face, :2] + center)*ratio 
+            index += len(face)
+        
+        return verts*scale, faces, uvs
     
     # ===========================================================================
     # DEBUG on matplotlib
@@ -1509,6 +1508,12 @@ class Ttf(Struct):
         if not self.cmap.loaded:
             self.loaded = False
             self.status = self.cmap.status
+            
+        # ---------------------------------------------------------------------------
+        # ----- the default rasterization parameters
+        
+        self.raster_delta = 10
+        self.raster_low   = True
         
         # ---------------------------------------------------------------------------
         # ----- Load the default char
@@ -1649,10 +1654,9 @@ class Ttf(Struct):
         self.ratio = self.scale_ * self.base_ratio
         
         self.space_width = self.get_glyphe(32).xwidth * self.ratio
-        h = self.hhea.lineGap
-        if h == 0:
-            h = self.get_glyphe(ord("M")).ascent *1.5
-        self.line_height = h * self.ratio
+        h0 = self.hhea.lineGap
+        h1 = self.get_glyphe(ord("M")).ascent * 1.5
+        self.line_height = max(h0, h1) * self.ratio
         
     def char_raw_metrics(self, c):
         glyf_index = self.code_to_glyf_index(ord(c))
@@ -1673,21 +1677,25 @@ class Ttf(Struct):
     def char_lsb(self, c):
         _, _, _, lsb = self.char_raw_metrics(c)
         return lsb * self.ratio
+    
+    """
+    def char_wa(self, c):
+        w = self.char_width(c)
+        return w, self.char_xwidth(c) - w
+    """
 
     
     # ===========================================================================
     # Access to the curves
     
-    def mesh_char(self, c, delta=10, location=(0, 0, 0)):
-        vf = self.get_glyphe(ord(c)).raster(delta)
-        if vf is None:
-            return None
-        
-        return location + vf[0] * self.ratio, vf[1]
+    def mesh_char(self, c, return_uvmap=False):
+        return self.get_glyphe(ord(c)).raster(
+            scale = self.ratio, delta=self.raster_delta,
+            lowest_geometry=self.raster_low, return_uvmap=return_uvmap)
     
-    def curve_char(self, c, location=(0, 0, 0)):
+    def curve_char(self, c):
         beziers = self.get_glyphe(ord(c)).beziers
-        return [location + bz*self.ratio for bz in beziers]
+        return [bz*self.ratio for bz in beziers]
     
     # ===========================================================================
     # Several chars with location

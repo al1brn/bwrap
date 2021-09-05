@@ -14,6 +14,7 @@ from .wid import WID
 from ..core.plural import getattrs, setattrs
 from .wmaterials import WMaterials
 from .wshapekeys import WShapeKeys
+from ..maths import geometry as geo
 
 from ..core.commons import WError
 
@@ -25,12 +26,10 @@ from ..core.commons import WError
 class WMesh(WID):
     """Wrapper of a Mesh structure.
     """
-
-    def __init__DEPR(self, wrapped, evaluated=False):
-        if evaluated:
-            super().__init__(wrapped, name=wrapped.name)
-        else:
-            super().__init__(name=wrapped.name, coll=bpy.data.meshes)
+    
+    def __init__(self, wrapped, is_evaluated=None):
+        super().__init__(wrapped, is_evaluated)
+        self.shape_ = None
             
     @property
     def wrapped(self):
@@ -68,8 +67,34 @@ class WMesh(WID):
         """
         
         return len(self.wrapped.vertices)
-
-    # Vertices (uses verts not to override vertices attributes)
+    
+    @property
+    def shape(self):
+        if self.shape_ is None:
+            return (self.verts_count,)
+        else:
+            return self.shape_
+        
+    def reshape(self, shape):
+        if np.product(shape) != self.verts_count:
+            raise WError(f"Impossible to reshape a mesh of {self.verts_count} vertices to shape {shape}.",
+                         Class="WMesh", Method="reshape", shape=shape, verts_count=self.verts_count)
+            
+        self.shape_ = shape
+        
+    @property
+    def verts_shape(self):
+        if self.shape_ is None:
+            return (self.verts_count, 3)
+        else:
+            return self.shape_ + (3,)
+        
+    @property
+    def linear_verts(self):
+        verts = self.wrapped.vertices
+        a    = np.empty(len(verts)*3, np.float)
+        verts.foreach_get("co", a)
+        return np.reshape(a, (self.verts_count, 3))
 
     @property
     def verts(self):
@@ -84,16 +109,12 @@ class WMesh(WID):
         verts = self.wrapped.vertices
         a    = np.empty(len(verts)*3, np.float)
         verts.foreach_get("co", a)
-        return np.reshape(a, (len(verts), 3))
+        return np.reshape(a, self.verts_shape)
 
     @verts.setter
     def verts(self, vectors):
-        verts = np.empty((self.verts_count, 3), np.float)
-        count = np.size(vectors)
-        if count >= 3:
-            verts[:] = np.reshape(vectors, (count//3, 3))
-        else:
-            verts[:] = vectors
+        verts = np.empty(self.verts_shape, np.float)
+        verts[:] = vectors
         
         self.wrapped.vertices.foreach_set("co", verts.reshape(self.verts_count*3))
         self.mark_update()
@@ -109,12 +130,12 @@ class WMesh(WID):
         """x locations of the vertices
         """
         
-        return self.verts[:, 0]
+        return self.verts[..., 0]
 
     @xs.setter
     def xs(self, values):
         locs = self.verts
-        locs[:, 0] = values
+        locs[..., 0] = values
         self.verts = locs
 
     @property
@@ -122,12 +143,12 @@ class WMesh(WID):
         """y locations of the vertices
         """
         
-        return self.verts[:, 1]
+        return self.verts[..., 1]
 
     @ys.setter
     def ys(self, values):
         locs = self.verts
-        locs[:, 1] = values
+        locs[..., 1] = values
         self.verts = locs
 
     @property
@@ -135,12 +156,12 @@ class WMesh(WID):
         """z locations of the vertices
         """
         
-        return self.verts[:, 2]
+        return self.verts[..., 2]
 
     @zs.setter
     def zs(self, values):
         locs = self.verts
-        locs[:, 2] = values
+        locs[..., 2] = values
         self.verts = locs
 
     # vertices attributes
@@ -150,11 +171,11 @@ class WMesh(WID):
         """bevel weights of the vertices
         """
         
-        return getattrs(self.wrapped.vertices, "bevel_weight", 1, np.float)
+        return getattrs(self.wrapped.vertices, "bevel_weight", 1, np.float).reshape(self.shape)
 
     @bevel_weights.setter
     def bevel_weights(self, values):
-        setattrs(self.wrapped.vertices, "bevel_weight", values, 1)
+        setattrs(self.wrapped.vertices, "bevel_weight", np.resize(values, self.verts_count), 1)
 
     # edges as indices
 
@@ -186,7 +207,7 @@ class WMesh(WID):
 
         """
         
-        return self.verts[np.array(self.edge_indices)]
+        return self.linear_verts[np.array(self.edge_indices)]
     
     # polygons as indices
     
@@ -222,7 +243,7 @@ class WMesh(WID):
         """
         
         polys = self.poly_indices
-        verts = self.verts
+        verts = self.linear_verts
         return [ [list(verts[i]) for i in poly] for poly in polys]
     
     # ---------------------------------------------------------------------------
@@ -351,7 +372,9 @@ class WMesh(WID):
         mesh.clear_geometry()
 
         # Set
-        mesh.from_pydata(verts, edges, polygons)
+        shape = np.shape(np.atleast_2d(verts))[:-1]
+        mesh.from_pydata(np.reshape(verts, (np.product(shape),) + (3,)), edges, polygons)
+        self.reshape(shape)
 
         # Update
         mesh.update()
@@ -403,7 +426,7 @@ class WMesh(WID):
                     new_poly.append(new_inds[vi])
                 new_polys.append(new_poly)
 
-        return self.verts[new_verts], new_polys
+        return self.linear_verts[new_verts], new_polys
 
     # ---------------------------------------------------------------------------
     # Copy
@@ -439,12 +462,12 @@ class WMesh(WID):
         
         #wmesh = wrap(mesh)
 
-        verts = wmesh.verts
+        verts = wmesh.linear_verts
         edges = wmesh.edge_indices
         polys = wmesh.poly_indices
 
         if not replace:
-            x_verts = self.verts
+            x_verts = self.linear_verts
             x_edges = self.edge_indices
             x_polys = self.poly_indices
 
@@ -459,6 +482,83 @@ class WMesh(WID):
             polys = x_polys
 
         self.new_geometry(verts, polys, edges)
+        
+    # ---------------------------------------------------------------------------
+    # Surface geometry
+    
+    def init_surface(self, size=(2, 2), count=(10, 10), topology='XY'):
+        
+        loop_x = topology == 'TORUS'
+        loop_y = topology in ['CYLINDER', 'TORUS']
+        
+        nx = count[0]
+        ny = count[1]
+        verts = np.zeros((nx, ny, 3), np.float)
+        
+        verts[..., 1], verts[..., 0] = np.meshgrid(
+            np.linspace(-size[1]/2, size[1]/2, ny),
+            np.linspace(-size[0]/2, size[0]/2, nx))
+        
+        dx = 0 if loop_x else 1
+        dy = 0 if loop_y else 1
+        
+        faces = [(i*ny + j, i*ny + (j+1)%ny, ((i+1)%nx)*ny + (j+1)%ny, ((i+1)%nx)*ny + j) for i in range(nx-dx) for j in range(ny-dy)]
+        
+        self.new_geometry(verts.reshape(nx, ny, 3), faces)
+        
+        # ----- uv mapping
+        
+        nuvx = nx - dx
+        nuvy = ny - dy
+        
+        uvs = np.zeros((nuvx, nuvy, 4, 2), np.float)
+        x, y = np.meshgrid(np.linspace(0, 1, nuvy+1), np.linspace(0, 1, nuvx+1))
+        
+        uvs[..., 0, 0] = x[:-1, :-1]
+        uvs[..., 3, 0] = x[:-1, :-1]
+        uvs[..., 1, 0] = x[1:, 1:]
+        uvs[..., 2, 0] = x[1:, 1:]
+        
+        uvs[..., 0, 1] = y[:-1, :-1]
+        uvs[..., 1, 1] = y[:-1, :-1]
+        uvs[..., 2, 1] = y[1:, 1:]
+        uvs[..., 3, 1] = y[1:, 1:]
+        
+        self.create_uvmap("uvmap")
+        self.set_uvs("uvmap", uvs.reshape(nuvx*nuvy*4, 2))
+        
+        # ----- Initial shape
+        
+        if topology == 'TORUS':
+            agy = -np.linspace(0, 2*np.pi, ny, endpoint=False)
+            
+            verts[0, :, 0] = size[0] + size[1]*np.cos(agy)
+            verts[0, :, 1] = 0
+            verts[0, :, 2] = size[1]*np.sin(agy)
+            
+            tmat = geo.tmatrix(matrix=geo.q_to_matrix(geo.quaternion('z', np.linspace(0, 2*np.pi, nx, endpoint=False))))
+            verts = geo.tmat_transform(tmat, verts[0])
+            
+            self.verts = verts
+            
+        elif topology == 'CYLINDER':
+            
+            agy = np.linspace(0, 2*np.pi, ny, endpoint=False)
+            
+            verts[..., 0] = size[1]*np.cos(agy)
+            verts[..., 1] = size[1]*np.sin(agy)
+            verts[..., 2] = np.linspace(-size[0]/2, size[0]/2, nx).reshape(1, nx).transpose()
+            
+            self.verts = verts
+            
+    def init_plane(self, size=(2, 2), count=(10, 10)):
+        return self.init_surface(size, count, topology='XY')
+    
+    def init_cylinder(self, radius=1, height=2, count=(10, 10)):
+        return self.init_surface((height, radius), count, topology='CYLINDER')
+    
+    def init_torus(self, major_radius=1, minor_radius=0.1, count=(10, 10)):
+        return self.init_surface((major_radius, minor_radius), count, topology='TORUS')
 
     # ---------------------------------------------------------------------------
     # Materials indices
@@ -488,7 +588,7 @@ class WMesh(WID):
     def python_source_code(self):
         
         def gen():
-            verts = self.verts
+            verts = self.linear_verts
 
             s      = "verts = ["
             count  = 3
@@ -658,11 +758,12 @@ class WMesh(WID):
         return ["get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
              "detach_geometry", "copy_mesh", "python_source_code",
-             "get_floats", "set_floats", "get_ints", "set_ints"]
+             "get_floats", "set_floats", "get_ints", "set_ints",
+             "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape"]
 
     @classmethod
     def exposed_properties(cls):
-        return {"verts_count": 'RO', "verts_dim": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
+        return {"verts_count": 'RO', "verts_dim": 'RO', "shape": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
              "bevel_weights": 'RW',"edge_indices": 'RO', "edge_indices": 'RO', "poly_count": 'RO',
              "poly_indices": 'RO', "poly_vertices": 'RO', "poly_centers": 'RO', "normals": 'RO', "wmaterials" : 'RO',
              "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO', "wshape_keys": 'RO', "all_uvs": 'RW', "uvs_size": 'RO'}

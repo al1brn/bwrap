@@ -11,6 +11,8 @@ import bpy
 from .wid import WID
 from .wmaterials import WMaterials
 
+from pathlib import Path
+
 # ---------------------------------------------------------------------------
 # Text wrapper
 # wrapped : TextCurve
@@ -63,6 +65,25 @@ class WText(WID, WMaterials):
         self.wrapped.body = value
         
     # ===========================================================================
+    # File path to font
+    
+    @property
+    def font_directory(self):
+        return bpy.context.preferences.filepaths.font_directory
+    
+    @property
+    def font_file_path(self):
+        fpath = self.font.filepath
+        if fpath == "":
+            fpath = self.font_directory() + "arial.ttf"
+            
+        if Path(fpath).exists():
+            return fpath
+        else:
+            return None
+        
+        
+    # ===========================================================================
     # Properties and methods to expose to WMeshObject
     
     @classmethod
@@ -71,7 +92,7 @@ class WText(WID, WMaterials):
 
     @classmethod
     def exposed_properties(cls):
-        return {"text": 'RW', "materials": 'RO'}
+        return {"text": 'RW', "materials": 'RO', "font_directory": 'RO', "font_file_path" : 'RO'}
 
         
     # ===========================================================================

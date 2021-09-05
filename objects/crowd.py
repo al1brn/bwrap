@@ -86,8 +86,86 @@ class Crowd(Transformations):
         produces an array of shape (100 x 70 x ?, 3)
     """
     
-    def __init__(self, model, shape=(), name=None):
-        """Initialize the crowd with by creating count duplicates of the model.
+    def __init__(self, crowd_type='Mesh', shape=(), name="Crowd", model=None):
+        """Initialize an empty crowd of a given type.
+        
+        Parameters
+        ----------
+        crowd_type : str in 'Mesh', 'Curve'
+            Type of crowd
+        shape : shape, optional
+            Shape of the crowd. The default is 10.
+        name : str
+            Name of the crowd object. If not provided (default), 'Crowd of models' is used.
+
+        Returns
+        -------
+        None.
+        """
+        
+        # ---------------------------------------------------------------------------
+        # ----- Super initialization
+        
+        super().__init__(count=shape)
+        
+        # ---------------------------------------------------------------------------
+        # ----- No stack
+        
+        self.stack = None
+        
+        # ---------------------------------------------------------------------------
+        # ----- Create the target object
+            
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            wobj = wrap(name)
+            if wobj.object_type != crowd_type:
+                obj.select_set(True)
+                bpy.ops.object.delete() 
+                obj = None
+                
+        if obj is None:
+            if crowd_type == 'Mesh':
+                wobj = wrap(name, create="CUBE")
+            elif crowd_type == 'Curve':
+                wobj = wrap(name, create="BEZIER")
+        
+        self.wobject = wobj
+        
+        # ---------------------------------------------------------------------------
+        # ----- Model
+        
+        self.wmodel = wrap(model)
+        
+        # ----- Other initialization
+        
+        self.animation = False
+        self.group_transfos = {}
+        
+    # ====================================================================================================
+    # Content
+    
+    def __repr__(self):
+            
+        s  = f"<Crowd {self.shape}, {self.size} duplicates, type={self.stack.object_type}: '{self.wobject.name}'\n"
+        s += f"   stack                  : {self.stack}\n"
+        s += f"   total vertices         : {self.nverts}\n"
+        s += f"   animation              : {self.animation}"
+        if self.animation:
+            s += f", {len(self.models)} steps\n"
+        else:
+            s += "\n"
+        s += f"Group transformations: {len(self.group_transfos)}\n"
+        for name, gt in self.group_transfos.items():
+            s += f"{name}: {gt}\n"
+        return s + ">"
+        
+    # ====================================================================================================
+    # Initialize from an object
+    
+    @classmethod
+    def FromObject(cls, model, shape=(), name=None):
+        """Initialize the crowd with by creating shape duplicates of the model.
         
         These three initializations are valid:
             - Crowd("Model", 1000)
@@ -120,105 +198,50 @@ class Crowd(Transformations):
         """
         
         # ---------------------------------------------------------------------------
-        # ----- Super initialization
+        # ----- The model
         
-        super().__init__(count=shape)
+        wmodel = wrap(model)
         
-        # ---------------------------------------------------------------------------
-        # ----- The model is a stack
-
-        wmodel = None        
-        if isinstance(model, Stack):
-            
-            self.stack = model
-            
-            if name is None:
-                name = "Crowd"
-                
-            if hasattr(self.stack, "wobject"): wmodel = self.stack[0].wobject
-                
-        # ---------------------------------------------------------------------------
-        # ----- Wrap the model
-        
-        else:
-        
-            wmodel = wrap(model)
-            
-            if wmodel.object_type not in Crowd.SUPPORTED:
-                raise WError(f"Crowd initialization error: {self.wmodel.name} must be in {Crowd.SUPPORTED}, not {self.wmodel.object_type}.",
-                    Class = "Crowd",
-                    Method = "__init__",
-                    model = model,
-                    shape = shape)
-                
-            # ---------------------------------------------------------------------------
-            # ----- Use a stack to build the vertices
-            
-            self.stack = Stack(wmodel.object_type)
-            self.stack.stack_object(wmodel, self.size)
-            
-        
-        # ---------------------------------------------------------------------------
-        # ----- Create the target object
+        if wmodel.object_type not in Crowd.SUPPORTED:
+            raise WError(f"Crowd initialization error: {wmodel.name} must be in {Crowd.SUPPORTED}, not {wmodel.object_type}.",
+                Class = "Crowd",
+                Method = "FromObject",
+                model = model,
+                shape = shape)
             
         if name is None:
-            name = "Crowd of " + self.wmodel.name + 's'
+            name = "Crowd of " + wmodel.name + 's'
         
-        obj = bpy.data.objects.get(name)
-        if obj is not None:
-            wobj = wrap(name)
-            if wobj.object_type != self.stack.object_type:
-                obj.select_set(True)
-                bpy.ops.object.delete() 
-                obj = None
-                
-        if obj is None:
-            if self.is_mesh:
-                wobj = wrap(name, create="CUBE")
-            elif self.is_curve:
-                wobj = wrap(name, create="BEZIER")
-                if wmodel is not None:
-                    wobj.wdata.copy_from(wmodel.data)
+        # ---------------------------------------------------------------------------
+        # ----- Create the crowd
         
-        self.wobject = wobj
+        crowd = Crowd(wmodel.object_type, shape, name, wmodel)
         
-        wmodel = self.stack[0].wobject
-        blender.copy_collections(wmodel.wrapped, self.wobject.wrapped)
+        # ---------------------------------------------------------------------------
+        # ----- Use a stack to build the vertices
         
-        # ----- Other initialization
-        
-        self.animation = False
-        self.group_transfos = {}
+        crowd.stack = Stack(wmodel.object_type)
+        crowd.stack.stack_object(wmodel, crowd.size)
         
         # ----- Set the geometry from the stack
         
-        self.init_from_stack()
+        crowd.init_from_stack(shape)
+        
+        # ----- Set the geometry from the stack
+        
+        return crowd
 
 
-    # ====================================================================================================
-    # Content
-    
-    def __repr__(self):
-            
-        s  = f"<Crowd {self.shape}, {self.size} duplicates, type={self.stack.object_type}: '{self.wobject.name}'\n"
-        s += f"   stack                  : {self.stack}\n"
-        s += f"   total vertices         : {self.nverts}\n"
-        s += f"   animation              : {self.animation}"
-        if self.animation:
-            s += f", {len(self.models)} steps\n"
-        else:
-            s += "\n"
-        s += f"Group transformations: {len(self.group_transfos)}\n"
-        for name, gt in self.group_transfos.items():
-            s += f"{name}: {gt}\n"
-        return s + ">"
-    
     # ====================================================================================================
     # Init from a stack
     
     @classmethod
-    def FromStack(cls, stack, name="Crowd"):
-        return cls(stack, shape=stack.dupli_count, name=name)
+    def FromStack(cls, stack, model, name="Crowd"):
+        crowd = cls(stack.object_type, shape=(stack.dupli_count,), name=name, model=model)
+        crowd.stack = stack
+        crowd.init_from_stack()
+        
+        return crowd
         
     # ====================================================================================================
     # Init from a list of objects
@@ -244,21 +267,18 @@ class Crowd(Transformations):
     
     @property
     def wmodel(self):
-        if len(self.stack) != 1:
-            raise WError("Crowd model error. The crowd doesn't have a single model.",
-                         Class = "Crowd",
-                         Property = "wmodel",
-                         stack = self.stack,
-                         crowd = self)
+        return self.wmodel_
+    
+    @wmodel.setter
+    def wmodel(self, value):
+        self.wmodel_ = value
+        if self.wmodel_ is None:
+            return
         
-        if not hasattr(self.stack[0], "wobject"):
-            raise WError("Crowd model error. The stack doesn't contain an object.",
-                         Class = "Crowd",
-                         Property = "wmodel",
-                         stack = self.stack,
-                         crowd = self)
-        
-        return self.stack[0].wobject
+        if (self.wobject.object_type == 'Curve') and (self.wmodel.object_type == 'Curve'):
+            self.wobject.wdata.copy_from(self.wmodel.data)
+            
+        blender.copy_collections(self.wmodel.wrapped, self.wobject.wrapped)
     
     # ====================================================================================================
     # Set the models vertices
@@ -283,7 +303,11 @@ class Crowd(Transformations):
     # ====================================================================================================
     # Set the models vertices
 
-    def init_from_stack(self):
+    def init_from_stack(self, shape=None):
+        
+        self.lock()
+        
+        self.resize(self.stack.dupli_count)
         
         # ---------------------------------------------------------------------------
         # Set the geometry to the object
@@ -299,6 +323,11 @@ class Crowd(Transformations):
         self.set_models(self.stack.get_crowd_bases())
         self.animation     = False
         self.true_vertices = self.stack.get_true_vert_indices()
+        
+        self.unlock()
+        
+        if shape is not None:
+            self.reshape(shape)
         
     # ====================================================================================================
     # Set an animation
@@ -403,6 +432,21 @@ class Crowd(Transformations):
         return self.wobject.up_axis
     
     # ====================================================================================================
+    # Duplicates have vertices, faces, material indices...
+    # We need to get access to these items through duplicates coordinates
+    
+    @property
+    def dupli_indices(self):
+        return self.stack.indices.reshape(self.shape)
+    
+    def get_vertices(self, indices):
+        verts = 
+    
+    
+    
+    
+    
+    # ====================================================================================================
     # Partial transformations on group of vertices
 
     # ---------------------------------------------------------------------------
@@ -436,7 +480,6 @@ class Crowd(Transformations):
             if self.true_vertices is None:
                 self.wobject.verts = verts.reshape(self.nverts, 3)
             else:
-                print(self.true_vertices)
                 self.wobject.verts = verts.reshape(self.total_verts, 3)[self.true_vertices]
             
         elif self.is_curve:
