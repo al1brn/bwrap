@@ -491,10 +491,20 @@ class ZigZags():
 # ====================================================================================================
 # Bold and shear spec
 
+# =============================================================================================================================
+# Char format
+
 class CharFormat():
-    def __init__(self, bold=0, shear=0.):
-        self.bold  = bold
-        self.shear = shear
+    def __init__(self, bold=1., shear=0., scale=1., font=0, mat_index=0):
+        self.bold      = bold
+        self.shear     = shear
+        self.scale     = scale
+        self.font      = font
+        self.mat_index = mat_index
+        
+    def __repr__(self):
+        return f"<CharFormat bold:{self.bold:.1f}, shear:{self.shear:.1f}, scale:{self.scale:.1f}, font:{self.font}, material index: {self.mat_index}>"
+
 
 # ====================================================================================================
 # A glyphe builf from a a ttf font
@@ -509,10 +519,10 @@ class Glyphe():
         self.on_curve   = []    # On curve points
         self.points     = None  # Point to be built later
         self.ends       = []    # Ends as read in the ttf file
-        self.xMin       = 0     # boundinf box
-        self.yMin       = 0
-        self.xMax       = 0
-        self.yMax       = 0
+        self.xMin_      = 0     # bounding box
+        self.yMin_      = 0
+        self.xMax_      = 0
+        self.yMax_      = 0
         
         self.contours   = None  # An array (n, 2, 2) of on and off curve points
         self.ext_int    = None  # 1 if contour is ext and 0 if contour is int  
@@ -647,10 +657,10 @@ class Glyphe():
         clone.on_curve = list(self.on_curve)
         clone.points   = np.array(self.points)
         clone.ends     = list(self.ends)
-        clone.xMin     = self.xMin
-        clone.xMax     = self.xMax
-        clone.yMin     = self.yMin
-        clone.yMax     = self.yMax
+        clone.xMin_    = self.xMin_
+        clone.xMax_    = self.xMax_
+        clone.yMin_    = self.yMin_
+        clone.yMax_    = self.yMax_
         
         return clone
     
@@ -682,10 +692,10 @@ class Glyphe():
         
         # Update bounding box
         
-        self.xMin = min(self.points[:, 0])
-        self.yMin = min(self.points[:, 1])
-        self.xMax = max(self.points[:, 0])
-        self.yMax = max(self.points[:, 1])
+        self.xMin_ = min(self.points[:, 0])
+        self.yMin_ = min(self.points[:, 1])
+        self.xMax_ = max(self.points[:, 0])
+        self.yMax_ = max(self.points[:, 1])
         
     # ---------------------------------------------------------------------------
     # Add a glyphe
@@ -711,10 +721,10 @@ class Glyphe():
         
         # Update the bound box
         
-        self.xMin = min(self.points[:, 0])
-        self.yMin = min(self.points[:, 1])
-        self.xMax = max(self.points[:, 0])
-        self.yMax = max(self.points[:, 1])
+        self.xMin_ = min(self.points[:, 0])
+        self.yMin_ = min(self.points[:, 1])
+        self.xMax_ = max(self.points[:, 0])
+        self.yMax_ = max(self.points[:, 1])
         
     # ---------------------------------------------------------------------------
     # Compute the contours
@@ -798,6 +808,24 @@ class Glyphe():
     # ----------------------------------------------------------------------------------------------------
     # Glyphe metrics
     
+    def xMin(self, char_format=None):
+        scale = 1 if char_format is None else char_format.scale
+        return int(self.xMin_ * scale)
+        
+    def xMax(self, char_format=None):
+        if char_format is None:
+            return self.xMax_
+        else:
+            return int((self.xMax + char_format.bold)*char_format.scale)
+        
+    def yMin(self, char_format=None):
+        scale = 1 if char_format is None else char_format.scale
+        return int(self.yMin_ * scale)
+        
+    def yMax(self, char_format=None):
+        scale = 1 if char_format is None else char_format.scale
+        return int(self.yMax_ * scale)
+    
     def xwidth(self, char_format=None):
         if self.glyf_index is None:
             xw = self.xMax - self.xMin
@@ -806,37 +834,25 @@ class Glyphe():
         if char_format is None:
             return xw
         else:
-            return xw + char_format.bold
+            return int((xw + char_format.bold) * char_format.scale)
 
     def width(self, char_format=None):
-        w = self.xMax - self.xMin
-        if char_format is None:
-            return w
-        else:
-            return w + char_format.bold
+        return self.xMax(char_format) - self.xMin(char_format)
     
-    @property
-    def after(self):
-        return self.xwidth - self.width
+    def after(self, char_format=None):
+        return self.xwidth(char_format) - self.width(char_format)
 
-    @property
-    def lsb(self):
-        if self.glyf_index is None:
-            return self.xMin
-        else:
-            return self.hmtx[self.glyf_index][1]
+    def lsb(self, char_format=None):
+        return self.xMin(char_format)
     
-    @property
-    def ascent(self):
-        return self.yMax
+    def ascent(self, char_format=None):
+        return self.yMax(char_format)
     
-    @property
-    def descent(self):
-        return self.yMin
+    def descent(self, char_format=None):
+        return self.yMin(char_format)
     
-    @property
-    def height(self):
-        return self.yMax - self.yMin
+    def height(self, char_format=None):
+        return self.yMax(char_format) - self.yMin(char_format)
     
     # ===========================================================================
     # Bold contours
@@ -922,8 +938,9 @@ class Glyphe():
         # ---------------------------------------------------------------------------
         # Shear
         
-        for pts in bold:
-            pts[..., 0] += (pts[..., 1]*shear).astype(int)
+        if shear != 0.:
+            for pts in bold:
+                pts[..., 0] += (pts[..., 1]*shear).astype(int)
 
         return bold
     
@@ -934,49 +951,51 @@ class Glyphe():
     # - 3 : verts, lefts an rights is this order
     # - 3 : 3D vectors
     
-    @property
-    def beziers(self):
+    def beziers(self, char_format=None):
         
-        if self.beziers_ is None:
+        beziers = []
+        for pts in self.fmt_contours(char_format):
             
-            beziers = []
-            for pts in self.contours:
-                
-                n = len(pts)
-                
-                bz = np.zeros((n, 3, 3), np.float)
+            n = len(pts)
+            
+            bz = np.zeros((n, 3, 3), np.float)
 
-                bz[:,   0, :2] = pts[:, 0]
-                
-                bz[1:,  1, :2] = pts[1:  , 0]*.3333 + pts[:-1, 1]*0.6667
-                bz[:-1, 2, :2] = pts[ :-1, 0]*.3333 + pts[:-1, 1]*0.6667
-                
-                bz[ 0,  1, :2] = pts[ 0, 0]*.3333 + pts[-1, 1]*0.6667
-                bz[-1,  2, :2] = pts[-1, 0]*.3333 + pts[-1, 1]*0.6667
-                
-                beziers.append(bz)
-                
-            self.beziers_ = beziers
+            bz[:,   0, :2] = pts[:, 0]
             
-        return self.beziers_
+            bz[1:,  1, :2] = pts[1:  , 0]*.3333 + pts[:-1, 1]*0.6667
+            bz[:-1, 2, :2] = pts[ :-1, 0]*.3333 + pts[:-1, 1]*0.6667
+            
+            bz[ 0,  1, :2] = pts[ 0, 0]*.3333 + pts[-1, 1]*0.6667
+            bz[-1,  2, :2] = pts[-1, 0]*.3333 + pts[-1, 1]*0.6667
+            
+            beziers.append(bz)
+                
+        return self.beziers
     
     # ===========================================================================
     # Rasterization
     # Points and faces
     
-    def raster(self, scale=1., delta=10, lowest_geometry=True, return_uvmap=False):
-        
-        vf = self.rasters.get(delta)
-        if vf is not None:
-            return vf
+    def raster(self, scale=1., delta=10, lowest_geometry=True, char_format=None, return_faces = False):
         
         verts         = None
         closed_curves = []
         
         # ---------------------------------------------------------------------------
+        # The faces must be computed with unformatted contours
+        
+        if return_faces:
+            
+            contours = self.contours
+            
+        else:
+            
+            contours = self.fmt_contours(char_format)
+        
+        # ---------------------------------------------------------------------------
         # Compute the rasterized contours
         
-        for contour in self.contours:
+        for contour in contours:
             
             # Short for len(contour)
             n = len(contour)
@@ -1032,19 +1051,20 @@ class Glyphe():
             closed_curves.append(closed_curve)
             
         # ---------------------------------------------------------------------------
-        # Compute the holed faces with the curve
+        # Add the third component and apply the scale
         
         verts = np.insert(verts, 2, 0, axis=1)
-        faces = closed_faces(verts, closed_curves)
         
         # ---------------------------------------------------------------------------
-        # In cache
-        # NOTE Comment not to use a cache
+        # Done if no faces to compute
         
-        #self.rasters[delta] = [verts, faces]
+        if not return_faces:
+            return verts*scale
         
-        if not return_uvmap:
-            return verts*scale, faces
+        # ---------------------------------------------------------------------------
+        # Compute the faces
+        
+        faces = closed_faces(verts, closed_curves)
         
         # ---------------------------------------------------------------------------
         # Compute uv map
@@ -1062,7 +1082,16 @@ class Glyphe():
             uvs[index:index+len(face)] = (verts[face, :2] + center)*ratio 
             index += len(face)
         
-        return verts*scale, faces, uvs
+        # ---------------------------------------------------------------------------
+        # Faces were computed with the raw contours
+        # Now vertices must be computed with the formatted contours
+        
+        if char_format is None:
+            return verts*scale, faces, uvs
+        elif char_format.bold == 0 and char_format.shear == 0.:
+            return verts*scale, faces, uvs
+        else:
+            return self.raster(scale=scale, delta=delta, lowest_geometry=lowest_geometry, char_format=char_format, return_faces=False), faces, uvs
     
     # ===========================================================================
     # DEBUG on matplotlib
