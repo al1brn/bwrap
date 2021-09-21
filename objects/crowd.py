@@ -279,6 +279,14 @@ class Crowd(Transformations):
             self.wobject.wdata.copy_from(self.wmodel.data)
             
         blender.copy_collections(self.wmodel.wrapped, self.wobject.wrapped)
+        
+    def copy_materials_from_model(self):
+        if self.wmodel_ is None:
+            return
+        
+        self.wobject.wmaterials.clear()
+        self.wobject.wmaterials.copy_materials_from(self.wmodel, append=True)
+            
     
     # ====================================================================================================
     # Set the models vertices
@@ -316,6 +324,8 @@ class Crowd(Transformations):
         self.nverts      = self.wobject.verts_count
         self.block_size  = self.stack.max_nverts
         self.total_verts = self.size * self.block_size
+        
+        self.copy_materials_from_model()  
         
         # ---------------------------------------------------------------------------
         # Set the base vertices
@@ -435,15 +445,20 @@ class Crowd(Transformations):
     # Duplicates have vertices, faces, material indices...
     # We need to get access to these items through duplicates coordinates
     
-    @property
-    def dupli_indices(self):
-        return self.stack.indices.reshape(self.shape)
+    def verts_indices(self, dupl_indices=None):
+        return self.stack.verts_indices(dupl_indices)
     
-    def get_vertices(self, indices):
-        verts = 
+    def mats_indices(self, dupl_indices=None):
+        return self.stack.mats_indices(dupl_indices)
     
+    def faces_indices(self, dupl_indices=None):
+        return self.stack.faces_indices(dupl_indices)
     
+    def uvs_indices(self, dupl_indices=None):
+        return self.stack.uvs_indices(dupl_indices)
     
+    def prof_indices(self, dupl_indices=None):
+        return self.stack.prof_indices(dupl_indices)
     
     
     # ====================================================================================================

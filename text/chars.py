@@ -132,7 +132,7 @@ class Chars(Crowd):
         return index
     
     def set_chars(self, chars):
-        self.stack.indices = [self.char_index(c) for c in chars]
+        self.stack.stack_indices = [self.char_index(c) for c in chars]
         self.init_from_stack()
         
     @property

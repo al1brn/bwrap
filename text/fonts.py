@@ -17,9 +17,31 @@ Created on Thu Aug 12 22:57:37 2021
 import os
 import numpy as np
 
-from ..core.breader import DataType, Struct, BFileReader, Flags
+if False:
+    
+    from ..core.breader import DataType, Struct, BFileReader, Flags
+    from ..maths.closed_faces import closed_faces
+    
+else:
+    
+    path = "/Users/alain/Documents/blender/scripts/modules/bwrap/"
+    import importlib
+    
+    breader_spec = importlib.util.spec_from_file_location("breader", path + "core/breader.py")
+    breader  = importlib.util.module_from_spec(breader_spec)
+    breader_spec.loader.exec_module(breader)
+    
+    DataType    = breader.DataType
+    Struct      = breader.Struct
+    BFileReader = breader.BFileReader
+    Flags       = breader.Flags
+    
+    closed_spec = importlib.util.spec_from_file_location("breader", path + "maths/closed_faces.py")
+    closed  = importlib.util.module_from_spec(closed_spec)
+    closed_spec.loader.exec_module(closed)
+    
+    closed_faces = closed.closed_faces
 
-from ..maths.closed_faces import closed_faces
 
 INT8    =  DataType.INT8
 INT16   =  DataType.INT16
@@ -33,6 +55,19 @@ UINT32  = DataType.UINT32
 FIXED   = DataType.FIXED
 SFRAC   = DataType.SFRAC
 
+# =============================================================================================================================
+# Char format
+
+class CharFormat():
+    def __init__(self, bold=1., shear=0., scale=1., font=0, mat_index=0):
+        self.bold      = bold
+        self.shear     = shear
+        self.scale     = scale
+        self.font      = font
+        self.mat_index = mat_index
+        
+    def __repr__(self):
+        return f"<CharFormat bold:{self.bold:.1f}, shear:{self.shear:.1f}, scale:{self.scale:.1f}, font:{self.font}, material index: {self.mat_index}>"
 
 # =============================================================================================================================
 # A ttf table
@@ -531,7 +566,10 @@ class Glyphe():
         self.yMin       = 0
         self.xMax       = 0
         self.yMax       = 0
+        
         self.contours   = []
+        self.ext_int    = None # 1 if contour is ext and 0 if contour is int  
+        
         self.beziers_   = None
         self.rasters    = {}
         self.glyf_index = None
@@ -557,7 +595,6 @@ class Glyphe():
     def check(self):
         if len(self.points) > 1000:
             raise RuntimeError(f"The number of points loojs weird {len(self.points)}")
-            
     
     def add(self, glyf):
         
@@ -618,9 +655,10 @@ class Glyphe():
             else:
                 # Add an intermediary point to altern on and off curve points
                 if self.on_curve[index] == last_OC:
-                    contour = np.append(contour, [(contour[-1] + pt)/2], axis=0)
+                    contour = np.append(contour, [(contour[-1] + pt)//2], axis=0)
                     
                 # Add the point
+                #print("oooo", contour)
                 contour = np.append(contour, [pt], axis=0)
                 last_OC = self.on_curve[index]
                 
@@ -629,7 +667,7 @@ class Glyphe():
                 
                 # Intermediary point with the first one 
                 if last_OC == OC0:
-                    contour = np.append(contour, [(contour[0] + pt)/2], axis=0)
+                    contour = np.append(contour, [(contour[0] + pt)//2], axis=0)
                     
                 # Ensure flag 0 is on curve
                 if not OC0:
@@ -640,6 +678,71 @@ class Glyphe():
                 # Let's start a new contour
                 self.contours.append(contour.reshape(len(contour)>>1, 2, 2))
                 contour = None
+                
+        # ---------------------------------------------
+        # Compute the internal and external curves
+        
+        class BBox():
+            def __init__(self, contour=None, index=-1):
+                self.top      = contour is None
+                self.index    = index
+                self.children = []
+                self.owner    = None
+
+                if not self.top:
+                    self.x0 = np.min(contour[:, 0, 0])
+                    self.x1 = np.max(contour[:, 0, 0])
+                    self.y0 = np.min(contour[:, 0, 1])
+                    self.y1 = np.max(contour[:, 0, 1])
+                    
+            @property
+            def depth(self):
+                if self.owner is None:
+                    return 0
+                else:
+                    return 1 + self.owner.depth
+                
+            def contains(self, other):
+                if self.top:
+                    return True
+                return self.x0 <= other.x0 and self.x1 >= other.x1 and self.y0 <= other.y0 and self.y1 >= other.y1
+                
+            def add(self, bbox):
+                for c in self.children:
+                    b = c.add(bbox)
+                    if b is None:
+                        return None
+                    
+                if self.contains(bbox):
+                    self.children.append(bbox)
+                    bbox.owner = self
+                    return None
+                
+                return bbox
+            
+            def set_int_ext(self, a):
+                if not self.top:
+                    a[self.index] = self.depth % 2
+                for c in self.children:
+                    c.set_int_ext(a)
+                    
+        bboxes = BBox()
+        for index, contour in enumerate(self.contours):
+            bboxes.add(BBox(contour, index))
+        
+        self.ext_int = np.zeros(len(self.contours), int)
+        bboxes.set_int_ext(self.ext_int)
+        
+        # TEST
+        if False:
+            for i, c in enumerate(self.contours):
+                x0 = int(np.average(c[..., 0]))
+                if self.ext_int[i] == 1:
+                    c[..., 0] = x0 + (c[..., 0] - x0)*4
+                else:
+                    c[..., 0] = x0 + (c[..., 0] - x0)*2
+                
+                
                 
     def __len__(self):
         return len(self.contours)
@@ -684,6 +787,385 @@ class Glyphe():
     @property
     def height(self):
         return self.yMax - self.yMin
+    
+    # ===========================================================================
+    # Bold contours
+    #  bold is built by shifting some points to right with a given value
+    
+    def bold_contours(self, bold_shift=70):
+        
+        if bold_shift == 0:
+            return self.contours
+        
+        
+        bold_shift = 100
+        
+        # ---------------------------------------------------------------------------
+        # Loop on the contours to build the bold contours
+    
+        bold = []
+        for i_contour, contour in enumerate(self.contours):
+            
+            pts = np.array(contour)
+            n = len(pts)
+            
+            # ---------------------------------------------------------------------------
+            # Interior contour : shif left and kepp right
+            
+            if self.ext_int[i_contour] == 0:
+                
+                x0 = np.min(pts[:, 0, 0])
+                x1 = np.max(pts[:, 0, 0])
+                ax = x1 - x0
+                
+                for i in range(len(pts)):
+                    x = pts[i, 0, 0]
+                    pts[i, 0, 0] += int((x1-x)/ax*bold_shift)
+                    x = pts[i, 1, 0]
+                    pts[i, 1, 0] += int((x1-x)/ax*bold_shift)
+                
+                bold.append(pts)
+                continue
+            
+            # ----- Compute the delta x and y of segments
+            # the entry i give the delta between points i and i+1
+            
+            dxs      = np.empty(n, int)
+            dys      = np.empty(n, int)
+            dxs[:-1] = pts[1:, 0, 0] - pts[:-1, 0, 0] 
+            dys[:-1] = pts[1:, 0, 1] - pts[:-1, 0, 1] 
+            dxs[-1]  = pts[0, 0, 0] - pts[-1, 0, 0]
+            dys[-1]  = pts[0, 0, 1] - pts[-1, 0, 1]
+            
+            # ----- Points are shifted depending upon the relative orientations
+            # of its two segments
+            # A point can be :
+            # - left    -> shift = 0
+            # - right   -> shift = bold_shift
+            # - between -> proportional shift
+            
+            # ----- Horizontal shift
+            
+            # Let's loop from the left most point
+            # Note that we loop twice on the starting point to be sure
+            # to manage intermediary points
+            
+            i_left  = np.argmin(pts[:, 0, 0])
+            shift   = 0
+            between = []
+            
+            # ----- Vertical shifts
+            
+            class ZigZag():
+                ZIGZAGS = []
+                CURRENT = None
+                
+                def __init__(self, start, end, n):
+                    self.start = start
+                    self.end   = end
+                    self.n     = n
+                    
+                def __repr__(self):
+                    s = None if self.start is None else f"{self.start:2d}"
+                    e = None if self.end   is None else f"{self.end:2d}"
+                    
+                    if s is None or e is None:
+                        return f"<ZigZag: {s} --> {e}>"
+                    else:
+                        return f"<ZigZag: {s} --> {e}: ({len(self):3d}): {self.indices}>"
+                    
+                def dump(self):
+                    print(f"ZigZags: {len(ZigZag.ZIGZAGS)}")
+                    for i in range(len(self.ZIGZAGS)):
+                        print(f"{i:2d}: {self.ZIGZAGS[i]}")
+                    
+                @property
+                def complete(self):
+                    return self.start is not None and self.end is not None
+                    
+                def __len__(self):
+                    if self.end < self.start:
+                        return n - self.start + self.end + 1
+                    else:
+                        return self.end - self.start + 1
+                    
+                @property
+                def indices(self):
+                    if self.end < self.start:
+                        return [i % self.n for i in range(self.start, self.end + self.n + 1)]
+                    else:
+                        return [i % self.n for i in range(self.start, self.end + 1)]
+                    
+                @classmethod
+                def set_start(cls, start, n):
+                    cls.CURRENT = ZigZag(start, None, n)
+                    cls.ZIGZAGS.append(cls.CURRENT)
+                        
+                @classmethod
+                def set_end(cls, end, n, create=False):
+                    if cls.CURRENT is None:
+                        if create:
+                            cls.CURRENT = ZigZag(None, end, n)
+                            cls.ZIGZAGS.append(cls.CURRENT)
+                    else:
+                        if cls.CURRENT.end is not None:
+                            raise RuntimeError("Algorithm error 1 in Glyphe.bold_contours.ZigZag")
+                        cls.CURRENT.end = end
+                        
+                @classmethod
+                def close(cls):
+                    if cls.ZIGZAGS[0].start is None:
+                        ZigZag.ZIGZAGS[0].dump()
+                        cls.ZIGZAGS[0].start = cls.ZIGZAGS[-1].start
+                        if not (cls.ZIGZAGS[-1].end is None or (cls.ZIGZAGS[-1].end - cls.ZIGZAGS[0].end) % cls.ZIGZAGS[0].n) == 0:
+                            raise RuntimeError("Algorithm error 2 in Glyphe.bold_contours.ZigZag")
+                        cls.ZIGZAGS.pop()
+                    if cls.ZIGZAGS[-1].end is None:
+                        cls.ZIGZAGS.pop()
+                        
+                @classmethod
+                def fixed_start(cls, i):
+                    return cls.ZIGZAGS[i].start == cls.ZIGZAGS[i-1].end
+                
+                @classmethod
+                def fixed_end(cls, i):
+                    return cls.ZIGZAGS[i].end == cls.ZIGZAGS[(i+1) % len(cls.ZIGZAGS)].start
+                
+                @classmethod
+                def shift(cls, pts, vert_shift):
+                    
+                    # Make sure start / end couples match
+                    cls.close()
+                    
+                    # The min and max y of each line
+                    ymins = [np.min(pts[zz.indices, 0, 1]) for zz in cls.ZIGZAGS]
+                    ymaxs = [np.max(pts[zz.indices, 0, 1]) for zz in cls.ZIGZAGS]
+                    
+                    # Absolute min and max lines don't change
+                    imin  = np.argmin(ymins)
+                    imax  = np.argmax(ymaxs)
+                    
+                    # ----- Loop on the lines
+                    for iz in range(len(cls.ZIGZAGS)):
+                        
+                        print("loop", iz, "(", imin, imax, ")", ymins[iz], ymaxs[iz])
+                        
+                        # No change for min and max lines
+                        if iz in [imin, imax]:
+                            continue
+                        
+                        # The current line and its points
+                        zz = cls.ZIGZAGS[iz]
+                        ps = pts[zz.indices]
+                        
+                        direction = ps[-1, 0, 0] - ps[0, 0, 0]
+                        
+                        ymin = ymins[iz]
+                        ymax = ymaxs[iz]
+                        # How many upper lines
+                        ups = 0
+                        dns = 0
+                        for j in range(len(ymaxs)):
+                            if not j in [imax, imin, iz]:
+                                if ymaxs[j] > ymax:
+                                    ups += 1
+                                if ymins[j] < ymin:
+                                    dns += 1
+                                    
+                        print(direction, "min", ymin, "max", ymax, zz, "ups", ups, "dns", dns)
+                                    
+                        if direction > 0:
+                            if dns == 0:
+                                vsh = vert_shift
+                            else:
+                                vsh = vert_shift // 2
+                        else:
+                            if ups == 0:
+                                vsh = vert_shift
+                            else:
+                                vsh = vert_shift // 2
+                                
+                        vsh0 = 0 if ZigZag.fixed_start(iz) else vsh
+                        vsh1 = 0 if ZigZag.fixed_end(iz) else vsh
+                        
+                        for j in zz.indices:
+                            for k in [0, 1]:
+                                
+                                dx = pts[j, k, 0] - pts[zz.start%n, 0, 0]
+                                
+                                if dx < direction / 2:
+                                    p = 2*dx/direction
+                                    dy = int((1-p)*vsh0 + p*vsh)
+                                else:
+                                    p = 2*(direction - dx)/direction
+                                    dy = int((1-p)*vsh1 + p*vsh)
+
+                                if direction > 0:
+                                    pts[j, k, 1] += dy
+                                else:
+                                    pts[j, k, 1] -= dy
+                                        
+                        
+            # ---------------------------------------------------------------------------
+            # The loop
+            
+            for ii in range(i_left, i_left + n + 1):
+                
+                i = ii % n
+                new_shift = None
+                
+                # The delta of the point segment
+                
+                dx0 = dxs[(i-1)%n]
+                dy0 = dys[(i-1)%n]
+                dx1 = dxs[i]
+                dy1 = dys[i]
+                
+                #print(f"DEBUG loop: ii={ii:2d}, i={i:2d}, dx0={dx0:4d} dy0={dy0:4d} dx1={dx1:4d} dy1={dy1:4d}")
+                
+                # ---------------------------------------------------------------------------
+                # Compute the new shift
+                
+                # ----- End of vertical segment
+                if dx0 == 0:
+                    # Up: keep the point left
+                    if dy0 > 0:
+                        new_shift = 0
+                    # Down: shift the point right
+                    else:
+                        new_shift = bold_shift
+                    ZigZag.set_start(ii, n)
+                
+                # ----- Start of vertical segment
+                elif dx1 == 0:
+                    if dy1 > 0:
+                        new_shift = 0
+                    else:
+                        new_shift = bold_shift
+                    ZigZag.set_end(ii, n, create=True)
+                
+                # ----- Change forwards backwards
+                if (dx0 > 0) and (dx1 < 0):
+                    if dy1 > 0:
+                        new_shift = 0
+                    else:
+                        new_shift = bold_shift
+                    ZigZag.set_end(ii, n, create=False)
+                    ZigZag.set_start(ii, n)
+    
+                # ----- Change backwards forwards
+                if (dx0 < 0) and (dx1 > 0):
+                    if dy1 > 0:
+                        new_shift = 0
+                    else:
+                        new_shift = bold_shift
+                    ZigZag.set_end(ii, n, create=False)
+                    ZigZag.set_start(ii, n)
+                        
+                        
+                # ---------------------------------------------------------------------------
+                # Utility function to shift a point
+                
+                def shift_point(point_index, delta):
+                    
+                    # ----- Set the on curve point
+                    pts[point_index, 0, 0] += delta
+                    
+                    # ----- Set the previous off curve point
+                    
+                    # Previous index
+                    i_prev = (point_index - 1) % n
+                    
+                    # Delta of previous index
+                    delta0 = pts[i_prev, 0, 0] - contour[i_prev, 0, 0]
+                    
+                    if delta == delta0:
+                        
+                        pts[i_prev, 1, 0] += delta
+                        
+                    else:
+                        
+                        # Delta of the off curve will be delta0 plus proportion of delta-delta0
+                        # The proportion is computed with the location of the off curve point
+                        # between the two extremities
+                        
+                        x  = contour[i_prev, 1, 0] - contour[i_prev, 0, 0]
+                        ax = contour[point_index, 0, 0] - contour[i_prev, 0, 0]
+                        
+                        # Vertical segment (normally delta == delta0)
+                        if ax == 0:
+                            pts[i_prev, 1, 0] += delta
+                            
+                        # Proportional horizontal shift
+                        else:
+                            #print("\n--- shift_point")
+                            #print(f"off curve {i_prev:3d}, delta {delta0:3d} --> {delta:3d}, x={x:3d} / {ax:3d}")
+                            #print(f"   x prev {contour[i_prev, 0, 0]:3d}, x cur {contour[point_index, 0, 0]:3d}")
+                            pts[i_prev, 1, 0] += delta0 + int(x/ax*(delta - delta0))
+                    
+                # ---------------------------------------------------------------------------
+                # Exec the required shift
+                
+                #print(f"points {i:2d}", new_shift, between)
+                
+                if new_shift is None:
+    
+                    between.append(i)
+                    
+                else:
+                    
+                    # Intermediary points
+                    
+                    if len(between) > 0:
+                        
+                        if shift == new_shift:
+                            
+                            for j in between:
+                                shift_point(j, shift)
+                                
+                        else:
+                            x0 = pts[(between[0]-1)%n, 0, 0]
+                            x1 = pts[i, 0, 0]
+                            xamp = x1 - x0
+                            samp = new_shift - shift
+                            for j_index, j in enumerate(between):
+                                if False:
+                                    x = pts[j, 0, 0] - x0
+                                    shift_point(j, int(x/xamp*samp))
+                                else:
+                                    x = pts[j, 0, 0]
+                                    d = shift + int((x - x0)/xamp*samp)
+                                    
+                                    
+                                    pts[j, 0, 0] += d
+                                    
+                                    j_prev = (j-1)%n
+                                    x = pts[j_prev, 1, 0]
+                                    d = shift + int((x - x0)/xamp*samp)
+                                    pts[j_prev, 1, 0] += d
+                                    
+                                    if j_index == len(between)-1:
+                                        x = pts[j, 1, 0]
+                                        d = shift + int((x - x0)/xamp*samp)
+                                        #pts[j, 1, 0] += d
+                                
+                        between = []
+                    
+                    shift = new_shift
+                    shift_point(i, shift)
+
+            # ---------------------------------------------------------------------------
+            # Vertical shifts
+            
+            ZigZag.shift(pts, bold_shift)
+            
+            # ---------------------------------------------------------------------------
+            # New bold contour
+            
+            bold.append(pts)
+            
+        return bold
+
     
     # ===========================================================================
     # Blender Bezier vertices
@@ -825,6 +1307,79 @@ class Glyphe():
     # ===========================================================================
     # DEBUG on matplotlib
     
+    def get_plot_arrays(self, prec=12, with_points=False, bold_shift=0):
+        
+        contours = self.bold_contours(bold_shift)
+        
+        t = np.expand_dims(np.linspace(0, 1, prec), axis=1)
+        c = t*t
+        b = 2*t*(1-t)
+        a = (1-t)*(1-t)
+        
+        plots = []
+        
+        oc1 = np.zeros((0, 2), int)
+        oc0 = np.zeros((0, 2), int)
+        
+        for pts in contours:
+            
+            oc0 = np.append(oc0, pts[:, 0, :], axis=0)
+            oc1 = np.append(oc1, pts[:, 1, :], axis=0)
+            
+            points = None
+            
+            n = len(pts)
+            for k in range(n):
+                
+                cs = a*pts[k%n, 0] + b*pts[k%n, 1] + c*pts[(k+1)%n, 0]
+                
+                if points is None:
+                    points = cs
+                else:
+                    points = np.append(points, cs, axis=0)
+                    
+            plots.append(points)
+            
+        if with_points:
+            return plots, oc0, oc1
+        else:
+            return plots, oc0, oc1
+    
+    def plot_contours(self, prec=12, with_points=False, bold_shift=0):
+        
+        with_points = True
+        
+        base, base0, base1 = self.get_plot_arrays(prec, True, bold_shift=0)
+        if bold_shift != 0:
+            bold, bold0, bold1 = self.get_plot_arrays(prec, True, bold_shift=bold_shift)
+            
+        
+        import matplotlib.pyplot as plt
+        
+        fig, ax = plt.subplots()
+        
+        for i in range(len(base)):
+            
+            if bold_shift != 0:
+                bo = bold[i]
+                ax.plot(bo[:, 0], bo[:, 1], 'red')
+            
+            ba = base[i]
+            ax.plot(ba[:, 0], ba[:, 1], 'k')
+            
+            if with_points:
+                ax.plot(base0[:, 0], base0[:, 1], 'or')
+                ax.plot(base1[:, 0], base1[:, 1], 'ob')
+                if bold_shift != 0:
+                    ax.plot(bold0[:, 0], bold0[:, 1], 'xr')
+                    ax.plot(bold1[:, 0], bold1[:, 1], 'xb')
+                
+            
+        plt.show()
+    
+    # ===========================================================================
+    # DEBUG on matplotlib
+    
     def plot_raster(self, delta=10, show_points = False, **kwargs):
         
         import matplotlib.pyplot as plt
@@ -844,38 +1399,6 @@ class Glyphe():
             ax.plot(x, y, line)
         
         plt.show()        
-    
-    
-    # ===========================================================================
-    # DEBUG on matplotlib
-    
-    def plot_points(self, prec=12):
-        
-        t = np.expand_dims(np.linspace(0, 1, prec), axis=1)
-        c = t*t
-        b = 2*t*(1-t)
-        a = (1-t)*(1-t)
-        
-        plots = []
-        
-        for pts in self:
-            
-            points = None
-            
-            n = len(pts)
-            for k in range(n):
-                
-                cs = a*pts[k%n, 0] + b*pts[k%n, 1] + c*pts[(k+1)%n, 0]
-                
-                if points is None:
-                    points = cs
-                else:
-                    points = np.append(points, cs, axis=0)
-                    
-            plots.append(points)
-            
-        return plots
-        
     
     def plot_bezier(self, curve=True, **kwargs):
         
@@ -1224,7 +1747,18 @@ class Glyf(Struct):
         self.glyphe.glyf_index = self.glyf_index
         
         reader.close()
-                
+        
+        
+    # For debug: python source code
+    def py_source(self):
+        tab  = "    "
+        tab2 = tab*2
+        print(tab2 + f"glyf.glyf_index = {self.glyf_index}")
+        print(tab2 + f"glyf.flags = {self.flags}")
+        print(tab2 + f"glyf.xCoordinates = {self.xCoordinates}")
+        print(tab2 + f"glyf.yCoordinates = {self.yCoordinates}")
+        print(tab2 + f"glyf.endPtsOfContours = {self.endPtsOfContours}")
+        print()
             
     def __len__(self):
         return len(self.contours)
@@ -1658,44 +2192,126 @@ class Ttf(Struct):
         h1 = self.get_glyphe(ord("M")).ascent * 1.5
         self.line_height = max(h0, h1) * self.ratio
         
-    def char_raw_metrics(self, c):
+    def char_metrics(self, c, char_format=None):
+        
+        
+        char_format = CharFormat(bold=1, shear=0.5)
+        
+        
         glyf_index = self.code_to_glyf_index(ord(c))
         if glyf_index is None:
-            return 0, 0, 0, 0
+            return None
         
         glyf = self.get_glyf(glyf_index)
-        return glyf.xMin, glyf.xMax, self.hmtx[glyf_index][0], self.hmtx[glyf_index][1]
-    
-    def char_xwidth(self, c):
-        _, _, aw, _ = self.char_raw_metrics(c)
-        return aw * self.ratio
         
-    def char_width(self, c):
+        class Metrics():
+            pass
+        
+        m = Metrics()
+        
+        m.xMin     = glyf.xMin * self.ratio
+        m.xMax     = glyf.xMax * self.ratio
+        m.xwidth   = self.hmtx[glyf_index][0] * self.ratio
+        m.lsb      = self.hmtx[glyf_index][1] * self.ratio
+
+        m.descent  = glyf.yMin * self.ratio
+        m.ascent   = glyf.yMax * self.ratio
+        m.height   = m.ascent - m.descent
+        
+        
+        if char_format is not None:
+            
+            m.xMin   *= char_format.scale * char_format.bold
+            m.xMax   *= char_format.scale * char_format.bold
+            m.xwidth *= char_format.scale * char_format.bold
+            m.lsb    *= char_format.scale * char_format.bold
+            
+            m.descent *= char_format.scale
+            m.ascent  *= char_format.scale
+            m.height  *= m.ascent - m.descent
+            
+            
+        return m
+        #return glyf.xMin, glyf.xMax, self.hmtx[glyf_index][0], self.hmtx[glyf_index][1]
+    
+    def char_xwidth(self, c, char_format=None):
+        m = self.char_metrics(c, char_format)
+        if m is None:
+            return 0
+        else:
+            return m.xwidth
+        
+        #_, _, aw, _ = self.char_raw_metrics(c)
+        #return aw * self.ratio
+        
+    def char_width(self, c, char_format=None):
+        m = self.char_metrics(c, char_format)
+        if m is None:
+            return 0
+        else:
+            return m.xMax
+        
         _, xMax, _, _ = self.char_raw_metrics(c)
         return xMax * self.ratio
 
-    def char_lsb(self, c):
+    def char_lsb(self, c, char_format=None):
+        m = self.char_metrics(c, char_format)
+        if m is None:
+            return 0
+        else:
+            return m.lsb
+        
         _, _, _, lsb = self.char_raw_metrics(c)
         return lsb * self.ratio
     
-    """
-    def char_wa(self, c):
-        w = self.char_width(c)
-        return w, self.char_xwidth(c) - w
-    """
+    # ===========================================================================
+    # Char formatting
 
+    @staticmethod
+    def format_verts(verts, char_format):
+            
+        # Bold / fine
+        if char_format.bold != 1:
+            verts[..., 0] *= char_format.bold
+            
+        # Shear
+        if char_format.shear != 0:
+            sh = np.clip(char_format.shear, -1, 1)
+            verts[..., 0] += verts[..., 1]*sh
+            
+        # Scale
+        if char_format.scale != 1:
+            verts[..., :2] *= char_format.scale
+                
+        return verts
     
     # ===========================================================================
     # Access to the curves
     
-    def mesh_char(self, c, return_uvmap=False):
-        return self.get_glyphe(ord(c)).raster(
+    def mesh_char(self, c, return_uvmap=False, char_format=None):
+        
+        char_format = CharFormat(bold=1, shear=-0)
+        
+        vfu = self.get_glyphe(ord(c)).raster(
             scale = self.ratio, delta=self.raster_delta,
             lowest_geometry=self.raster_low, return_uvmap=return_uvmap)
+        
+        if char_format is not None:
+            v = Ttf.format_verts(vfu[0], char_format)
+            if return_uvmap:
+                return v, vfu[1], vfu[2]
+            else:
+                return v, vfu[1]
+            
+        return vfu
     
-    def curve_char(self, c):
+    def curve_char(self, c, char_format=None):
         beziers = self.get_glyphe(ord(c)).beziers
-        return [bz*self.ratio for bz in beziers]
+        
+        if char_format is None:
+            return [bz*self.ratio for bz in beziers]
+        else:
+            return [Ttf.format_verts(bz*self.ratio, char_format()) for bz in beziers]
     
     # ===========================================================================
     # Several chars with location
@@ -1773,6 +2389,9 @@ class Ttf(Struct):
                 
         return contours
     
+    # ===========================================================================
+    # Dev method
+    
     def plot_word(self, word, **kwargs):
         
         import matplotlib.pyplot as plt
@@ -1793,8 +2412,7 @@ class Ttf(Struct):
         ax.set(**kwargs)
         
         plt.show()
-        
-        
+
 # =============================================================================================================================
 # Collection file
 #
@@ -1918,5 +2536,21 @@ class Font():
     @property
     def sub_family(self):
         return [font.font_sub_family for font in self]
+
+
+path = "/System/Library/Fonts/Supplemental/"
+fname = "arial.ttf"
+
+font = Font(path + fname)
+
+c = "%"
+gl = font.font.get_glyf(font.font.code_to_glyf_index(ord(c)))
+gl.py_source()
+
+if False:
+    for c in "S": #"mociE":
+        g = font.font.get_glyphe(ord(c))
+        g.plot_contours(prec=12, bold_shift=70)
+
 
 
