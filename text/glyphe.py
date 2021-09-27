@@ -496,15 +496,35 @@ class ZigZags():
 
 class CharFormat():
     def __init__(self, bold=1., shear=0., scale=1., font=0, mat_index=0):
-        self.bold      = bold
-        self.shear     = shear
-        self.scale     = scale
-        self.font      = font
-        self.mat_index = mat_index
+        
+        self.xscale     = 1.
+        self.yscale     = 1.
+        self.bold_shift = 0
+        
+        self.bold       = bold
+        self.shear      = shear
+        self.scale      = scale
+        self.font       = font
+        self.mat_index  = mat_index
         
     def __repr__(self):
-        return f"<CharFormat bold:{self.bold:.1f}, shear:{self.shear:.1f}, scale:{self.scale:.1f}, font:{self.font}, material index: {self.mat_index}>"
-
+        return f"<CharFormat bold:{self.bold}, shear:{self.shear:.1f}, scale:{self.scale}, font:{self.font}, material index: {self.mat_index}>"
+    
+    @property
+    def scale(self):
+        if self.xscale == self.yscale:
+            return self.xscale
+        else:
+            return np.array([self.xscale, self.yscale], float)
+        
+    @scale.setter
+    def scale(self, value):
+        if hasattr(value, '__len__'):
+            self.xscale = value[0]
+            self.yscale = value[1]
+        else:
+            self.xscale = value
+            self.yscale = value
 
 # ====================================================================================================
 # A glyphe builf from a a ttf font
@@ -809,6 +829,8 @@ class Glyphe():
     # Glyphe metrics
     
     def xMin(self, char_format=None):
+        return self.xMin_
+    
         scale = 1 if char_format is None else char_format.scale
         return int(self.xMin_ * scale)
         
@@ -816,25 +838,35 @@ class Glyphe():
         if char_format is None:
             return self.xMax_
         else:
-            return int((self.xMax + char_format.bold)*char_format.scale)
+            return self.xMax + char_format.bold_shift
+            
+            return int((self.xMax + char_format.bold_shift)*char_format.scale)
         
     def yMin(self, char_format=None):
+        return self.yMin_
+    
         scale = 1 if char_format is None else char_format.scale
         return int(self.yMin_ * scale)
         
     def yMax(self, char_format=None):
+        return self.yMax_
+        
         scale = 1 if char_format is None else char_format.scale
         return int(self.yMax_ * scale)
     
     def xwidth(self, char_format=None):
+        
         if self.glyf_index is None:
             xw = self.xMax - self.xMin
         else:
             xw = self.ttf.hmtx[self.glyf_index][0]
+            
         if char_format is None:
             return xw
         else:
-            return int((xw + char_format.bold) * char_format.scale)
+            return xw + char_format.bold_shift
+            
+            return int((xw + char_format.bold_shift) * char_format.scale)
 
     def width(self, char_format=None):
         return self.xMax(char_format) - self.xMin(char_format)
@@ -863,7 +895,7 @@ class Glyphe():
             bold_shift = 0
             shear      = 0.
         else:
-            bold_shift = char_format.bold
+            bold_shift = char_format.bold_shift
             shear      = char_format.shear
             
         # ---------------------------------------------------------------------------
@@ -1088,7 +1120,7 @@ class Glyphe():
         
         if char_format is None:
             return verts*scale, faces, uvs
-        elif char_format.bold == 0 and char_format.shear == 0.:
+        elif char_format.bold_shift == 0 and char_format.shear == 0.:
             return verts*scale, faces, uvs
         else:
             return self.raster(scale=scale, delta=delta, lowest_geometry=lowest_geometry, char_format=char_format, return_faces=False), faces, uvs
@@ -1140,8 +1172,8 @@ class Glyphe():
         
         base, base0, base1 = self.get_plot_arrays(prec, with_points=True, char_format=None)
         bold_shift = 0
-        if char_format.bold != 0:
-            bold_shift = char_format.bold
+        if char_format.bold_shift != 0:
+            bold_shift = char_format.bold_shift
             bold, bold0, bold1 = self.get_plot_arrays(prec, with_points=True, char_format=char_format)
             
         
@@ -1273,3 +1305,6 @@ class Glyphe():
             gl.compute_contours()
             gl.plot_contours(char_format=char_format)
             print(gl)
+            
+            
+#Glyphe.test()

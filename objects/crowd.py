@@ -52,9 +52,9 @@ class Crowd(Transformations):
     """Manages a crowd of copies of a model made of vertices in a single object.
     
     The model can be either:
-        - A single model which is duplicated according the shape of the Tranformation
-        - An array of models. At each frame, one version is selected for each duplicate
-        - As many models as the shape of the transfpormations
+        - A single block which is duplicated according the shape of the Tranformation
+        - An array of blocks. At each frame, one version is selected for each duplicate
+        - As many blocks as the shape of the transfpormations
         
     Additional transformation can be made on groups
     
@@ -86,7 +86,7 @@ class Crowd(Transformations):
         produces an array of shape (100 x 70 x ?, 3)
     """
     
-    def __init__(self, crowd_type='Mesh', shape=(), name="Crowd", model=None):
+    def __init__(self, crowd_type='Mesh', shape=(), name="Crowd", model=None, var_blocks=False):
         """Initialize an empty crowd of a given type.
         
         Parameters
@@ -107,6 +107,12 @@ class Crowd(Transformations):
         # ----- Super initialization
         
         super().__init__(count=shape)
+
+        # ---------------------------------------------------------------------------
+        # ----- If var_blocks is True, the blocks are not the same size and the
+        # ----- the transformations must be computed with a loop, not with np.matmul
+        
+        self.var_blocks = var_blocks
         
         # ---------------------------------------------------------------------------
         # ----- No stack
@@ -152,7 +158,7 @@ class Crowd(Transformations):
         s += f"   total vertices         : {self.nverts}\n"
         s += f"   animation              : {self.animation}"
         if self.animation:
-            s += f", {len(self.models)} steps\n"
+            s += f", {len(self.blocks)} steps\n"
         else:
             s += "\n"
         s += f"Group transformations: {len(self.group_transfos)}\n"
@@ -215,7 +221,7 @@ class Crowd(Transformations):
         # ---------------------------------------------------------------------------
         # ----- Create the crowd
         
-        crowd = Crowd(wmodel.object_type, shape, name, wmodel)
+        crowd = Crowd(wmodel.object_type, shape, name, wmodel, var_blocks=False)
         
         # ---------------------------------------------------------------------------
         # ----- Use a stack to build the vertices
@@ -236,8 +242,8 @@ class Crowd(Transformations):
     # Init from a stack
     
     @classmethod
-    def FromStack(cls, stack, model, name="Crowd"):
-        crowd = cls(stack.object_type, shape=(stack.dupli_count,), name=name, model=model)
+    def FromStack(cls, stack, model, name="Crowd", var_blocks=False):
+        crowd = cls(stack.object_type, shape=(stack.dupli_count,), name=name, model=model, var_blocks=var_blocks)
         crowd.stack = stack
         crowd.init_from_stack()
         
@@ -247,7 +253,7 @@ class Crowd(Transformations):
     # Init from a list of objects
     
     @classmethod
-    def Crowds(cls, names, count=1, name="Crowd", shuffle=True, seed=None):
+    def Crowds(cls, names, count=1, name="Crowd", shuffle=True, seed=None, var_blocks=False):
         
         first = wrap(names[0])
         stack = Stack(first.object_type)
@@ -260,7 +266,7 @@ class Crowd(Transformations):
         if shuffle:
             stack.shuffle(seed)
             
-        return cls.FromStack(stack, name)
+        return cls.FromStack(stack, name, var_blocks=var_blocks)
     
     # ====================================================================================================
     # The main model is the first one in the stack
@@ -289,27 +295,52 @@ class Crowd(Transformations):
             
     
     # ====================================================================================================
-    # Set the models vertices
-    # If animation exists, the models are the available key shapes to use to compute actual base vertices
-    # If no animation, the models are either:
-    # - an array (1, nverts, ndim) of base vertices to duplicates in base array of shape duplicates
-    # - an array of (shape, nverts, ndim) which is the base array of the duplicates
+    # Set the blocks vertices
+    # If animation exists, the blocks are the available key shapes to use to compute actual base vertices
+    # If no animation, the blocks are either:
+    # - if var_blocks, a list of array(n, ndim)
+    # - if not var_blocks:
+    #   - an array (1, nverts, ndim) of base vertices to duplicates in base array of shape duplicates
+    #   - an array of (shape, nverts, ndim) which is the base array of the duplicates
     
-    def set_models(self, models):
+    def set_blocks(self, blocks):
         
-        
-        # Make sure the models shape is 3 long
-        
-        if len(models.shape) == 2:
-            models = models.reshape((1,) + models.shape)
-
-        # Store the verts and add the 1 to have 4-vectors
-        # Note that curve can have extra info after the 3-vector
+        if self.var_blocks:
             
-        self.models = np.insert(models, 3, 1, axis=-1)
+            if len(blocks) != self.size:
+                raise WError("With variable size blocks, the number of blocks must match the size of the transformation.",
+                            Class = "Crowd", Method="set_blocks",
+                            shape = self.shape, size = self.size, blocks_count=len(blocks))
+
+            self.blocks = [None] * len(blocks)
+            self.blocks_slices = [None] * len(blocks)
+            self.verts_count = 0
+            
+            index = 0
+            for i, block in enumerate(blocks):
+                
+                # Insert a fourth dimension
+                self.blocks[i]   = np.insert(block, 3, 1, axis=-1)
+                
+                # Create the slices
+                self.verts_count += len(block)
+                self.block_slices = slice(index, len(block))
+                index += len(block)
+            
+        else:
+        
+            # Make sure the blocks shape is 3 long
+            
+            if len(blocks.shape) == 2:
+                blocks = blocks.reshape((1,) + blocks.shape)
+    
+            # Store the verts and add the 1 to have 4-vectors
+            # Note that curve can have extra info after the 3-vector
+                
+            self.blocks = np.insert(blocks, 3, 1, axis=-1)
 
     # ====================================================================================================
-    # Set the models vertices
+    # Set the blocks vertices
 
     def init_from_stack(self, shape=None):
         
@@ -330,7 +361,7 @@ class Crowd(Transformations):
         # ---------------------------------------------------------------------------
         # Set the base vertices
         
-        self.set_models(self.stack.get_crowd_bases())
+        self.set_blocks(self.stack.get_crowd_bases())
         self.animation     = False
         self.true_vertices = self.stack.get_true_vert_indices()
         
@@ -343,6 +374,9 @@ class Crowd(Transformations):
     # Set an animation
     
     def set_animation(self, key_shapes):
+        
+        if self.var_blocks:
+            raise WError("Impossible to animate a Crowd width blocks of varianle size")
         
         # ----- Some controls
         
@@ -361,9 +395,9 @@ class Crowd(Transformations):
                     key_shapes = np.shape(key_shapes),
                     stack = self.stack)
             
-        self.set_models(key_shapes)
+        self.set_blocks(key_shapes)
         self.animation      = True
-        self.models_indices = np.zeros(self.shape, np.float)
+        self.blocks_indices = np.zeros(self.shape, np.float)
         
 
     # ====================================================================================================
@@ -532,72 +566,102 @@ class Crowd(Transformations):
         mem_locked = self.locked
         self.locked = 1
         
-        # -----------------------------------------------------------------------------------------------------------------------------
-        # Step 1 : prepare the base vertices
-        
-        # Since the model can manage extra info after the 4 component, we need the length of the actual vectors
-        ndim = np.shape(self.models)[-1]
-        
-        if self.animation:
+        if self.var_blocks:
             
-            imax = len(self.models)-1
-            if imax == 0:
-                base = self.models[np.zeros(self.shape, int)]
-            else:
-                t   = np.array(self.models_indices, np.float)
+            ndim = np.shape(self.blocks[0])[-1]
+            
+            verts = np.zeros((self.verts_count, ndim))
+            
+            for i, mat in enumerate(self.tmat.reshape(self.size, 4, 4)):
                 
-                i0  = np.floor(t).astype(int)
-                i0[i0 < 0]     = 0
-                i0[i0 >= imax] = imax-1
-                p  = np.expand_dims(np.expand_dims(t - i0, axis=-1), axis=-1)
+                block = np.array(self.blocks[i])
                 
-                base = self.models[i0]*(1-p) + self.models[i0+1]*p        
+                # ----- Group transformation
+                
+                for gt in self.group_transfos.values():
+                    block[gt.indices, :4] = gt.pivot + gt.transfo.transform_verts4(block[gt.indices, :4] - gt.pivot)
+                    
+                # ---- Transformation
+                
+                block[..., :3] = self.transform_verts43(block[..., :4])
+                
+                # ----- Set in the target array while suppressing the 4th dim
+                
+                verts[self.block_slices[i]] = np.delete(block, 3, axis=-1)
+                
+            # ----- Set the vertices to the object
+            
+            self.set_vertices(verts.reshape(self.total_verts, ndim-1))
+        
+        
         else:
-            if (len(self.group_transfos) == 0) and (len(self.stack) == 1):
-                # Models is shape (1, verts, ndim)
-                base = self.models
-            else:
-                # Models is shape (shape, verts, dim)
-                # Make sure the shape is correct
-                base = np.resize(self.models, self.shape + (self.block_size, ndim))
+        
+            # -----------------------------------------------------------------------------------------------------------------------------
+            # Step 1 : prepare the base vertices
+            
+            # Since the model can manage extra info after the 4th component, we need the length of the actual vectors
+            ndim = np.shape(self.blocks)[-1]
+            
+            if self.animation:
                 
- 
-        # -----------------------------------------------------------------------------------------------------------------------------
-        # Step 2 : group transformations
-        
-        for gt in self.group_transfos.values():
-            base[..., gt.indices, :4] = gt.pivot + gt.transfo.transform_verts4(base[..., gt.indices, :4] - gt.pivot)
-            
-        # -----------------------------------------------------------------------------------------------------------------------------
-        # Step 3 : transformation
-        
-        # ----- Compute the vertices
-        
-        verts = self.transform_verts43(base[..., :4])
-        
-        # ----- Add extra information
-        # if ndim == 6 : extra info is only radius and tilt
-        # if ndim == 7 : radius, tilt and w
-        
-        if ndim >= 6:
-            # base is structure : V4 extra info
-            # We must copy extra info after V3
-            
-            if ndim == 7:
-                verts = np.insert(verts, (3, 3, 3), 0, axis=-1)
+                imax = len(self.models)-1
+                if imax == 0:
+                    base = self.models[np.zeros(self.shape, int)]
+                else:
+                    t   = np.array(self.models_indices, np.float)
+                    
+                    i0  = np.floor(t).astype(int)
+                    i0[i0 < 0]     = 0
+                    i0[i0 >= imax] = imax-1
+                    p  = np.expand_dims(np.expand_dims(t - i0, axis=-1), axis=-1)
+                    
+                    base = self.models[i0]*(1-p) + self.models[i0+1]*p        
             else:
-                verts = np.insert(verts, (3, 3), 0, axis=-1)
+                if (len(self.group_transfos) == 0) and (len(self.stack) == 1):
+                    # Models is shape (1, verts, ndim)
+                    base = self.blocks
+                else:
+                    # Models is shape (shape, verts, dim)
+                    # Make sure the shape is correct
+                    base = np.resize(self.blocks, self.shape + (self.block_size, ndim))
+                    
+     
+            # -----------------------------------------------------------------------------------------------------------------------------
+            # Step 2 : group transformations
+            
+            for gt in self.group_transfos.values():
+                base[..., gt.indices, :4] = gt.pivot + gt.transfo.transform_verts4(base[..., gt.indices, :4] - gt.pivot)
                 
-            verts[..., 3:] = base[..., 4:]
+            # -----------------------------------------------------------------------------------------------------------------------------
+            # Step 3 : transformation
             
-        # ----- Apply
-        
-        self.set_vertices(verts.reshape(self.total_verts, ndim-1))
+            # ----- Compute the vertices
             
-        # ----- Some cleaning of big arrays
-        
-        del verts
-        
+            verts = self.transform_verts43(base[..., :4])
+            
+            # ----- Add extra information
+            # if ndim == 6 : extra info is only radius and tilt
+            # if ndim == 7 : radius, tilt and w
+            
+            if ndim >= 6:
+                # base is structure : V4 extra info
+                # We must copy extra info after V3
+                
+                if ndim == 7:
+                    verts = np.insert(verts, (3, 3, 3), 0, axis=-1)
+                else:
+                    verts = np.insert(verts, (3, 3), 0, axis=-1)
+                    
+                verts[..., 3:] = base[..., 4:]
+                
+            # ----- Apply
+            
+            self.set_vertices(verts.reshape(self.total_verts, ndim-1))
+                
+            # ----- Some cleaning of big arrays
+            
+            del verts
+            
         # ----------------------------------------------------------------------------------------------------
         # Restore locked state
 

@@ -8,8 +8,9 @@ Created on Sat Sep  4 16:39:44 2021
 
 import numpy as np
 
+from .glyphe import CharFormat
 from .fonts import Font
-from .aligner import Token
+from .aligner import FText
 from ..objects.stacker import Stack, MeshCharStacker, CurveCharStacker
 from ..objects.crowd import Crowd
 from ..wrappers.wrap_function import wrap
@@ -79,21 +80,22 @@ class Chars(Crowd):
         
         # ---- The text
         
-        self.token        = None
+        self.ftext        = None
         
         self.align_x      = 'LEFT'
         self.align_y      = 'TOP'
         self.align_width  = None
         self.align_height = None
-        self.lines_       = None
         
         self.text = "Chars"
-        
             
             
     def reset(self):
         self.stack.reset()
         self.chars_index = {}
+        
+    # ---------------------------------------------------------------------------
+    # glyphes parameters
         
     @property
     def mesh_delta(self):
@@ -110,10 +112,16 @@ class Chars(Crowd):
     @mesh_high_geometry.setter
     def mesh_high_geometry(self, value):
         self.font.font.raster_low = not value
+        
+    # ---------------------------------------------------------------------------
+    # Mesh or Curve
 
     @property
     def char_type(self):
         return self.stack.object_type
+
+    # ---------------------------------------------------------------------------
+    # Access to stack by char
     
     def char_index(self, char):
         
@@ -131,58 +139,64 @@ class Chars(Crowd):
                 
         return index
     
+    # ---------------------------------------------------------------------------
+    # Set an array of chars
+    # Initialize the geométry from these chars
+    
     def set_chars(self, chars):
         self.stack.stack_indices = [self.char_index(c) for c in chars]
         self.init_from_stack()
+
+    # ---------------------------------------------------------------------------
+    # Text property
         
     @property
     def text(self):
-        if self.token is None:
+        if self.ftext is None:
             return ""
         else:
-            return self.token.text
+            return self.ftext.text
+
+    # ---------------------------------------------------------------------------
+    # Setting the text reset the stack and the text formatter
         
     @text.setter
     def text(self, text):
         
         self.lock()
         
-        self.token = Token(text)
-        self.token.split()
+        self.ftext = FText(text)
+        self.set_chars(self.ftext.array_of_chars)
         
+        self.set_metrics()
         self.align()
         
         self.unlock()
         
-    def align(self, width=None, align_x='LEFT', height=None, align_y='TOP'):
-
-        self.align_x      = align_x
-        self.align_y      = align_y
-        self.align_width  = width
-        self.align_height = height
+    # ---------------------------------------------------------------------------
+    # Set the chars metrics to allow the alignment
+    # By default, setting the metrics reset the chars because the glyphes
+    # can change
         
+    def set_metrics(self):
+        if self.ftext is None:
+            return
+        
+        self.ftext.set_metrics(self.font.font)
+        
+    def align(self):
+        
+        if self.ftext is None:
+            return
+
         self.lock()
         
-        self.reset()
+        self.ftext.align(width=self.align_width, align_x = self.align_x)
         
-        chars, xyw = self.token.align(metrics=self.font.font,
-                            width=self.align_width, align_x=self.align_x,
-                            height=self.align_height, align_y=self.align_y)
-        
-        self.set_chars(chars)
-        
-        for i in range(len(xyw)):
-            loc = (xyw[i, 0], xyw[i, 1], 0)
-            self[i] = geo.tmatrix(location=loc)
+        for i in range(len(self.ftext)):
+            self[i] = geo.tmatrix(location=self.ftext[i].location)
 
         self.unlock()
-        
-        # ----- Store the lines
-        
-        self.lines_ = [np.where(xyw[:, 1] == y)[0] for y in reversed(np.unique(xyw[:, 1]))]
-        
-    def realign(self):
-        self.align(self.align_width, self.align_x, self.align_height, self.align_y)
         
     # ===========================================================================
     # Char size

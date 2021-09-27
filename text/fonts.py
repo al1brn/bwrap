@@ -1259,28 +1259,28 @@ class Ttf(Struct):
         
     def char_metrics(self, c, char_format=None):
         
-        if True:
-            glyphe = self.get_glyphe(ord(c))
-        else:
-            glyf_index = self.code_to_glyf_index(ord(c))
-            if glyf_index is None:
-                return None
-            
-            glyf = self.get_glyf(glyf_index)
+        glyphe = self.get_glyphe(ord(c))
         
         class Metrics():
             pass
         
+        xscale = 1 if char_format is None else char_format.xscale
+        yscale = 1 if char_format is None else char_format.yscale
+        
         m = Metrics()
         
-        m.xMin     = glyphe.xMin(char_format) * self.ratio
-        m.xMax     = glyphe.xMax(char_format) * self.ratio
-        m.xwidth   = glyphe.xwidth(char_format)
-        m.lsb      = glyphe.lsb(char_format)
+        m.xMin     = glyphe.xMin(char_format) * self.ratio * xscale
+        m.xMax     = glyphe.xMax(char_format) * self.ratio * xscale
+        m.xwidth   = glyphe.xwidth(char_format) * xscale
+        m.lsb      = glyphe.lsb(char_format) * xscale
+        m.width    = m.xMax - m.xMin
+        m.after    = m.xwidth - m.width
 
-        m.descent  = glyphe.yMin(char_format) * self.ratio
-        m.ascent   = glyphe.yMax(char_format) * self.ratio
+        m.descent  = glyphe.yMin(char_format) * self.ratio * yscale
+        m.ascent   = glyphe.yMax(char_format) * self.ratio * yscale
         m.height   = m.ascent - m.descent
+        
+        m.line_height = self.line_height * yscale
             
         return m
     
@@ -1318,7 +1318,7 @@ class Ttf(Struct):
     # Char formatting
 
     @staticmethod
-    def format_verts(verts, char_format):
+    def format_verts_OLD(verts, char_format):
             
         # Bold / fine
         if char_format.bold != 1:

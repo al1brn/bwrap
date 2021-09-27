@@ -445,13 +445,15 @@ class Stack():
     """Manage a stacke of Stackers to build the target object of a Crowd and the vertices array.
     """
     
-    def __init__(self, object_type):
+    def __init__(self, object_type, var_blocks=False):
         """Initialize the Stack to an empty stack.
 
         Parameters
         ----------
         object_type : str in 'Mesh', 'Curve'
             The type of target pbject.
+        var_blocks : bool
+            The blocks have a variable size rather than the max block size
 
         Returns
         -------
@@ -459,6 +461,7 @@ class Stack():
         """
         
         self.object_type = object_type
+        self.var_blocks  = var_blocks
 
         self.stackers  = [] # The list of stackers
         
@@ -1239,25 +1242,47 @@ class Stack():
 
     def get_crowd_mesh_bases(self):
         """Build the vertices array used by a mesh Crowd.
+        
+        The results depends upon the property var_blocks.
+        - if var_blocks is False (default):
+            All the blocks have the same size, the shape result is (l, m, 3)
+            where m is the block size
+        - if var_blocks is True:
+            The result is a list of np.arrays of shape (s, 3) where s is the
+            size of the duplicate
+            
 
         Returns
         -------
-        array (l, m, 3) of floats
+        array (l, m, 3) of floats or list of array(s, 3) of floats
             The l data blocks of m vertices.
         """
         
-        if len(self) == 1:
-            return self[0].verts.reshape(1, self[0].nverts, 3)
-        
-        stack_indices = self.stack_indices
-        n = len(stack_indices)
-        nmax = self.max_nverts
-        verts = np.zeros((n, nmax, 3))
-        
-        for i, i_stacker in enumerate(stack_indices):
-            verts[i, :self[i_stacker].nverts, :] = self[i_stacker].verts
+        if self.var_blocks:
+            if len(self) == 1:
+                return [self[0].verts]
             
-        return verts
+            stack_indices = self.stack_indices
+            
+            verts = [None] * self.dupli_count
+            for i, i_stacker in enumerate(stack_indices):
+                verts[i] = self[i_stacker].verts
+                
+            return verts
+        
+        else:
+            if len(self) == 1:
+                return self[0].verts.reshape(1, self[0].nverts, 3)
+            
+            stack_indices = self.stack_indices
+            n = len(stack_indices)
+            nmax = self.max_nverts
+            verts = np.zeros((n, nmax, 3))
+            
+            for i, i_stacker in enumerate(stack_indices):
+                verts[i, :self[i_stacker].nverts, :] = self[i_stacker].verts
+                
+            return verts
         
     # ----------------------------------------------------------------------------------------------------
     # The curve base vertices for a crowd
@@ -1281,19 +1306,32 @@ class Stack():
         
         ndim = self.curve_dim
         
-        if len(self) == 1:
-            return self[0].verts.reshape(1, self[0].nverts, ndim)
-        
-        stack_indices = self.stack_indices
-        n = len(stack_indices)
-        nmax = self.max_nverts
-        verts = np.zeros((n, nmax, ndim))
-        
-        for i, i_stacker in enumerate(stack_indices):
-            vs = self[i_stacker].verts
-            verts[i, :self[i_stacker].nverts, :vs.shape[-1]] = vs
+        if self.var_blocks:
+            if len(self) == 1:
+                return [self[0].verts.reshape(self[0].nverts, ndim)]
             
-        return verts
+            stack_indices = self.stack_indices
+            
+            verts = [None] * len(stack_indices)
+            
+            for i, i_stacker in enumerate(stack_indices):
+                verts[i] = self[i_stacker].verts
+                
+            return verts
+        else:
+            if len(self) == 1:
+                return self[0].verts.reshape(1, self[0].nverts, ndim)
+            
+            stack_indices = self.stack_indices
+            n = len(stack_indices)
+            nmax = self.max_nverts
+            verts = np.zeros((n, nmax, ndim))
+            
+            for i, i_stacker in enumerate(stack_indices):
+                vs = self[i_stacker].verts
+                verts[i, :self[i_stacker].nverts, :vs.shape[-1]] = vs
+                
+            return verts
     
     # ----------------------------------------------------------------------------------------------------
     # Get crowd vertex indices to extract the true vertices
@@ -1316,6 +1354,13 @@ class Stack():
             The indices with the data blocks which exist in the target object.
         """
         
+        # ----- If variables blocks, no lost vertices
+        
+        if self.var_blocks:
+            return None
+
+        # ----- The slices
+        
         slices  = self.slices("nverts")
         
         # ----- All instances have the same size
@@ -1337,9 +1382,4 @@ class Stack():
                 extract[index:index+size] = np.arange(vert_index, vert_index+size)
             
         return extract
-    
-
-        
-            
-        
 
