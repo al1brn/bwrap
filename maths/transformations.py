@@ -197,7 +197,7 @@ class Transformations():
         
     @property
     def size(self):
-        return np.product(self.shape)
+        return int(np.product(self.shape))
     
     def resize(self, shape):
         if type(shape) is int:

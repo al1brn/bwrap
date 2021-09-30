@@ -17,7 +17,7 @@ Created on Thu Aug 12 22:57:37 2021
 import os
 import numpy as np
 
-if False:
+if True:
     
     from ..core.breader import DataType, Struct, BFileReader, Flags
     from ..maths.closed_faces import closed_faces
@@ -106,14 +106,6 @@ class CMap0(Struct):
         else:
             return 0
     
-    def dump(self):
-        print('-'*60)
-        print("Dump de cmap0")
-        print()
-        print(f"{self.glyphIndexArray[:30]}...")
-        print()
-    
-    
 # -----------------------------------------------------------------------------------------------------------------------------
 # cmap format 4
     
@@ -189,41 +181,7 @@ class CMap4(Struct):
                     break
         
         return 0
-    
-    def dump(self):
-        print('-'*60)
-        print("Dump de cmap4")
-        print()
-        print(f"{len(self.endCode)} segments to map {self.total_chars} chars")
-        for iseg in range(len(self.startCode)):
-            print(f" > segment {iseg}: [{self.startCode[iseg]:3d} - {self.endCode[iseg]:3d}]")
-            wd = 0
-            for ic in range(self.startCode[iseg], self.endCode[iseg]+1):
-                ro = self.idRangeOffset[iseg]
-                cc = " " if ic < 32 else chr(ic)
-                s = f"     {ic:4d} ({cc}): idRangeOffset= {ro:4d}"
-                if ro == 0:
-                    iglyf = self.idDelta[iseg] + ic
-                else:
-                    ofs = ro // 2 + (ic - self.startCode[iseg])
-                    s += f", diff= {(ic - self.startCode[iseg])}, ofs= {ofs}"
-                    if iseg + ofs > len(self.idRangeOffset):
-                        s += f" OUT OF RANGE {iseg + ofs} > {len(self.idRangeOffset)}"
-                        iglyf = 0
-                    else:
-                        iglyf = self.idRangeOffset[iseg + ofs]
-                s += f" --> {iglyf:5d}"
-                print(s)
-                
-                wd += 1
-                if wd == 5:
-                    print("...\n")
-                    break
-            
-            print()
-            if iseg == 5:
-                break
-        
+     
     
 # -----------------------------------------------------------------------------------------------------------------------------
 # cmap format 12
@@ -265,25 +223,6 @@ class CMap12(Struct):
             if code >= group.startCharCode and code <= group.endCharCode:
                 return group.startGlyphCode
         return 0
-    
-    def dump(self):
-        print('-'*60)
-        print("Dump de cmap12")
-        print()
-        print(f"{len(self.groups)} groups to map {self.total_chars} chars")
-        for ig, group in enumerate(self.groups):
-            print(f" > group {ig:3d}: [{group.startCharCode:3d} - {group.endCharCode}]")
-            wd = 0
-            for ic in range(group.startCharCode, group.endCharCode+1):
-                cc = " " if ic < 32 else chr(ic)
-                print(f"     {ic:4d} ({cc}) --> {group.startGlyphCode:5d}")
-                wd += 1
-                if wd == 5:
-                    print("     ...\n")
-                    break
-            print()
-            if ig > 5:
-                break
 
     
 # -----------------------------------------------------------------------------------------------------------------------------
@@ -346,36 +285,6 @@ class CMap(MainTable):
             if code != 0:
                 return code
         return 0
-        
-    
-    def dump(self):
-        print("="*60)
-        print(f"cmap dump: {len(self.cmaps)} cmaps {[cm.format for cm in self.cmaps]} ({self.numberSubtables})")
-        print()
-
-        for cm in self.cmaps:
-            cm.dump()
-                
-        if len(self.cmaps) > 1:
-            oks = 0
-            kos = 0
-            wd = 0
-            for i in range(0, 256):
-                codes = [cm.get_glyf_index(i) for cm in self.cmaps]
-                oks += 1
-                for v in codes:
-                    if v != codes[0]:
-                        kos += 1
-                        oks -= 1
-                        if wd <= 20:
-                            print(f"   KO: {i:3d}", codes)
-                            if wd == 20:
-                                print("...")
-                        wd += 1
-                        break
-            print()
-            print(f"Several cmaps formats: oks={oks} kos={kos}")
-            print()
 
 # =============================================================================================================================
 # loca table
@@ -440,8 +349,6 @@ class Hmtx(MainTable):
         self.hMetrics = np.zeros((count, 2), int)
 
         hMetrics  = reader.read_table(hm_count, Hmtx.ITEM)
-        
-        #print(f"hm_count {hm_count} gl_count {gl_count} shape {self.hMetrics.shape}")
         
         self.hMetrics[:hm_count, 0] = [hm.advanceWidth for hm in hMetrics]
         self.hMetrics[:hm_count, 1] = [hm.leftSideBearing for hm in hMetrics]
@@ -609,7 +516,9 @@ class Glyf(Struct):
                 comp.yscale  = reader.read(SFRAC)
             
             return comp
-                
+        
+        # ---------------------------------------------------------------------------
+        # Simple glyphe
         
         if self.simple:
             
@@ -673,8 +582,6 @@ class Glyf(Struct):
                 if len(self.flags) >= points_count:
                     break
                 
-            #print("flags", [s_flags(flag) for flag in self.flags])
-                    
             # ----- Read the x then y coordinates
             
             for i in range(points_count):
@@ -683,70 +590,11 @@ class Glyf(Struct):
             for i in range(points_count):
                 self.yCoordinates.append(read_y(self.flags[i]))
                 
-                
-            # =========================
-            
             self.glyphe = Glyphe(self.ttf, self)
-            
-            if False:
-                
-                # ----- The raw points of the glyf
-                self.raw_points = np.stack((np.cumsum(self.xCoordinates), np.cumsum(self.yCoordinates)), axis=1)
-                
-                # ----- Let's normalize the coordinates in a normalized square
-                #r = 1 / (ttf.os_2.sTypoAscender - ttf.os_2.sTypoDescender)
-                r = 1
-                self.points = self.raw_points * r
-                self.xMin = self.xMin * r
-                self.yMin = self.yMin * r
-                self.xMax = self.xMax * r
-                self.yMax = self.yMax * r
-                
-                # ---- Create the contours with the intermediary points
-                
-                self.contours = []
-                contour = None
-                last_flag = 0x00
-                for index in range(len(self.points)):
-                    
-                    # Current point
-                    pt = np.array(self.points[index])
-                    
-                    # First of the contour
-                    if contour is None:
-                        contour   = [pt]
-                        last_flag = self.flags[index]
-                        flag0     = last_flag
-                        
-                    # Add an intermediary point to altern on and off curve points
-                    else:
-                        if self.flags[index] & 0x01:
-                            if last_flag & 0x01:
-                                contour.append((contour[-1] + pt)/2)
-                        else:
-                            if (last_flag & 0x01) == 0:
-                                contour.append((contour[-1] + pt)/2)
-                        contour.append(pt)
-                        last_flag = self.flags[index]
-                        
-                    # Last point of the curve
-                    if index in self.endPtsOfContours:
-                        
-                        # Intermediary point with the first one 
-                        if (last_flag & 0x01) == (flag0 & 0x01):
-                            contour.append((contour[0] + pt)/2)
-                            
-                        # Ensure flag 0 is on curve
-                        if (flag0 & 0x01) == 0:
-                            cont = list(contour)
-                            contour = [cont[1:]]
-                            contour.append(cont[0])
-                            
-                        # Let's start a new contour
-                        self.contours.append(contour)
-                        contour = None
-                    
             self.loaded = True
+            
+        # ---------------------------------------------------------------------------
+        # Compound glyphe
             
         else:
             self.glyphe = Glyphe(self.ttf)
@@ -801,7 +649,6 @@ class Glyf(Struct):
                 
                 self.glyphe.add_glyphe(gl)
                 
-                #print(glyf)
                 if not comp.MORE_COMPONENTS:
                     break
                 
@@ -812,7 +659,6 @@ class Glyf(Struct):
         self.glyphe.glyf_index = self.glyf_index
         
         reader.close()
-        
         
     # For debug: python source code
     def py_source(self):
@@ -1033,7 +879,6 @@ class Ttf(Struct):
         self.tables = {}
         for t in tb:
             self.tables[t.name] = t
-        #print(f"Tables: {self.tables.keys()}")
         
         # ----- Unsupported
         
@@ -1131,6 +976,7 @@ class Ttf(Struct):
         # Default ratio for the end user metrics
         self.base_ratio   = 1/1560
         self.scale        = 1.
+        self.bold_base    = self.get_glyphe(ord('.')).width()*.3
         
         # ---------------------------------------------------------------------------
         # ----- Loaded = ok
@@ -1252,10 +1098,19 @@ class Ttf(Struct):
         self.scale_ = value
         self.ratio = self.scale_ * self.base_ratio
         
-        self.space_width = self.get_glyphe(32).xwidth * self.ratio
+        self.space_width = self.get_glyphe(32).xwidth() * self.ratio
         h0 = self.hhea.lineGap
-        h1 = self.get_glyphe(ord("M")).ascent * 1.5
+        h1 = self.get_glyphe(ord("M")).ascent() * 1.5
         self.line_height = max(h0, h1) * self.ratio
+        
+    
+    def adapt_char_format(self, char_format):
+        
+        if char_format is None:
+            return None
+        
+        char_format.bold_shift = int(self.bold_base*char_format.bold)
+        return char_format
         
     def char_metrics(self, c, char_format=None):
         
@@ -1267,17 +1122,24 @@ class Ttf(Struct):
         xscale = 1 if char_format is None else char_format.xscale
         yscale = 1 if char_format is None else char_format.yscale
         
+        # Bold is expressed as a float
+        # Algorithm uses an int in Glyphe units
+        char_format = self.adapt_char_format(char_format)
+        
         m = Metrics()
         
-        m.xMin     = glyphe.xMin(char_format) * self.ratio * xscale
-        m.xMax     = glyphe.xMax(char_format) * self.ratio * xscale
-        m.xwidth   = glyphe.xwidth(char_format) * xscale
-        m.lsb      = glyphe.lsb(char_format) * xscale
+        rx = self.ratio * xscale
+        ry = self.ratio * yscale
+        
+        m.xMin     = glyphe.xMin(char_format) * rx
+        m.xMax     = glyphe.xMax(char_format) * rx
+        m.xwidth   = glyphe.xwidth(char_format) * rx
+        m.lsb      = glyphe.lsb(char_format) * rx
         m.width    = m.xMax - m.xMin
         m.after    = m.xwidth - m.width
 
-        m.descent  = glyphe.yMin(char_format) * self.ratio * yscale
-        m.ascent   = glyphe.yMax(char_format) * self.ratio * yscale
+        m.descent  = glyphe.yMin(char_format) * ry
+        m.ascent   = glyphe.yMax(char_format) * ry
         m.height   = m.ascent - m.descent
         
         m.line_height = self.line_height * yscale
@@ -1291,18 +1153,12 @@ class Ttf(Struct):
         else:
             return m.xwidth
         
-        #_, _, aw, _ = self.char_raw_metrics(c)
-        #return aw * self.ratio
-        
     def char_width(self, c, char_format=None):
         m = self.char_metrics(c, char_format)
         if m is None:
             return 0
         else:
             return m.xMax
-        
-        _, xMax, _, _ = self.char_raw_metrics(c)
-        return xMax * self.ratio
 
     def char_lsb(self, c, char_format=None):
         m = self.char_metrics(c, char_format)
@@ -1310,93 +1166,20 @@ class Ttf(Struct):
             return 0
         else:
             return m.lsb
-        
-        _, _, _, lsb = self.char_raw_metrics(c)
-        return lsb * self.ratio
-    
-    # ===========================================================================
-    # Char formatting
-
-    @staticmethod
-    def format_verts_OLD(verts, char_format):
-            
-        # Bold / fine
-        if char_format.bold != 1:
-            verts[..., 0] *= char_format.bold
-            
-        # Shear
-        if char_format.shear != 0:
-            sh = np.clip(char_format.shear, -1, 1)
-            verts[..., 0] += verts[..., 1]*sh
-            
-        # Scale
-        if char_format.scale != 1:
-            verts[..., :2] *= char_format.scale
-                
-        return verts
     
     # ===========================================================================
     # Access to the curves
     
-    def mesh_char(self, c, return_uvmap=False, char_format=None):
-        
-        char_format = CharFormat(bold=1, shear=-0)
-        
-        vfu = self.get_glyphe(ord(c)).raster(
-            scale = self.ratio, delta=self.raster_delta,
-            lowest_geometry=self.raster_low, return_uvmap=return_uvmap)
-        
-        if char_format is not None:
-            v = Ttf.format_verts(vfu[0], char_format)
-            if return_uvmap:
-                return v, vfu[1], vfu[2]
-            else:
-                return v, vfu[1]
-            
-        return vfu
+    def mesh_char(self, c, char_format=None, return_faces=False):
+
+        return self.get_glyphe(ord(c)).raster(
+            scale = self.ratio, delta=self.raster_delta, lowest_geometry=self.raster_low,
+            char_format=self.adapt_char_format(char_format), return_faces=return_faces)
     
     def curve_char(self, c, char_format=None):
-        beziers = self.get_glyphe(ord(c)).beziers
-        
-        if char_format is None:
-            return [bz*self.ratio for bz in beziers]
-        else:
-            return [Ttf.format_verts(bz*self.ratio, char_format()) for bz in beziers]
-    
-    # ===========================================================================
-    # Several chars with location
-    
-    def mesh_chars(self, chars, locations=None, delta=10):
-        
-        if locations is None:
-            w = np.array([self.char_xwidth(c) for c in chars])
-            locations = np.zeros((len(chars), 3), np.float)
-            locations[1:, 0] = np.cumsum(w[:-1])
-            
-        verts = np.zeros((0, 3), np.float)
-        faces = []
-        for c, location in zip(chars, locations):
-            vf = self.mesh_char(c, delta, location)
-            if vf is not None:
-                n = len(verts)
-                verts = np.append(verts, vf[0], axis=0)
-                faces.extend([[n + f for f in face] for face in vf[1]])
-                              
-        return verts, faces
-            
-    def curve_chars(self, chars, locations=None):
-        
-        if locations is None:
-            w = np.array([self.char_xwidth(c) for c in chars])
-            locations = np.zeros((len(chars), 3), np.float)
-            locations[1:, 0] = np.cumsum(w[:-1])
-            
-        curves = []
-        for c, location in zip(chars, locations):
-            curves.extend(self.curve_char(c, location))
-                              
-        return curves
-    
+
+        beziers = self.get_glyphe(ord(c)).beziers(self.adapt_char_format(char_format))
+        return [bz*self.ratio for bz in beziers]
     
     # ===========================================================================
     # Geometry
@@ -1586,21 +1369,5 @@ class Font():
     @property
     def sub_family(self):
         return [font.font_sub_family for font in self]
-
-
-path = "/System/Library/Fonts/Supplemental/"
-fname = "arial.ttf"
-
-font = Font(path + fname)
-
-c = "%"
-gl = font.font.get_glyf(font.font.code_to_glyf_index(ord(c)))
-gl.py_source()
-
-if False:
-    for c in "S": #"mociE":
-        g = font.font.get_glyphe(ord(c))
-        g.plot_contours(prec=12, bold_shift=70)
-
 
 

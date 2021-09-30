@@ -226,7 +226,7 @@ class Crowd(Transformations):
         # ---------------------------------------------------------------------------
         # ----- Use a stack to build the vertices
         
-        crowd.stack = Stack(wmodel.object_type)
+        crowd.stack = Stack(wmodel.object_type, var_blocks=crowd.var_blocks)
         crowd.stack.stack_object(wmodel, crowd.size)
         
         # ----- Set the geometry from the stack
@@ -292,7 +292,6 @@ class Crowd(Transformations):
         
         self.wobject.wmaterials.clear()
         self.wobject.wmaterials.copy_materials_from(self.wmodel, append=True)
-            
     
     # ====================================================================================================
     # Set the blocks vertices
@@ -302,6 +301,30 @@ class Crowd(Transformations):
     # - if not var_blocks:
     #   - an array (1, nverts, ndim) of base vertices to duplicates in base array of shape duplicates
     #   - an array of (shape, nverts, ndim) which is the base array of the duplicates
+    
+    def set_block(self, index, block):
+        
+        #print("set_block, index=", index, "char", self.ftext.array_of_chars[index], "len", len(self.blocks[index]))
+        
+        if self.var_blocks:
+            
+            if len(self.blocks[index]) != len(block):
+                chars = self.ftext.array_of_chars
+                raise WError(f"Impossible to set a block of length {len(block)} in the Crowd '{self.wobject.name}'.\n" +
+                             f"Expected length is {len(self.blocks[index])}.",
+                             Class = "Crowd", Method="set_block",
+                             index = index,
+                             block_shape = np.shape(block),
+                             lengths=[(i, chars[i], len(self.blocks[i])) for i in range(len(chars))])
+                
+            # Insert a fourth dimension
+            self.blocks[index] = np.insert(block, 3, 1, axis=-1)
+            
+        else:
+            raise WError("Not yet implemented")
+                
+        
+        
     
     def set_blocks(self, blocks):
         
@@ -324,7 +347,7 @@ class Crowd(Transformations):
                 
                 # Create the slices
                 self.verts_count += len(block)
-                self.block_slices = slice(index, len(block))
+                self.blocks_slices[i] = slice(index, index + len(block))
                 index += len(block)
             
         else:
@@ -570,7 +593,7 @@ class Crowd(Transformations):
             
             ndim = np.shape(self.blocks[0])[-1]
             
-            verts = np.zeros((self.verts_count, ndim))
+            verts = np.zeros((self.verts_count, ndim-1))
             
             for i, mat in enumerate(self.tmat.reshape(self.size, 4, 4)):
                 
@@ -579,19 +602,19 @@ class Crowd(Transformations):
                 # ----- Group transformation
                 
                 for gt in self.group_transfos.values():
-                    block[gt.indices, :4] = gt.pivot + gt.transfo.transform_verts4(block[gt.indices, :4] - gt.pivot)
+                    block[gt.indices, :4] = gt.pivot + gt.transfo[i].transform_verts4(block[gt.indices, :4] - gt.pivot)
                     
                 # ---- Transformation
                 
-                block[..., :3] = self.transform_verts43(block[..., :4])
+                block[..., :3] = self[i].transform_verts43(block[..., :4])
                 
                 # ----- Set in the target array while suppressing the 4th dim
                 
-                verts[self.block_slices[i]] = np.delete(block, 3, axis=-1)
+                verts[self.blocks_slices[i]] = np.delete(block, 3, axis=-1)
                 
             # ----- Set the vertices to the object
             
-            self.set_vertices(verts.reshape(self.total_verts, ndim-1))
+            self.set_vertices(verts.reshape(self.verts_count, ndim-1))
         
         
         else:

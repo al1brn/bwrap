@@ -332,7 +332,7 @@ class MeshCharStacker(Stacker):
     def __init__(self, char, vfu):
         """Initialize the stacker with the vertices, the faces and the uvs map.
         This triplet is produced by the method 'raster' of a Glyphe with
-        the argument return_uvmap = True.
+        the argument return_faces = True.
 
         Parameters
         ----------
@@ -860,7 +860,7 @@ class Stack():
         
         n = self.dupli_count
         stacker.dupl_indices = np.arange(n, n+count)
-        
+
         return stacker
     
     def stack_object(self, name, count=1):
@@ -1259,9 +1259,7 @@ class Stack():
         """
         
         if self.var_blocks:
-            if len(self) == 1:
-                return [self[0].verts]
-            
+
             stack_indices = self.stack_indices
             
             verts = [None] * self.dupli_count

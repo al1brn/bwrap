@@ -672,7 +672,7 @@ class Glyphe():
     
     def clone(self):
         
-        clone          = Glyphe()
+        clone          = Glyphe(self.ttf)
         
         clone.on_curve = list(self.on_curve)
         clone.points   = np.array(self.points)
@@ -777,7 +777,6 @@ class Glyphe():
                     contour = np.append(contour, [(contour[-1] + pt)//2], axis=0)
                     
                 # Add the point
-                #print("oooo", contour)
                 contour = np.append(contour, [pt], axis=0)
                 last_OC = self.on_curve[index]
                 
@@ -812,9 +811,6 @@ class Glyphe():
         # Compute the zigzags of the contours
         
         self.contours_zigzags = [ZigZags(contour) for contour in self.contours]
-        
-        for zzs in self.contours_zigzags:
-            print(zzs.hrz_lines())
 
     # ----------------------------------------------------------------------------------------------------
     # As an array of contours
@@ -838,21 +834,14 @@ class Glyphe():
         if char_format is None:
             return self.xMax_
         else:
-            return self.xMax + char_format.bold_shift
+            return self.xMax_ + char_format.bold_shift
             
-            return int((self.xMax + char_format.bold_shift)*char_format.scale)
         
     def yMin(self, char_format=None):
         return self.yMin_
-    
-        scale = 1 if char_format is None else char_format.scale
-        return int(self.yMin_ * scale)
         
     def yMax(self, char_format=None):
         return self.yMax_
-        
-        scale = 1 if char_format is None else char_format.scale
-        return int(self.yMax_ * scale)
     
     def xwidth(self, char_format=None):
         
@@ -865,8 +854,6 @@ class Glyphe():
             return xw
         else:
             return xw + char_format.bold_shift
-            
-            return int((xw + char_format.bold_shift) * char_format.scale)
 
     def width(self, char_format=None):
         return self.xMax(char_format) - self.xMin(char_format)
@@ -1002,7 +989,7 @@ class Glyphe():
             
             beziers.append(bz)
                 
-        return self.beziers
+        return beziers
     
     # ===========================================================================
     # Rasterization
@@ -1023,11 +1010,16 @@ class Glyphe():
         else:
             
             contours = self.fmt_contours(char_format)
+            
+        # ---------------------------------------------------------------------------
+        # The rasterization is computed on the unformatted contours
+        
+        base_contours = self.contours
         
         # ---------------------------------------------------------------------------
         # Compute the rasterized contours
         
-        for contour in contours:
+        for contour, base_contour in zip(contours, base_contours):
             
             # Short for len(contour)
             n = len(contour)
@@ -1051,15 +1043,15 @@ class Glyphe():
                 # Estimate the number of points for the curve
                 # The lesser the cross product, the lesser the precision
                 
-                v0 = contour[(index+1)%n, 0] - contour[index, 0]
-                v1 = contour[index, 1] - contour[index, 0]
+                v0 = base_contour[(index+1)%n, 0] - base_contour[index, 0]
+                v1 = base_contour[index, 1] - base_contour[index, 0]
                 prec = np.sqrt(abs(v0[0]*v1[1] - v0[1]*v1[0])) / delta
                 
                 # Not point on straigth lines
                 # But we can need more geometry, to deform the char for instance
                 
                 if not lowest_geometry:
-                    prec = max(prec, np.linalg.norm(contour[(index+1)%n, 0] - contour[index, 0])/delta)
+                    prec = max(prec, np.linalg.norm(base_contour[(index+1)%n, 0] - base_contour[index, 0])/delta)
                 
                 # Compute the points
                 # No need of the last point which will be the first of the
@@ -1102,7 +1094,7 @@ class Glyphe():
         # Compute uv map
         
         ratio  = 1 / 2048
-        center = (1024 - self.width/2, 256)
+        center = (1024 - self.width()/2, 256)
 
         nuvs = 0
         for face in faces:

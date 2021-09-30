@@ -10,7 +10,7 @@ import numpy as np
 
 from .glyphe import CharFormat
 from .fonts import Font
-from .aligner import FText
+from .ftext import FText
 from ..objects.stacker import Stack, MeshCharStacker, CurveCharStacker
 from ..objects.crowd import Crowd
 from ..wrappers.wrap_function import wrap
@@ -21,7 +21,7 @@ from ..core.commons import WError
 
 class Chars(Crowd):
     
-    def __init__(self, text_object, char_type = 'Curve', name="Chars"):
+    def __init__(self, text_object, char_type = 'Curve', name="Chars", var_blocks=True):
         
         if not char_type in ['Mesh', 'Curve']:
             raise WError(f"Chars initialization error: the chars type must be 'Curve' ort 'Mesh', not '{char_type}'",
@@ -51,11 +51,11 @@ class Chars(Crowd):
                          text_object = text_object,
                          char_type = char_type)
             
-        super().__init__(char_type, shape=(), name=name, model=text_object)
+        super().__init__(char_type, shape=(), name=name, model=text_object, var_blocks=var_blocks)
         
         # ----- Stack of chars and indices in the stack
             
-        self.stack = Stack(char_type)
+        self.stack = Stack(char_type, var_blocks=self.var_blocks)
         self.chars_index = {}
         
         # ----- Complementary
@@ -89,6 +89,8 @@ class Chars(Crowd):
         
         self.text = "Chars"
             
+    # ---------------------------------------------------------------------------
+    # Reset the chars
             
     def reset(self):
         self.stack.reset()
@@ -103,7 +105,12 @@ class Chars(Crowd):
     
     @mesh_delta.setter
     def mesh_delta(self, value):
+        
         self.font.font.raster_delta = max(1, int(value))
+        
+        text = self.text
+        self.reset()
+        self.text = text
         
     @property
     def mesh_high_geometry(self):
@@ -111,7 +118,12 @@ class Chars(Crowd):
     
     @mesh_high_geometry.setter
     def mesh_high_geometry(self, value):
+        
         self.font.font.raster_low = not value
+        
+        text = self.text
+        self.reset()
+        self.text = text
         
     # ---------------------------------------------------------------------------
     # Mesh or Curve
@@ -133,7 +145,7 @@ class Chars(Crowd):
             self.chars_index[char] = index
 
             if self.char_type == 'Mesh':
-                self.stack.stack(MeshCharStacker(char, self.font.font.mesh_char(char, return_uvmap=True)))
+                self.stack.stack(MeshCharStacker(char, self.font.font.mesh_char(char, return_faces=True)))
             else:
                 self.stack.stack(CurveCharStacker(char, self.font.font.curve_char(char)))
                 
@@ -141,7 +153,7 @@ class Chars(Crowd):
     
     # ---------------------------------------------------------------------------
     # Set an array of chars
-    # Initialize the geométry from these chars
+    # Initialize the geometry from these chars
     
     def set_chars(self, chars):
         self.stack.stack_indices = [self.char_index(c) for c in chars]
@@ -165,11 +177,23 @@ class Chars(Crowd):
         
         self.lock()
         
+        # ----- Format the raw text
+        
         self.ftext = FText(text)
+        
+        # ----- Create the geometry of the crowd of chars
+        
         self.set_chars(self.ftext.array_of_chars)
         
+        # ----- Measure the chars
+        
         self.set_metrics()
+        
+        # ----- Alignment
+        
         self.align()
+        
+        # ----- Unlock
         
         self.unlock()
         
@@ -178,23 +202,40 @@ class Chars(Crowd):
     # By default, setting the metrics reset the chars because the glyphes
     # can change
         
-    def set_metrics(self):
-        if self.ftext is None:
-            return
-        
-        self.ftext.set_metrics(self.font.font)
-        
-    def align(self):
+    def set_metrics(self, use_dirty=False):
         
         if self.ftext is None:
             return
+        
+        self.ftext.set_metrics(self.font.font, use_dirty=use_dirty)
+        
+    # ---------------------------------------------------------------------------
+    # Compute the chars locations
+    # set_metrics() must have been called before
+    
+    def align(self, width=None, align_x=None):
+        
+        if self.ftext is None:
+            return
+        
+        if width is None:
+            width = self.align_width
+        else:
+            self.align_width = width
+            
+        if align_x is None:
+            align_x = self.align_x
+        else:
+            self.align_x = align_x
 
         self.lock()
         
-        self.ftext.align(width=self.align_width, align_x = self.align_x)
+        self.ftext.align(width=width, align_x = align_x)
         
+        loc = np.zeros(3, float)
         for i in range(len(self.ftext)):
-            self[i] = geo.tmatrix(location=self.ftext[i].location)
+            loc[:2] = self.ftext[i].location
+            self[i] = geo.tmatrix(location=loc)
 
         self.unlock()
         
@@ -209,70 +250,64 @@ class Chars(Crowd):
     def char_scale(self, value):
         self.font.font.scale = value
         self.realign()
+        
+    # ===========================================================================
+    # Format char by indices
+    
+    def update_glyphes(self, align=False):
+        
+        self.set_metrics(use_dirty=True)
+        
+        chars = self.ftext.array_of_chars
+        for i in range(len(chars)):
+            
+            if self.ftext.dirty[i]:
+                
+                fmt_char = self.ftext.get_char_format(i)
+                print("update glyples", fmt_char.bold_shift)
+                
+                #print("update_glyphes", i, chars[i], self.char_type, len(self.font.font.mesh_char(chars[i], fmt_char)))
+                
+                if self.char_type == 'Mesh':
+                    self.set_block(i, self.font.font.mesh_char(chars[i], fmt_char))
+                else:
+                    self.set_block(i, self.font.font.curve_char(chars[i], fmt_char))
+                    
+        if align:
+            self.align()
+            
+        self.ftext.reset_dirty()
+                    
+    
+    def set_bold(self, bold, char_indices=None, align=False):
+        self.ftext.format_char(char_indices, 'Bold', bold)
+        self.update_glyphes(align=align)
+
+    def set_shear(self, shear, char_indices=None, align=False):
+        self.ftext.format_char(char_indices, 'Shear', shear)
+        self.update_glyphes(align=align)
+        
+    def set_scale(self, scale, char_indices=None, align=False):
+        self.ftext.format_char(char_indices, 'Scale', scale)
+        self.update_glyphes(align=align)
+        
+    def set_xscale(self, scale, char_indices=None, align=False):
+        self.ftext.format_char(char_indices, 'xScale', scale)
+        self.update_glyphes(align=align)
+        
+    def set_yscale(self, scale, char_indices=None, align=False):
+        self.ftext.format_char(char_indices, 'yScale', scale)
+        self.update_glyphes(align=align)
 
     # ===========================================================================
     # Access to pieces of text
     
-    @staticmethod
-    def token_chars_indices(token):
-        return [char.char_index for char in token.tokens(select=Token.CHAR)]
+    def word_index(self, word, num=0):
+        return self.ftext.word_index(word, num)
     
-    @property
-    def chars(self):
-        return self.token.chars
-    
-    @property
-    def words(self):
-        return self.token.words
-    
-    @property
-    def paras(self):
-        return self.token.texts(Token.PARA)
-    
-    @property
-    def chars_indices(self):
-        return [token.char_index for token in self.token.tokens()]
-    
-    @property
-    def words_indices(self):
-        return [Chars.token_chars_indices(token) for token in self.token.tokens(select=Token.WORD)]
-    
-    @property
-    def paras_indices(self):
-        return [Chars.token_chars_indices(token) for token in self.token.tokens(select=Token.PARA)]
-    
-    @property
-    def lines_indices(self):
-        if self.lines_ is None:
-            return [self.chars_indices]
-        else:
-            return self.lines_
-    
-    def chars_in(self, chars):
+    def look_up(self, char=None, word=None, index=None, line_index=None, para_index=None, word_index=None, return_all=False, num=0):
+        return self.ftext.look_up(char, word, index, line_index, para_index, word_index, return_all, num)
 
-        if type(chars) is str:
-            chars = [chars]
-            
-        the_chars = self.token.chars
-        indices = []
-        for i, c in enumerate(the_chars):
-            if c in chars:
-                indices.append(i)
-
-        return indices
-    
-    def words_in(self, words):
-        if type(words) is str:
-            words = [words]
-            
-        the_words = self.token.tokens(Token.WORD)
-        indices = []
-        for i, w in enumerate(the_words):
-            if w.text in words:
-                indices.append(Chars.token_chars_indices(w))
-                
-        return indices
-    
     # ===========================================================================
     # Shape
     
