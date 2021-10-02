@@ -670,8 +670,12 @@ class FText():
         self.words_  = np.zeros((0, 3), int) # (index, length) to chars plus word nature
         self.paras_  = np.zeros((0, 2), int) # (index, length) to words
         self.lines_  = np.zeros((0, 2), int) # (index, length) to words
+        
         self.metrics = np.zeros((0, FText.METRICS_SIZE), float) 
         self.dirty   = np.zeros((0,), bool)
+        self.fonts   = np.zeros((0,), int)
+        self.font_changed = False
+        
     
     def add_char(self, index):
         self.chars_ = np.append(self.chars_, [[index, 0]], axis=0)
@@ -725,10 +729,20 @@ class FText():
             ifmt = FText.XSCALE
         elif fmt.upper() == 'YSCALE':
             ifmt = FText.YSCALE
+            
         elif fmt.upper() == 'SCALE':
-            self.set_char_format(char_indices, 'xScale', value)
-            self.set_char_format(char_indices, 'yScale', value)
+            self.format_char(char_indices, 'xScale', value)
+            self.format_char(char_indices, 'yScale', value)
             return
+        
+        elif fmt.upper() == 'FONT':
+            if char_indices is None:
+                self.fonts[:] = value
+            else:
+                self.fonts[char_indices] = value
+            self.font_changed = True
+            return
+        
         else:
             raise WError(f"Unknown char format '{fmt}'. Valid formats are ['Bold', 'Shear', 'xScale', 'yScale', 'Scale']",
                          Class = "FText", Method="set_char_format",
@@ -826,9 +840,15 @@ class FText():
         self.metrics[:, FText.YSCALE] = 1.
         
         self.dirty = np.zeros(len(self.chars_), bool)
+        self.fonts = np.zeros((len(self.chars_)), int)
+        self.font_changed = False
         
     def reset_dirty(self):
         self.dirty[:] = False
+        self.font_changed = False
+        
+    def set_dirty_format(self):
+        self.dirty[:] = np.any(self.metrics[:, [FText.BOLD, FText.SHEAR, FText.XSCALE, FText.YSCALE]] != [0., 0., 1., 1.], axis=-1)
         
     # ====================================================================================================
     # metrics is an object with the following interface
@@ -839,8 +859,8 @@ class FText():
         return CharFormat(
                 bold  = self.metrics[index, FText.BOLD],
                 shear = self.metrics[index, FText.SHEAR],
-                scale = self.metrics[index, [FText.XSCALE, FText.YSCALE]])
-    
+                scale = self.metrics[index, [FText.XSCALE, FText.YSCALE]],
+                font  = self.fonts[index])
     
     def set_metrics(self, metrics, use_dirty=False):
         

@@ -374,7 +374,7 @@ class CurveCharStacker(Stacker):
     The geometry contains only Bezier curves.
     """
     
-    def __init__(self, char, beziers):
+    def __init__(self, char, verts_profile=None, beziers=None):
         """Initialize the stacker with the beziers control points.
         This beziers is produced by the eponym method 'beziers' of a Glyphe.
         
@@ -399,13 +399,17 @@ class CurveCharStacker(Stacker):
         None.
         """
         
-        verts = np.zeros((0, 3), np.float)
-        profile = np.zeros((len(beziers), 3), int)
-        for i, bz in enumerate(beziers):
-            verts = np.append(verts, bz[:, 0], axis=0)
-            verts = np.append(verts, bz[:, 1], axis=0)
-            verts = np.append(verts, bz[:, 2], axis=0)
-            profile[i] = (3, len(bz), 0)
+        if beziers is None:
+            verts   = verts_profile[0]
+            profile = verts_profile[1]
+        else:
+            verts = np.zeros((0, 3), np.float)
+            profile = np.zeros((len(beziers), 3), int)
+            for i, bz in enumerate(beziers):
+                verts = np.append(verts, bz[:, 0], axis=0)
+                verts = np.append(verts, bz[:, 1], axis=0)
+                verts = np.append(verts, bz[:, 2], axis=0)
+                profile[i] = (3, len(bz), 0)
             
         super().__init__(len(verts))
         
@@ -413,7 +417,7 @@ class CurveCharStacker(Stacker):
         self.verts_   = verts
         self.profile_ = profile
         
-        self.mat_indices_ = np.zeros(len(beziers), int)
+        self.mat_indices_ = np.zeros(len(profile), int)
         
     @property
     def name(self):
@@ -549,8 +553,9 @@ class Stack():
         """
         
         for stacker in self:
-            if np.min(stacker.profile[:, 0]) == 1:
-                return 6
+            if len(stacker.profile) > 0:
+                if np.min(stacker.profile[:, 0]) == 1:
+                    return 6
         return 3
         
     

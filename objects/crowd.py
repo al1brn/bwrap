@@ -147,6 +147,7 @@ class Crowd(Transformations):
         
         self.animation = False
         self.group_transfos = {}
+        self.deformations   = []
         
     # ====================================================================================================
     # Content
@@ -422,6 +423,14 @@ class Crowd(Transformations):
         self.animation      = True
         self.blocks_indices = np.zeros(self.shape, np.float)
         
+    # ====================================================================================================
+    # Set a deformation
+    # deform a function of template :
+    # f(block, index=None) --> block
+    
+    def add_deformation(self, deform):
+        self.deformations.append(deform)
+        
 
     # ====================================================================================================
     # Utilities
@@ -595,22 +604,27 @@ class Crowd(Transformations):
             
             verts = np.zeros((self.verts_count, ndim-1))
             
-            for i, mat in enumerate(self.tmat.reshape(self.size, 4, 4)):
+            for dupl_index, mat in enumerate(self.tmat.reshape(self.size, 4, 4)):
                 
-                block = np.array(self.blocks[i])
+                block = np.array(self.blocks[dupl_index])
                 
                 # ----- Group transformation
                 
                 for gt in self.group_transfos.values():
-                    block[gt.indices, :4] = gt.pivot + gt.transfo[i].transform_verts4(block[gt.indices, :4] - gt.pivot)
+                    block[gt.indices, :4] = gt.pivot + gt.transfo[dupl_index].transform_verts4(block[gt.indices, :4] - gt.pivot)
+                    
+                # ----- Deformations
+                
+                for deform in self.deformations:
+                    block = deform(block, dupl_index)
                     
                 # ---- Transformation
                 
-                block[..., :3] = self[i].transform_verts43(block[..., :4])
+                block[..., :3] = self[dupl_index].transform_verts43(block[..., :4])
                 
                 # ----- Set in the target array while suppressing the 4th dim
                 
-                verts[self.blocks_slices[i]] = np.delete(block, 3, axis=-1)
+                verts[self.blocks_slices[dupl_index]] = np.delete(block, 3, axis=-1)
                 
             # ----- Set the vertices to the object
             
@@ -640,7 +654,7 @@ class Crowd(Transformations):
                     
                     base = self.models[i0]*(1-p) + self.models[i0+1]*p        
             else:
-                if (len(self.group_transfos) == 0) and (len(self.stack) == 1):
+                if (len(self.group_transfos) == 0) and (len(self.deformations) == 0) and (len(self.stack) == 1):
                     # Models is shape (1, verts, ndim)
                     base = self.blocks
                 else:
@@ -650,10 +664,13 @@ class Crowd(Transformations):
                     
      
             # -----------------------------------------------------------------------------------------------------------------------------
-            # Step 2 : group transformations
+            # Step 2 : group transformations and deformations
             
             for gt in self.group_transfos.values():
                 base[..., gt.indices, :4] = gt.pivot + gt.transfo.transform_verts4(base[..., gt.indices, :4] - gt.pivot)
+                
+            for deform in self.deformations:
+                base = deform(base)
                 
             # -----------------------------------------------------------------------------------------------------------------------------
             # Step 3 : transformation

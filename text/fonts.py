@@ -470,7 +470,7 @@ class Glyf(Struct):
         }
 
     
-    def __init__(self, ttf, offset, glyf_index=None):
+    def __init__(self, ttf, offset, glyf_index=None, code=None):
         
         #self.glyf_offset = offset
         self.ttf = ttf
@@ -481,6 +481,7 @@ class Glyf(Struct):
         
         super().__init__(reader, Glyf.DEFS)
         self.glyf_index = glyf_index
+        self.code       = code
         
         self.simple = self.numberOfContours >= 0
         
@@ -1039,7 +1040,7 @@ class Ttf(Struct):
     def code_to_glyf_offset(self, code):
         return self.glyf_index_to_glyf_offset(self.code_to_glyf_index(code))
     
-    def get_glyf(self, glyf_index):
+    def get_glyf(self, glyf_index, code):
         
         # ----- Is the glyf already in the cache
         
@@ -1054,14 +1055,13 @@ class Ttf(Struct):
         
         # ----- The glyf exists, let's load it
         
-        glyf = Glyf(self, glyf_offset, glyf_index=glyf_index)
-        
+        glyf = Glyf(self, glyf_offset, glyf_index=glyf_index, code=code)
 
         self.glyfs[glyf_index] = glyf
         return glyf
     
     def get_glyphe(self, code):
-
+        
         # ----- Check if the glyphe is in the cache
         glyphe = self.glyphes.get(code)
         if glyphe is not None:
@@ -1077,11 +1077,12 @@ class Ttf(Struct):
         if length == 0:
             glyphe = Glyphe(self)
             glyphe.glyf_index  = glyf_index
+            glyphe.code        = code
             self.glyphes[code] = glyphe
             return glyphe
         
         # ----- Load the glyf
-        glyf = self.get_glyf(glyf_index)
+        glyf = self.get_glyf(glyf_index, code)
 
         self.glyphes[code] = glyf.glyphe
         return glyf.glyphe
@@ -1106,11 +1107,11 @@ class Ttf(Struct):
     
     def adapt_char_format(self, char_format):
         
-        if char_format is None:
-            return None
+        cf = CharFormat.Copy(char_format)
+        cf.bold_shift = int(self.bold_base*cf.bold)
+        cf.scale = cf.scales(self.ratio)
         
-        char_format.bold_shift = int(self.bold_base*char_format.bold)
-        return char_format
+        return cf
         
     def char_metrics(self, c, char_format=None):
         
@@ -1119,17 +1120,14 @@ class Ttf(Struct):
         class Metrics():
             pass
         
-        xscale = 1 if char_format is None else char_format.xscale
+        # Adapt the char format (bold_shift and scale)
+        
+        cf = self.adapt_char_format(char_format)
+        rx = cf.xscale
+        ry = cf.yscale
         yscale = 1 if char_format is None else char_format.yscale
         
-        # Bold is expressed as a float
-        # Algorithm uses an int in Glyphe units
-        char_format = self.adapt_char_format(char_format)
-        
         m = Metrics()
-        
-        rx = self.ratio * xscale
-        ry = self.ratio * yscale
         
         m.xMin     = glyphe.xMin(char_format) * rx
         m.xMax     = glyphe.xMax(char_format) * rx
@@ -1171,15 +1169,44 @@ class Ttf(Struct):
     # Access to the curves
     
     def mesh_char(self, c, char_format=None, return_faces=False):
+        
+        cf = self.adapt_char_format(char_format)
 
         return self.get_glyphe(ord(c)).raster(
-            scale = self.ratio, delta=self.raster_delta, lowest_geometry=self.raster_low,
-            char_format=self.adapt_char_format(char_format), return_faces=return_faces)
+            delta=self.raster_delta, lowest_geometry=self.raster_low,
+            char_format=cf, return_faces=return_faces)
+    
+    # ---------------------------------------------------------------------------
+    # Curve : return the array of beziers points
+    # Stack must be built together with 
+    
+    def beziers_char(self, c, char_format=None):
+
+        cf = self.adapt_char_format(char_format)
+        
+        beziers = self.get_glyphe(ord(c)).beziers(self.adapt_char_format(char_format))
+        
+        scale = (cf.xscale, cf.yscale, 1)
+        
+        return [bz*scale for bz in beziers]
+
+    # ---------------------------------------------------------------------------
+    # Curve : return the stack of bezier points and the profile
     
     def curve_char(self, c, char_format=None):
+        
+        beziers = self.beziers_char(c, char_format)
 
-        beziers = self.get_glyphe(ord(c)).beziers(self.adapt_char_format(char_format))
-        return [bz*self.ratio for bz in beziers]
+        verts   = np.zeros((0, 3), np.float)
+        profile = np.zeros((len(beziers), 3), int)
+        for i, bz in enumerate(beziers):
+            verts = np.append(verts, bz[:, 0], axis=0)
+            verts = np.append(verts, bz[:, 1], axis=0)
+            verts = np.append(verts, bz[:, 2], axis=0)
+            profile[i] = (3, len(bz), 0)
+            
+        return verts, profile
+        
     
     # ===========================================================================
     # Geometry
@@ -1290,7 +1317,7 @@ class Ttc(Struct):
                 if font.loaded:
                     self.fonts.append(font)
                     
-        self.current_font = 0
+        self.font_index = 0
             
     def __repr__(self):
         s = "<Font collection\n"
@@ -1307,7 +1334,7 @@ class Ttc(Struct):
     @property
     def font(self):
         if len(self.fonts) > 0:
-            return self[self.current_font]
+            return self[self.font_index]
         else:
             return None
 
@@ -1320,6 +1347,7 @@ class Font():
         self.reader = BFileReader(file_name)
         
         fname, ftype = os.path.splitext(file_name)
+        self.fname = fname
         
         self.collection = ftype.lower() == '.ttc'
         
@@ -1329,6 +1357,7 @@ class Font():
             self.ttf = Ttf(self.reader)
             
         self.reader.close()
+        
             
     @property
     def loaded(self):
@@ -1336,16 +1365,6 @@ class Font():
             return self.ttc.font is not None
         else:
             return self.ttf.loaded
-        
-    @property
-    def font(self):
-        if self.loaded:
-            if self.collection:
-                return self.ttc.font
-            else:
-                return self.ttf
-        else:
-            return None
         
     def __len__(self):
         if self.loaded:
@@ -1357,10 +1376,37 @@ class Font():
             return 0
         
     def __getitem__(self, index):
+        index = np.clip(index, 0, len(self)-1)
         if self.collection:
             return self.ttc[index]
         else:
             return self.ttf
+        
+    # ----------------------------------------------------------------------------------------------------
+    # Current font
+        
+    @property
+    def font_index(self):
+        if self.collection:
+            return self.ttc.font_index
+        else:
+            return 0
+        
+    @font_index.setter
+    def font_index(self, value):
+        if value >= len(self):
+            s = f"Invalid font index: {value}. The number of fonts in '{self.fname}' is {len(self)}"
+            raise RuntimeError(s)
+            
+        if self.collection:
+            self.ttc.font_index = value            
+        
+    @property
+    def currrent_font(self):
+        return self[self.font_index]
+    
+    # ----------------------------------------------------------------------------------------------------
+    # Current font
         
     @property
     def family(self):
@@ -1369,5 +1415,47 @@ class Font():
     @property
     def sub_family(self):
         return [font.font_sub_family for font in self]
+    
+    # ===========================================================================
+    # Attributes
+    
+    @property
+    def raster_delta(self):
+        return self[0].raster_delta
+    
+    @raster_delta.setter
+    def raster_delta(self, value):
+        for i in range(len(self)):
+            self[i].raster_delta = value
+    
+    @property
+    def raster_low(self):
+        return self[0].raster_low
+    
+    @raster_low.setter
+    def raster_low(self, value):
+        for i in range(len(self)):
+            self[i].raster_low = value
+    
+    
+    # ===========================================================================
+    # Metrics interface
+    
+    @property
+    def scale(self):
+        return self[0].scale
+    
+    @scale.setter
+    def scale(self, value):
+        for i in range(len(self)):
+            self[i].scale = value
+    
+    @property
+    def space_width(self):
+        return self[0].space_width
+    
+    def char_metrics(self, c, char_format=None):
+        index = 0 if char_format is None else char_format.font
+        return self[index].char_metrics(c, char_format)
 
 

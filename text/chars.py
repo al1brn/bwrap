@@ -57,6 +57,7 @@ class Chars(Crowd):
             
         self.stack = Stack(char_type, var_blocks=self.var_blocks)
         self.chars_index = {}
+        self.chars_locked = 0
         
         # ----- Complementary
         
@@ -87,7 +88,20 @@ class Chars(Crowd):
         self.align_width  = None
         self.align_height = None
         
-        self.text = "Chars"
+        self.lock_chars()
+        
+        if len(self.font) == 1:
+            self.text = "Chars"
+        else:
+            s = "Chars"
+            for i in range(len(self.font)):
+                s += f"\nIndex {i}"
+            self.text = s
+            for i in range(len(self.font)):
+                self.set_font(i, self.look_up(para_index=i+1), align=False)
+            self.align()
+            
+        self.unlock_chars(align=True)
             
     # ---------------------------------------------------------------------------
     # Reset the chars
@@ -97,33 +111,48 @@ class Chars(Crowd):
         self.chars_index = {}
         
     # ---------------------------------------------------------------------------
+    # Lock / unlock chars update
+    
+    def lock_chars(self):
+        self.lock()
+        self.chars_locked += 1
+        
+    def unlock_chars(self, align=False):
+        if self.chars_locked == 0:
+            raise WError("Chars lock / unlock error. Trying to unlock unlocked state.",
+                         Class = "Chars", Method="Unlock")
+            
+        self.chars_locked -= 1
+        if self.chars_locked == 0:
+            self.set_chars(align=align)
+        self.unlock()
+        
+    # ---------------------------------------------------------------------------
     # glyphes parameters
         
     @property
     def mesh_delta(self):
-        return self.font.font.raster_delta
+        return self.font.raster_delta
     
     @mesh_delta.setter
     def mesh_delta(self, value):
         
-        self.font.font.raster_delta = max(1, int(value))
+        self.font.raster_delta = max(1, int(value))
         
-        text = self.text
         self.reset()
-        self.text = text
+        self.set_chars()
         
     @property
     def mesh_high_geometry(self):
-        return not self.font.font.raster_low
+        return not self.font.raster_low
     
     @mesh_high_geometry.setter
     def mesh_high_geometry(self, value):
         
-        self.font.font.raster_low = not value
+        self.font.raster_low = not value
         
-        text = self.text
         self.reset()
-        self.text = text
+        self.set_chars()
         
     # ---------------------------------------------------------------------------
     # Mesh or Curve
@@ -133,33 +162,124 @@ class Chars(Crowd):
         return self.stack.object_type
 
     # ---------------------------------------------------------------------------
-    # Access to stack by char
+    # Access to stack by couple (char, font index)
     
-    def char_index(self, char):
+    def char_index(self, char, font=None):
         
-        index = self.chars_index.get(char)
+        if font is None:
+            font = self.font.font_index
+        
+        index = self.chars_index.get((char, font))
         
         if index is None:
 
             index = len(self.stack)            
-            self.chars_index[char] = index
-
+            self.chars_index[(char, font)] = index
+            
             if self.char_type == 'Mesh':
-                self.stack.stack(MeshCharStacker(char, self.font.font.mesh_char(char, return_faces=True)))
+                self.stack.stack(MeshCharStacker(char, self.font[font].mesh_char(char, return_faces=True)))
             else:
-                self.stack.stack(CurveCharStacker(char, self.font.font.curve_char(char)))
-                
+                self.stack.stack(CurveCharStacker(char, self.font[font].curve_char(char)))
+
         return index
     
-    # ---------------------------------------------------------------------------
-    # Set an array of chars
-    # Initialize the geometry from these chars
+    # ====================================================================================================
+    # Set the chars metrics
+    # The metrics comes from the font
+        
+    def set_metrics(self, use_dirty=False):
+        
+        if self.ftext is None:
+            return
+        
+        self.ftext.set_metrics(self.font, use_dirty=use_dirty)
     
-    def set_chars(self, chars):
-        self.stack.stack_indices = [self.char_index(c) for c in chars]
+    
+    # ====================================================================================================
+    # Set the chars from the formatted text in ftext
+    #
+    # The glyphes are stored in a dictionnaty indexed by the couples (char, font index)
+    # The stack is initialized with the geometry found in this dictionnary
+    # The object geometry (Mesh or Curve) is initialized from the stack without formatting
+    # The individual glyphes must be then changed to take the formatting into account.
+    # The changes are made in the block (one block per character)
+    
+    def set_chars(self, align=False):
+        
+        if self.chars_locked > 0:
+            return
+        
+        # ----- Set the metrics
+        
+        self.set_metrics(use_dirty=False)
+        
+        # ----- Store the (chars, font) in the dictionnary
+        
+        self.stack.stack_indices = [self.char_index(c, font) for c, font in zip(self.ftext.array_of_chars, self.ftext.fonts)]
+        
+        # ----- Initialized the geometry
+        
         self.init_from_stack()
-
-    # ---------------------------------------------------------------------------
+        
+        # ----- Update the glyphes
+        
+        self.ftext.font_changed = False # Avoiding infinite loop is better
+        self.ftext.set_dirty_format()
+        
+        self.update_glyphes(align=align)
+        
+        
+    # ====================================================================================================
+    # Update the glyphes to take the char formatting into account
+    #
+    # The stack is used to initialize the char geometry. Changing the characters
+    # is done by changed their block.
+    
+    def update_glyphes(self, align=False):
+        
+        if self.chars_locked:
+            return
+        
+        # ---------------------------------------------------------------------------
+        # If some font indices were changed, we must rebuild the full geometry
+        
+        if self.ftext.font_changed:
+            
+            self.set_chars()
+            
+        # ---------------------------------------------------------------------------
+        # Geomtry unchanged, we need only to take the formatt!ng instructions
+        # into account
+        
+        else:
+            
+            # ----- Recompute metrics of dirty characters
+        
+            self.set_metrics(use_dirty=True)
+            
+            # ----- Loop on the dirty chars
+            
+            chars = self.ftext.array_of_chars
+            for i in range(len(chars)):
+                
+                if self.ftext.dirty[i]:
+                    
+                    fmt_char = self.ftext.get_char_format(i)
+                    
+                    if self.char_type == 'Mesh':
+                        self.set_block(i, self.font[fmt_char.font].mesh_char(chars[i], fmt_char))
+                    else:
+                        self.set_block(i, self.font[fmt_char.font].curve_char(chars[i], fmt_char)[0])
+                        
+        # ---------------------------------------------------------------------------
+        # realign if required                        
+                    
+        if align:
+            self.align()
+            
+        self.ftext.reset_dirty()     
+        
+    # ====================================================================================================
     # Text property
         
     @property
@@ -183,39 +303,18 @@ class Chars(Crowd):
         
         # ----- Create the geometry of the crowd of chars
         
-        self.set_chars(self.ftext.array_of_chars)
-        
-        # ----- Measure the chars
-        
-        self.set_metrics()
-        
-        # ----- Alignment
-        
-        self.align()
+        self.set_chars(align=True)
         
         # ----- Unlock
         
         self.unlock()
         
-    # ---------------------------------------------------------------------------
-    # Set the chars metrics to allow the alignment
-    # By default, setting the metrics reset the chars because the glyphes
-    # can change
-        
-    def set_metrics(self, use_dirty=False):
-        
-        if self.ftext is None:
-            return
-        
-        self.ftext.set_metrics(self.font.font, use_dirty=use_dirty)
-        
-    # ---------------------------------------------------------------------------
-    # Compute the chars locations
-    # set_metrics() must have been called before
+    # ====================================================================================================
+    # Compute the chars locations to align the text
     
     def align(self, width=None, align_x=None):
         
-        if self.ftext is None:
+        if self.chars_locked > 0:
             return
         
         if width is None:
@@ -240,44 +339,20 @@ class Chars(Crowd):
         self.unlock()
         
     # ===========================================================================
-    # Char size
+    # Char formatting
     
     @property
     def char_scale(self):
-        return self.font.font.scale
+        return self.font.scale
         
     @char_scale.setter
     def char_scale(self, value):
-        self.font.font.scale = value
-        self.realign()
+        self.font.scale = value
+        self.reset()
+        self.set_chars(align=True)
         
     # ===========================================================================
-    # Format char by indices
-    
-    def update_glyphes(self, align=False):
-        
-        self.set_metrics(use_dirty=True)
-        
-        chars = self.ftext.array_of_chars
-        for i in range(len(chars)):
-            
-            if self.ftext.dirty[i]:
-                
-                fmt_char = self.ftext.get_char_format(i)
-                print("update glyples", fmt_char.bold_shift)
-                
-                #print("update_glyphes", i, chars[i], self.char_type, len(self.font.font.mesh_char(chars[i], fmt_char)))
-                
-                if self.char_type == 'Mesh':
-                    self.set_block(i, self.font.font.mesh_char(chars[i], fmt_char))
-                else:
-                    self.set_block(i, self.font.font.curve_char(chars[i], fmt_char))
-                    
-        if align:
-            self.align()
-            
-        self.ftext.reset_dirty()
-                    
+    # Char formatting
     
     def set_bold(self, bold, char_indices=None, align=False):
         self.ftext.format_char(char_indices, 'Bold', bold)
@@ -298,6 +373,11 @@ class Chars(Crowd):
     def set_yscale(self, scale, char_indices=None, align=False):
         self.ftext.format_char(char_indices, 'yScale', scale)
         self.update_glyphes(align=align)
+        
+    def set_font(self, font_index, char_indices=None, align=False):
+        self.ftext.format_char(char_indices, 'font', font_index)
+        self.update_glyphes(align=align)
+        
 
     # ===========================================================================
     # Access to pieces of text

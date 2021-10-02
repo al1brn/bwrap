@@ -495,7 +495,7 @@ class ZigZags():
 # Char format
 
 class CharFormat():
-    def __init__(self, bold=1., shear=0., scale=1., font=0, mat_index=0):
+    def __init__(self, bold=0., shear=0., scale=1., font=0):
         
         self.xscale     = 1.
         self.yscale     = 1.
@@ -505,10 +505,25 @@ class CharFormat():
         self.shear      = shear
         self.scale      = scale
         self.font       = font
-        self.mat_index  = mat_index
         
     def __repr__(self):
-        return f"<CharFormat bold:{self.bold}, shear:{self.shear:.1f}, scale:{self.scale}, font:{self.font}, material index: {self.mat_index}>"
+        return f"<CharFormat bold:{self.bold} (shift:{self.bold_shift}), shear:{self.shear:.1f}, scale:{self.scale}, font:{self.font}>"
+    
+    @classmethod
+    def Copy(cls, other):
+        if other is None:
+            return cls()
+        else:
+            copy = cls(bold=other.bold, shear=other.shear, scale=other.scale, font=other.font)
+            copy.bold_shift = other.bold_shift
+            return copy
+    
+    def scales(self, ratio=1., dim=2):
+        if dim == 3:
+            return (self.xscale*ratio, self.yscale*ratio, 1.)
+        else:
+            return (self.xscale*ratio, self.yscale*ratio)
+    
     
     @property
     def scale(self):
@@ -535,6 +550,7 @@ class Glyphe():
         
         self.ttf        = ttf
         self.glyf_index = None if glyf is None else glyf.glyf_index
+        self.code       = 0 if glyf is None else glyf.code
         
         self.on_curve   = []    # On curve points
         self.points     = None  # Point to be built later
@@ -657,8 +673,22 @@ class Glyphe():
     # ---------------------------------------------------------------------------
     # Content
     
+    @property
+    def is_empty(self):
+        return self.points is None
+    
+    @property
+    def char(self):
+        return "<?>" if self.code is None else chr(self.code)
+    
     def __repr__(self):
-        s = f"<Glyphe of {len(self.points)} points"
+ 
+        s = f"<Glyphe of '{self.char}'"
+      
+        if self.is_empty:
+            return s + " empty>"
+        
+        s += f" made of {len(self.points)} points"
         if len(self) == 0:
             s += " empty glyphe"
         else:
@@ -751,6 +781,9 @@ class Glyphe():
     
     def compute_contours(self):
         
+        if self.is_empty:
+            return
+        
         # Start with an empty list of contours
         
         self.contours = []
@@ -816,7 +849,10 @@ class Glyphe():
     # As an array of contours
                 
     def __len__(self):
-        return len(self.contours)
+        if self.is_empty:
+            return 0
+        else:
+            return len(self.contours)
                 
     def __getitem__(self, index):
         return np.array(self.contours[index])
@@ -826,9 +862,6 @@ class Glyphe():
     
     def xMin(self, char_format=None):
         return self.xMin_
-    
-        scale = 1 if char_format is None else char_format.scale
-        return int(self.xMin_ * scale)
         
     def xMax(self, char_format=None):
         if char_format is None:
@@ -877,6 +910,9 @@ class Glyphe():
     # Bold contours
     
     def fmt_contours(self, char_format=None):
+        
+        if self.is_empty:
+            return []
         
         if char_format is None:
             bold_shift = 0
@@ -972,6 +1008,9 @@ class Glyphe():
     
     def beziers(self, char_format=None):
         
+        if self.is_empty:
+            return []
+        
         beziers = []
         for pts in self.fmt_contours(char_format):
             
@@ -995,10 +1034,19 @@ class Glyphe():
     # Rasterization
     # Points and faces
     
-    def raster(self, scale=1., delta=10, lowest_geometry=True, char_format=None, return_faces = False):
+    def raster(self, delta=10, lowest_geometry=True, char_format=None, return_faces = False):
+        
+        if self.is_empty:
+            verts = np.zeros((0, 3), float)
+            if return_faces:
+                return verts, [], np.zeros((0, 2), float)
+            else:
+                return verts
         
         verts         = None
         closed_curves = []
+        
+        scale = 1 if char_format is None else char_format.scales(1., dim=3)
         
         # ---------------------------------------------------------------------------
         # The faces must be computed with unformatted contours
@@ -1115,7 +1163,7 @@ class Glyphe():
         elif char_format.bold_shift == 0 and char_format.shear == 0.:
             return verts*scale, faces, uvs
         else:
-            return self.raster(scale=scale, delta=delta, lowest_geometry=lowest_geometry, char_format=char_format, return_faces=False), faces, uvs
+            return self.raster(delta=delta, lowest_geometry=lowest_geometry, char_format=char_format, return_faces=False), faces, uvs
     
     # ===========================================================================
     # DEBUG on matplotlib
