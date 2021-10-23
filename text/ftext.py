@@ -9,11 +9,11 @@ Created on Thu Aug 19 14:17:37 2021
 import numpy as np
 
 if True:
-    from .glyphe import CharFormat
+    from .textformat import CharFormat, TextFormat
     
     from ..core.commons import WError
 else:
-    from glyphe import CharFormat
+    from textformat import CharFormat, TextFormat
 
 
 # =============================================================================================================================
@@ -641,6 +641,8 @@ class FText():
     
     def __init__(self, text):
         
+        self.text_format = TextFormat()
+        
         self.text_ = ""
         self.text  = text
         
@@ -662,6 +664,7 @@ class FText():
             word = self.words[i_word]
             s += f"Word {i_word:3d}: {word}\n"
         s += "\n"
+        s += f"Text format: {self.text_format}"
         return s + ">"
     
     def reset(self):
@@ -864,7 +867,7 @@ class FText():
     
     def set_metrics(self, metrics, use_dirty=False):
         
-        self.space_width = metrics.space_width
+        self.space_width = metrics.space_width(self.text_format)
 
         # ----- Chars metrics
         
@@ -873,11 +876,13 @@ class FText():
             if use_dirty and (not self.dirty[index]):
                 continue
             
-            char_metrics = metrics.char_metrics(self.text_[char_index],
+            char_metrics = metrics.char_metrics(
+                self.text_[char_index],
                 char_format = CharFormat(
                     bold  = self.metrics[index, FText.BOLD],
                     shear = self.metrics[index, FText.SHEAR],
-                    scale = self.metrics[index, [FText.XSCALE, FText.YSCALE]])
+                    scale = self.metrics[index, [FText.XSCALE, FText.YSCALE]]),
+                text_format = self.text_format
                 )
             
             self.metrics[index, FText.WIDTH]  = char_metrics.width
@@ -886,9 +891,12 @@ class FText():
             
     # ====================================================================================================
     # Align the whole text
-    # Before calling this methid, the text must be measured with set_metrics
+    # CAUTION: before calling this methid, the text must be measured with set_metrics
 
-    def align(self, width=None, align_x='LEFT'):
+    def align(self):
+        
+        width   = self.text_format.width
+        align_x = self.text_format.align_x
         
         # ---------------------------------------------------------------------------
         # reset dx and y
@@ -1052,6 +1060,12 @@ class FText():
             line = self.lines[i]
             y -= line.height
             line.y = y
+            
+        # ---------------------------------------------------------------------------
+        # Move to match the top left corner
+            
+        self.metrics[:, FText.X:FText.X+2] += self.text_format.topleft
+            
             
     # ====================================================================================================
     # Acces to char indices

@@ -10,7 +10,7 @@ import numpy as np
 
 from .wspline import WSpline
 
-from ..maths.bezier import  control_points, PointsInterpolation
+from ..maths.bezier import  control_points, Beziers
 
 
 from ..core.commons import WError
@@ -171,7 +171,7 @@ class WNurbsSpline(WSpline):
         None.
         """
         
-        vf = PointsInterpolation(verts, lefts, rights)
+        vf = Beziers(verts, lefts, rights)
         vs, ls, rs = control_points(vf, count)
 
         self.verts = vs

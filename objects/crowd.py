@@ -285,7 +285,7 @@ class Crowd(Transformations):
         if (self.wobject.object_type == 'Curve') and (self.wmodel.object_type == 'Curve'):
             self.wobject.wdata.copy_from(self.wmodel.data)
             
-        blender.copy_collections(self.wmodel.wrapped, self.wobject.wrapped)
+        #blender.copy_collections(self.wmodel.wrapped, self.wobject.wrapped)
         
     def copy_materials_from_model(self):
         if self.wmodel_ is None:
@@ -400,7 +400,7 @@ class Crowd(Transformations):
     def set_animation(self, key_shapes):
         
         if self.var_blocks:
-            raise WError("Impossible to animate a Crowd width blocks of varianle size")
+            raise WError("Impossible to animate a Crowd width blocks of variable size")
         
         # ----- Some controls
         
@@ -598,6 +598,9 @@ class Crowd(Transformations):
         mem_locked = self.locked
         self.locked = 1
         
+        # ----------------------------------------------------------------------------------------------------
+        # Variable blocks
+        
         if self.var_blocks:
             
             ndim = np.shape(self.blocks[0])[-1]
@@ -629,7 +632,9 @@ class Crowd(Transformations):
             # ----- Set the vertices to the object
             
             self.set_vertices(verts.reshape(self.verts_count, ndim-1))
-        
+
+        # ----------------------------------------------------------------------------------------------------
+        # Fixed size blocks
         
         else:
         
@@ -641,19 +646,21 @@ class Crowd(Transformations):
             
             if self.animation:
                 
-                imax = len(self.models)-1
+                imax = len(self.blocks)-1
                 if imax == 0:
-                    base = self.models[np.zeros(self.shape, int)]
+                    base = self.blocks[np.zeros(self.shape, int)]
                 else:
-                    t   = np.array(self.models_indices, np.float)
+                    t   = np.array(self.blocks_indices, np.float)
                     
                     i0  = np.floor(t).astype(int)
                     i0[i0 < 0]     = 0
                     i0[i0 >= imax] = imax-1
                     p  = np.expand_dims(np.expand_dims(t - i0, axis=-1), axis=-1)
                     
-                    base = self.models[i0]*(1-p) + self.models[i0+1]*p        
+                    base = self.blocks[i0]*(1-p) + self.blocks[i0+1]*p
+                    
             else:
+                
                 if (len(self.group_transfos) == 0) and (len(self.deformations) == 0) and (len(self.stack) == 1):
                     # Models is shape (1, verts, ndim)
                     base = self.blocks
@@ -707,6 +714,7 @@ class Crowd(Transformations):
 
         self.locked = mem_locked
         
+        
     # ---------------------------------------------------------------------------
     # Animation with keyshapes
     
@@ -742,10 +750,6 @@ class Crowd(Transformations):
         -------
         None.
         """
-        
             
         self.set_animation(self.wmodel.wshape_keys.verts(name))
     
-
-
-

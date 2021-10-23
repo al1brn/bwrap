@@ -21,7 +21,8 @@ if True:
     
     from ..core.breader import DataType, Struct, BFileReader, Flags
     from ..maths.closed_faces import closed_faces
-    from .glyphe import CharFormat, Glyphe
+    from .textformat import CharFormat, TextFormat
+    from .glyphe import Glyphe
     
 else:
     
@@ -607,7 +608,7 @@ class Glyf(Struct):
                 comp = read_compound()
                 reader.push()
                 
-                glyf = self.ttf.get_glyf(comp.glyphIndex)
+                glyf = self.ttf.get_glyf(comp.glyphIndex, code=self.code)
                 
                 # ---------------------------------------------------------------------------
                 # https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6glyf.html
@@ -955,10 +956,15 @@ class Ttf(Struct):
             self.status = self.cmap.status
             
         # ---------------------------------------------------------------------------
-        # ----- the default rasterization parameters
+        # ----- The default rasterization parameters
         
         self.raster_delta = 10
         self.raster_low   = True
+        
+        # ---------------------------------------------------------------------------
+        # ----- Plane to display the chars
+        
+        self.display_plane = 'XY'
         
         # ---------------------------------------------------------------------------
         # ----- Load the default char
@@ -976,8 +982,16 @@ class Ttf(Struct):
             
         # Default ratio for the end user metrics
         self.base_ratio   = 1/1560
-        self.scale        = 1.
         self.bold_base    = self.get_glyphe(ord('.')).width()*.3
+        
+        # ---------------------------------------------------------------------------
+        # ----- Base for metrics
+        
+        self.base_space_width = self.get_glyphe(32).xwidth()
+        
+        h0 = self.hhea.lineGap
+        h1 = self.get_glyphe(ord("M")).ascent() * 1.5
+        self.base_line_height = max(h0, h1)
         
         # ---------------------------------------------------------------------------
         # ----- Loaded = ok
@@ -1090,30 +1104,44 @@ class Ttf(Struct):
     # ===========================================================================
     # Metrics interface
     
-    @property
-    def scale(self):
-        return self.scale_
+    def ratio(self, text_format):
+        if text_format is None:
+            return self.base_ratio
+        else:
+            return self.base_ratio * text_format.scale
     
-    @scale.setter
-    def scale(self, value):
-        self.scale_ = value
-        self.ratio = self.scale_ * self.base_ratio
-        
-        self.space_width = self.get_glyphe(32).xwidth() * self.ratio
-        h0 = self.hhea.lineGap
-        h1 = self.get_glyphe(ord("M")).ascent() * 1.5
-        self.line_height = max(h0, h1) * self.ratio
-        
+    # space width without interchars
+    def raw_space_width(self, text_format):
+        if text_format is None:
+            return self.base_space_width * self.base_ratio
+        else:
+            return self.base_space_width * self.base_ratio * text_format.scale
+        #return self.base_space_width * self.ratio * (1. + self.interchars)
     
-    def adapt_char_format(self, char_format):
+    # space width with interchars
+    def space_width(self, text_format):
+        if text_format is None:
+            return self.base_space_width * self.base_ratio
+        else:
+            return self.base_space_width * self.base_ratio * text_format.scale * (1. + text_format.interchars)
+        #return self.base_space_width * self.ratio * (1. + self.interchars)
+    
+    def line_height(self, text_format):
+        if text_format is None:
+            return self.base_line_height * self.base_ratio
+        else:
+            return self.base_line_height * self.base_ratio * text_format.scale * (1. + text_format.interlines)
+        #return self.base_line_height * self.ratio
+    
+    def adapt_char_format(self, char_format, text_format=None):
         
         cf = CharFormat.Copy(char_format)
         cf.bold_shift = int(self.bold_base*cf.bold)
-        cf.scale = cf.scales(self.ratio)
+        cf.scale = cf.scales(self.ratio(text_format))
         
         return cf
-        
-    def char_metrics(self, c, char_format=None):
+    
+    def char_metrics(self, c, char_format=None, text_format=None):
         
         glyphe = self.get_glyphe(ord(c))
         
@@ -1122,10 +1150,10 @@ class Ttf(Struct):
         
         # Adapt the char format (bold_shift and scale)
         
-        cf = self.adapt_char_format(char_format)
+        cf = self.adapt_char_format(char_format, text_format)
         rx = cf.xscale
         ry = cf.yscale
-        yscale = 1 if char_format is None else char_format.yscale
+        #yscale = 1 if char_format is None else char_format.yscale
         
         m = Metrics()
         
@@ -1134,68 +1162,48 @@ class Ttf(Struct):
         m.xwidth   = glyphe.xwidth(char_format) * rx
         m.lsb      = glyphe.lsb(char_format) * rx
         m.width    = m.xMax - m.xMin
-        m.after    = m.xwidth - m.width
+
+        # After is the difference between xwidth and width plus a fraction of space
+        # proportionnaly to the interchars parameter
+        x_space = 0 if text_format is None else self.raw_space_width(text_format)*text_format.interchars 
+        m.after    = m.xwidth - m.width + x_space
 
         m.descent  = glyphe.yMin(char_format) * ry
         m.ascent   = glyphe.yMax(char_format) * ry
         m.height   = m.ascent - m.descent
         
-        m.line_height = self.line_height * yscale
+        m.line_height = self.line_height(text_format)
             
         return m
-    
-    def char_xwidth(self, c, char_format=None):
-        m = self.char_metrics(c, char_format)
-        if m is None:
-            return 0
-        else:
-            return m.xwidth
-        
-    def char_width(self, c, char_format=None):
-        m = self.char_metrics(c, char_format)
-        if m is None:
-            return 0
-        else:
-            return m.xMax
-
-    def char_lsb(self, c, char_format=None):
-        m = self.char_metrics(c, char_format)
-        if m is None:
-            return 0
-        else:
-            return m.lsb
     
     # ===========================================================================
     # Access to the curves
     
-    def mesh_char(self, c, char_format=None, return_faces=False):
+    def mesh_char(self, c, char_format=None, text_format=None, return_faces=False):
         
-        cf = self.adapt_char_format(char_format)
+        cf = self.adapt_char_format(char_format, text_format)
 
         return self.get_glyphe(ord(c)).raster(
             delta=self.raster_delta, lowest_geometry=self.raster_low,
-            char_format=cf, return_faces=return_faces)
+            char_format=cf, plane=self.display_plane, return_faces=return_faces)
     
     # ---------------------------------------------------------------------------
     # Curve : return the array of beziers points
     # Stack must be built together with 
     
-    def beziers_char(self, c, char_format=None):
+    def beziers_char(self, c, char_format=None, text_format=None):
 
-        cf = self.adapt_char_format(char_format)
+        cf = self.adapt_char_format(char_format, text_format)
         
-        beziers = self.get_glyphe(ord(c)).beziers(self.adapt_char_format(char_format))
+        return self.get_glyphe(ord(c)).beziers(char_format=cf, plane='XY')
         
-        scale = (cf.xscale, cf.yscale, 1)
-        
-        return [bz*scale for bz in beziers]
 
     # ---------------------------------------------------------------------------
     # Curve : return the stack of bezier points and the profile
     
-    def curve_char(self, c, char_format=None):
+    def curve_char(self, c, char_format=None, text_format=None):
         
-        beziers = self.beziers_char(c, char_format)
+        beziers = self.beziers_char(c, char_format, text_format)
 
         verts   = np.zeros((0, 3), np.float)
         profile = np.zeros((len(beziers), 3), int)
@@ -1206,72 +1214,7 @@ class Ttf(Struct):
             profile[i] = (3, len(bz), 0)
             
         return verts, profile
-        
     
-    # ===========================================================================
-    # Geometry
-    
-    @staticmethod
-    def curved_shape(contour, prec=12):
-
-        t = np.expand_dims(np.linspace(0, 1, prec), axis=1)
-        c = t*t
-        b = 2*t*(1-t)
-        a = (1-t)*(1-t)
-        
-        pts    = np.reshape(contour, (len(contour)//2, 2, 2))
-        points = None
-        for k in range(len(pts)):
-            
-            cs = a*pts[k, 0, :] + b*pts[k, 1, :] + c*pts[(k+1) % len(pts), 0, :]
-            
-            if points is None:
-                points = cs
-            else:
-                points = np.append(points, cs, axis=0)
-        
-        return points
-    
-    
-    def get_curves(self, word):
-
-        contours = []
-
-        x = 0.
-        for c in word:
-            glyphe = self.get_glyphe(ord(c))
-            for contour in glyphe:
-                pts = np.array(contour, np.float)
-                pts[:, 0] += x
-                contours.append(pts)
-            
-            x += glyphe.width
-                
-        return contours
-    
-    # ===========================================================================
-    # Dev method
-    
-    def plot_word(self, word, **kwargs):
-        
-        import matplotlib.pyplot as plt
-        
-        if not self.loaded:
-            return
-            
-        curves = self.get_curves(word)
-        
-        fig, ax = plt.subplots()
-        ax.set_aspect(1.)
-        
-        for curve in curves:
-            pts = self.curved_shape(curve)
-            ax.plot(pts[:, 0], pts[:, 1], 'black')
-            
-        fname, ftype = os.path.splitext(self.file_name)
-        ax.set(**kwargs)
-        
-        plt.show()
 
 # =============================================================================================================================
 # Collection file
@@ -1417,6 +1360,24 @@ class Font():
         return [font.font_sub_family for font in self]
     
     # ===========================================================================
+    # Plane
+    
+    @property
+    def display_plane(self):
+        return self[0].display_plane
+    
+    @display_plane.setter
+    def display_plane(self, value):
+        if value.upper() == 'XZ':
+            plane = 'XZ'
+        elif value.upper() == 'YZ':
+            plane = 'YZ'
+        else:
+            plane = 'XY'
+        for i in range(len(self)):
+            self[i].display_plane = plane
+    
+    # ===========================================================================
     # Attributes
     
     @property
@@ -1435,8 +1396,7 @@ class Font():
     @raster_low.setter
     def raster_low(self, value):
         for i in range(len(self)):
-            self[i].raster_low = value
-    
+            self[i].raster_low = value    
     
     # ===========================================================================
     # Metrics interface
@@ -1449,13 +1409,22 @@ class Font():
     def scale(self, value):
         for i in range(len(self)):
             self[i].scale = value
+
+    @property
+    def interchars(self):
+        return self[0].interchars
+    
+    @interchars.setter
+    def interchars(self, value):
+        for i in range(len(self)):
+            self[i].interchars = value
     
     @property
     def space_width(self):
         return self[0].space_width
     
-    def char_metrics(self, c, char_format=None):
+    def char_metrics(self, c, char_format=None, text_format=None):
         index = 0 if char_format is None else char_format.font
-        return self[index].char_metrics(c, char_format)
+        return self[index].char_metrics(c, char_format, text_format)
 
 

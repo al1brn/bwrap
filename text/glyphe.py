@@ -8,9 +8,11 @@ Created on Sat Sep 18 08:16:31 2021
 
 import numpy as np
 
-if False:
+if True:
     
     from ..maths.closed_faces import closed_faces
+    from .textformat import CharFormat
+    
     
 else:
     
@@ -488,58 +490,6 @@ class ZigZags():
         return self.contour[index%self.n, 1, 1]
 
 
-# ====================================================================================================
-# Bold and shear spec
-
-# =============================================================================================================================
-# Char format
-
-class CharFormat():
-    def __init__(self, bold=0., shear=0., scale=1., font=0):
-        
-        self.xscale     = 1.
-        self.yscale     = 1.
-        self.bold_shift = 0
-        
-        self.bold       = bold
-        self.shear      = shear
-        self.scale      = scale
-        self.font       = font
-        
-    def __repr__(self):
-        return f"<CharFormat bold:{self.bold} (shift:{self.bold_shift}), shear:{self.shear:.1f}, scale:{self.scale}, font:{self.font}>"
-    
-    @classmethod
-    def Copy(cls, other):
-        if other is None:
-            return cls()
-        else:
-            copy = cls(bold=other.bold, shear=other.shear, scale=other.scale, font=other.font)
-            copy.bold_shift = other.bold_shift
-            return copy
-    
-    def scales(self, ratio=1., dim=2):
-        if dim == 3:
-            return (self.xscale*ratio, self.yscale*ratio, 1.)
-        else:
-            return (self.xscale*ratio, self.yscale*ratio)
-    
-    
-    @property
-    def scale(self):
-        if self.xscale == self.yscale:
-            return self.xscale
-        else:
-            return np.array([self.xscale, self.yscale], float)
-        
-    @scale.setter
-    def scale(self, value):
-        if hasattr(value, '__len__'):
-            self.xscale = value[0]
-            self.yscale = value[1]
-        else:
-            self.xscale = value
-            self.yscale = value
 
 # ====================================================================================================
 # A glyphe builf from a a ttf font
@@ -1006,27 +956,45 @@ class Glyphe():
     # - 3 : verts, lefts an rights is this order
     # - 3 : 3D vectors
     
-    def beziers(self, char_format=None):
+    def beziers(self, char_format=None, plane='XY'):
         
         if self.is_empty:
             return []
+        
+        scale = 1 if char_format is None else (char_format.xscale, char_format.yscale)
         
         beziers = []
         for pts in self.fmt_contours(char_format):
             
             n = len(pts)
             
-            bz = np.zeros((n, 3, 3), np.float)
+            bz = np.zeros((n, 3, 2), np.float)
 
-            bz[:,   0, :2] = pts[:, 0]
+            bz[:,   0] = pts[:, 0]
             
-            bz[1:,  1, :2] = pts[1:  , 0]*.3333 + pts[:-1, 1]*0.6667
-            bz[:-1, 2, :2] = pts[ :-1, 0]*.3333 + pts[:-1, 1]*0.6667
+            bz[1:,  1] = pts[1:  , 0]*.3333 + pts[:-1, 1]*0.6667
+            bz[:-1, 2] = pts[ :-1, 0]*.3333 + pts[:-1, 1]*0.6667
             
-            bz[ 0,  1, :2] = pts[ 0, 0]*.3333 + pts[-1, 1]*0.6667
-            bz[-1,  2, :2] = pts[-1, 0]*.3333 + pts[-1, 1]*0.6667
+            bz[ 0,  1] = pts[ 0, 0]*.3333 + pts[-1, 1]*0.6667
+            bz[-1,  2] = pts[-1, 0]*.3333 + pts[-1, 1]*0.6667
             
-            beziers.append(bz)
+            # Scale
+            if scale != 1:
+                bz *= scale
+            
+            # In the 3D right plane
+            
+            bz3 = np.zeros((n, 3, 3), np.float)
+            if plane == 'XZ':
+                bz3[..., 0] = bz[..., 0]
+                bz3[..., 2] = bz[..., 1]
+            elif plane == 'YZ':
+                bz3[..., 1] = bz[..., 0]
+                bz3[..., 2] = bz[..., 1]
+            else:
+                bz3[...,:2] = bz
+            
+            beziers.append(bz3)
                 
         return beziers
     
@@ -1034,7 +1002,7 @@ class Glyphe():
     # Rasterization
     # Points and faces
     
-    def raster(self, delta=10, lowest_geometry=True, char_format=None, return_faces = False):
+    def raster(self, delta=10, lowest_geometry=True, char_format=None, plane='XY', return_faces = False):
         
         if self.is_empty:
             verts = np.zeros((0, 3), float)
@@ -1046,7 +1014,7 @@ class Glyphe():
         verts         = None
         closed_curves = []
         
-        scale = 1 if char_format is None else char_format.scales(1., dim=3)
+        scale = 1 if char_format is None else char_format.scales(1., dim=2)
         
         # ---------------------------------------------------------------------------
         # The faces must be computed with unformatted contours
@@ -1125,13 +1093,20 @@ class Glyphe():
         # ---------------------------------------------------------------------------
         # Add the third component and apply the scale
         
-        verts = np.insert(verts, 2, 0, axis=1)
+        def to_3D(verts, scale):
+        
+            if plane == 'XZ':
+                return np.insert(verts*scale, 1, 0, axis=1)
+            elif plane == 'YZ':
+                return np.insert(verts*scale, 0, 0, axis=1)
+            else: # XY
+                return np.insert(verts*scale, 2, 0, axis=1)
         
         # ---------------------------------------------------------------------------
         # Done if no faces to compute
         
         if not return_faces:
-            return verts*scale
+            return to_3D(verts, scale)
         
         # ---------------------------------------------------------------------------
         # Compute the faces
@@ -1159,11 +1134,11 @@ class Glyphe():
         # Now vertices must be computed with the formatted contours
         
         if char_format is None:
-            return verts*scale, faces, uvs
+            return to_3D(verts, scale), faces, uvs
         elif char_format.bold_shift == 0 and char_format.shear == 0.:
-            return verts*scale, faces, uvs
+            return to_3D(verts, scale), faces, uvs
         else:
-            return self.raster(delta=delta, lowest_geometry=lowest_geometry, char_format=char_format, return_faces=False), faces, uvs
+            return self.raster(delta=delta, lowest_geometry=lowest_geometry, char_format=char_format, plane=plane, return_faces=False), faces, uvs
     
     # ===========================================================================
     # DEBUG on matplotlib

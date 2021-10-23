@@ -10,7 +10,7 @@ import numpy as np
 
 from .wspline import WSpline
 
-from ..maths.bezier import  control_points, PointsInterpolation
+from ..maths.bezier import  control_points, Beziers
 
 
 from ..core.commons import WError
@@ -206,7 +206,7 @@ class WBezierSpline(WSpline):
         """
         
         points, lefts, rights = self.get_handles()
-        return PointsInterpolation(points, lefts, rights)
+        return Beziers(points, lefts, rights)
         
     # ---------------------------------------------------------------------------
     # Save and restore points when changing the number of vertices
@@ -294,7 +294,7 @@ class WBezierSpline(WSpline):
         None.
         """
         
-        vf = PointsInterpolation(verts, lefts, rights)
+        vf = Beziers(verts, lefts, rights)
         vs, ls, rs = control_points(vf, count)
 
         self.set_handles(vs, ls, rs)

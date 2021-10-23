@@ -204,13 +204,10 @@ def create_object(name, what='CUBE', collection=None, parent=None, **kwargs):
     # Links exclusively to the requested collection
 
     if collection is None:
-        try:
-            bpy.context.collection.objects.link(obj)
-        except:
-            pass
-    else:
-        bpy.ops.collection.objects_remove_all()
-        get_collection(collection).objects.link(obj)
+        collection = bpy.context.collection
+    
+    bpy.ops.collection.objects_remove_all()
+    get_collection(collection).objects.link(obj)
 
     return obj
 

@@ -6,7 +6,12 @@ Created on Mon Jul 26 09:19:41 2021
 @author: alain
 """
 
+import numpy as np
+
 from .wstruct import WStruct
+
+from ..core.commons import WError
+from ..maths.bezier import Beziers
 
 # ---------------------------------------------------------------------------
 # Spline wrapper
@@ -68,6 +73,88 @@ class WSpline(WStruct):
             return self.wrapped.bezier_points
         else:
             return self.wrapped.points
+        
+    # ---------------------------------------------------------------------------
+    # Vertices
+    
+    def get_vertices(self, with_handles=True, with_w=True):
+        
+        n = len(self.points)
+        if self.use_bezier:
+                
+            a = np.empty(n*3, float)
+            self.points.foreach_get('co', a)
+
+            if self.with_handles:
+                v = np.empty((3, n, 3), float)
+                v[0] = np.reshape(a, (n, 3))
+                
+                self.points.foreach_get('handle_left', a)
+                v[1] = np.reshape(a, (n, 3))
+                
+                self.points.foreach_get('handle_right', a)
+                v[2] = np.reshape(a, (n, 3))
+            else:
+                v = np.reshape(a, (n, 3))
+                
+        else:
+            a = np.empty(n*4, float)
+            self.points.foreach_get('co', a)
+            
+            if with_w:
+                v = np.reshape(a, (n, 4))
+            else:
+                v = np.array(np.reshape(a, (n, 4))[:, :3])
+                
+        return v
+    
+    def set_vertices(self, verts):
+        
+        shape = np.shape(verts)
+        n = len(self.points)
+        
+        if self.use_bezier:
+            if len(shape) == 3:
+                ex_shape = (3, n, 3)
+                if shape != ex_shape:
+                    raise WError(f"Vertices array has an incorrect shape. Expected is {ex_shape}, passed is {shape}",
+                                 Class = "Spline", Method="set_°vertices")
+                    
+                a = np.array(verts[0]).reshape(n*3)
+                self.points.foreach_set('co', a)
+                a = np.array(verts[1]).reshape(n*3)
+                self.points.foreach_set('handle_left', a)
+                a = np.array(verts[2]).reshape(n*3)
+                self.points.foreach_set('handle_right', a)
+                
+            else:
+                ex_shape = (n, 3)
+                if shape != ex_shape:
+                    raise WError(f"Vertices array has an incorrect shape. Expected is {ex_shape}, passed is {shape}",
+                                 Class = "Spline", Method="set_°vertices")
+                    
+                a = np.array(verts).reshape(n*3)
+                self.points.foreach_set('co', a)
+                
+                v, l, r = Beziers(verts).control_points()
+                
+                self.points.foreach_set('handle_left', np.reshape(l, n*3))
+                self.points.foreach_set('handle_right', np.reshape(r, n*3))
+                
+                
+        else:
+            ex_shape = [(n, 3), (n, 4)]
+            if shape not in ex_shape:
+                raise WError(f"Vertices array has an incorrect shape. Expected is {ex_shape}, passed is {shape}",
+                             Class = "Spline", Method="set_°vertices")
+                
+            if shape[2] == 3:
+                a = np.ones((n, 4), float)
+                a[:, :3] = verts
+            else:
+                a = verts
+                
+            self.points.foreach_set('co', np.reshape(a, n*4))
         
     # ---------------------------------------------------------------------------
     # Copy from another spline

@@ -8,7 +8,7 @@ Created on Sat Sep  4 16:39:44 2021
 
 import numpy as np
 
-from .glyphe import CharFormat
+#from .glyphe import CharFormat
 from .fonts import Font
 from .ftext import FText
 from ..objects.stacker import Stack, MeshCharStacker, CurveCharStacker
@@ -83,11 +83,6 @@ class Chars(Crowd):
         
         self.ftext        = None
         
-        self.align_x      = 'LEFT'
-        self.align_y      = 'TOP'
-        self.align_width  = None
-        self.align_height = None
-        
         self.lock_chars()
         
         if len(self.font) == 1:
@@ -125,9 +120,79 @@ class Chars(Crowd):
         self.chars_locked -= 1
         if self.chars_locked == 0:
             self.set_chars(align=align)
+            
         self.unlock()
         
-    # ---------------------------------------------------------------------------
+    # ===========================================================================
+    # Text format interface
+    
+    @property
+    def topleft(self):
+        return self.ftext.text_format.topleft
+    
+    @topleft.setter
+    def topleft(self, value):
+        self.ftext.text_format.topleft = value
+        
+        self.reset()
+        self.set_chars(align=True)
+        
+    @property
+    def align_width(self):
+        return self.ftext.text_format.width
+    
+    @align_width.setter
+    def align_width(self, value):
+        self.ftext.text_format.width = value
+        
+        self.reset()
+        self.set_chars(align=True)
+        
+    @property
+    def align_x(self):
+        return self.ftext.text_format.align_x
+    
+    @align_x.setter
+    def align_x(self, value):
+        self.ftext.text_format.align_x = value
+        
+        self.reset()
+        self.set_chars(align=True)
+        
+    @property
+    def font_scale(self):
+        return self.ftext.text_format.scale
+    
+    @font_scale.setter
+    def font_scale(self, value):
+        self.ftext.text_format.scale = value
+        
+        self.reset()
+        self.set_chars(align=True)
+        
+    @property
+    def interchars(self):
+        return self.ftext.text_format.interchars
+    
+    @interchars.setter
+    def interchars(self, value):
+        self.ftext.text_format.interchars = value
+        
+        self.reset()
+        self.set_chars(align=True)
+        
+    @property
+    def interlines(self):
+        return self.ftext.text_format.interlines
+    
+    @interlines.setter
+    def interlines(self, value):
+        self.ftext.text_format.interlines = value
+        
+        self.reset()
+        self.set_chars(align=True)
+    
+    # ===========================================================================
     # glyphes parameters
         
     @property
@@ -154,14 +219,25 @@ class Chars(Crowd):
         self.reset()
         self.set_chars()
         
-    # ---------------------------------------------------------------------------
+    # ===========================================================================
+    # Display plane
+    
+    @property
+    def display_plane(self):
+        return self.font.display_plane
+    
+    @display_plane.setter
+    def display_plane(self, value):
+        self.font.display_plane = value
+        
+    # ===========================================================================
     # Mesh or Curve
 
     @property
     def char_type(self):
         return self.stack.object_type
 
-    # ---------------------------------------------------------------------------
+    # ===========================================================================
     # Access to stack by couple (char, font index)
     
     def char_index(self, char, font=None):
@@ -177,9 +253,9 @@ class Chars(Crowd):
             self.chars_index[(char, font)] = index
             
             if self.char_type == 'Mesh':
-                self.stack.stack(MeshCharStacker(char, self.font[font].mesh_char(char, return_faces=True)))
+                self.stack.stack(MeshCharStacker(char, self.font[font].mesh_char(char, text_format=self.ftext.text_format, return_faces=True)))
             else:
-                self.stack.stack(CurveCharStacker(char, self.font[font].curve_char(char)))
+                self.stack.stack(CurveCharStacker(char, self.font[font].curve_char(char, text_format=self.ftext.text_format)))
 
         return index
     
@@ -267,9 +343,9 @@ class Chars(Crowd):
                     fmt_char = self.ftext.get_char_format(i)
                     
                     if self.char_type == 'Mesh':
-                        self.set_block(i, self.font[fmt_char.font].mesh_char(chars[i], fmt_char))
+                        self.set_block(i, self.font[fmt_char.font].mesh_char(chars[i], fmt_char, self.ftext.text_format))
                     else:
-                        self.set_block(i, self.font[fmt_char.font].curve_char(chars[i], fmt_char)[0])
+                        self.set_block(i, self.font[fmt_char.font].curve_char(chars[i], fmt_char, self.ftext.text_format)[0])
                         
         # ---------------------------------------------------------------------------
         # realign if required                        
@@ -297,9 +373,13 @@ class Chars(Crowd):
         
         self.lock()
         
-        # ----- Format the raw text
+        # ----- Format the raw text. Keeps the text_format parameters
         
+        old = self.ftext
         self.ftext = FText(text)
+        if old is not None:
+            self.ftext.text_format.copy(old.text_format)
+            del old
         
         # ----- Create the geometry of the crowd of chars
         
@@ -317,39 +397,35 @@ class Chars(Crowd):
         if self.chars_locked > 0:
             return
         
-        if width is None:
-            width = self.align_width
-        else:
-            self.align_width = width
-            
-        if align_x is None:
-            align_x = self.align_x
-        else:
-            self.align_x = align_x
-
         self.lock()
         
-        self.ftext.align(width=width, align_x = align_x)
+        # ----- Compute the alignment
         
+        self.ftext.align()
+        
+        # ----- Transfer to the transformation matrices
+        
+        plane = 'XY' if self.char_type == 'Curve' else self.display_plane
+        
+        if plane == 'XZ':
+            ix = 0
+            iy = 2
+        elif plane == 'YZ':
+            ix = 1
+            iy = 2
+        else:
+            ix = 0
+            iy = 1
+            
         loc = np.zeros(3, float)
         for i in range(len(self.ftext)):
-            loc[:2] = self.ftext[i].location
+            loc_xy = self.ftext[i].location
+            loc[ix] = loc_xy[0]
+            loc[iy] = loc_xy[1]
+            #loc[:2] = self.ftext[i].location
             self[i] = geo.tmatrix(location=loc)
 
         self.unlock()
-        
-    # ===========================================================================
-    # Char formatting
-    
-    @property
-    def char_scale(self):
-        return self.font.scale
-        
-    @char_scale.setter
-    def char_scale(self, value):
-        self.font.scale = value
-        self.reset()
-        self.set_chars(align=True)
         
     # ===========================================================================
     # Char formatting

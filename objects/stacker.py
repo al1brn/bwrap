@@ -556,6 +556,7 @@ class Stack():
             if len(stacker.profile) > 0:
                 if np.min(stacker.profile[:, 0]) == 1:
                     return 6
+                
         return 3
         
     

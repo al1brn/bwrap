@@ -8,8 +8,32 @@ Created on Tue Jan 26 21:25:51 2021
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
+# ====================================================================================================
+# Bezier curves are made of control points:
+# - points
+# - left control points
+# - right control points
+#
+# Left and right control points can be computed from points
+# The curves can be 2D or 3D
+# One curve is made of count points
+# Curves can be passed in an array with any user shape
+#
+# The shape of a set of Bezier curves is (shape, count, vdim), for instance:
+#
+# - (2, 3, 10, 3) : array (2, 3) of Bezier curves made of 10 3D-points
+#
+# The computation of the point at value t returns an array of shape (shape, vdim):
+# - (2, 3, 10, 3) --> (2, 3, 3)
+#
+# The computation can be made with an array of t. If n is the length of t,
+# the returned shape is (n, shape, vdim)
+# - (2, 3, 10, 3) (100) --> (100, 2, 3, 3)
+
+# ====================================================================================================
 # Compute the tangent of a function
+#
+# The function returns either a value or an array of values
 
 def tangent(f, t, dt=0.01):
     """Compute the tangent of a function
@@ -25,26 +49,26 @@ def tangent(f, t, dt=0.01):
     dt : float, default = 0.01
         Value to use to compute the tangent
         
-        
     Returns
     -------
     same type as f(t) or array of this type
     """
     
-    if hasattr(t, '__len__'):
-        return (f(t + dt/2) - f(t - dt/2)) / dt
-    else:
-        return (np.array(f(t + dt/2)) - np.array(f(t - dt/2))) / dt
-    
-# ---------------------------------------------------------------------------
-# Bezier from a function
+    return (f(t + dt/2) - f(t - dt/2)) / dt
 
-def control_points(f, count, t0=0., t1=1., dt=0.0001):
-    """Compute the Bezier control points of a function
+# ====================================================================================================
+# Compute bezier control points from a function
+
+def control_points(f, count, t0=0., t1=1., dt=None):
+    """Compute the Bezier control points from a function.
+    
+    For one single value t, f returns a single float or a shaped array of floats:
+    If f returns a single value, the shaped of the return array is (count, vdim)
+    If f returns a shaped array, the return array is (shape, count, vdim)
     
     Parameters
     ----------
-    f : function of template f(t) = point
+    f : function of template f(t) = point or array of points
         The function to use
         
     count : int
@@ -63,14 +87,18 @@ def control_points(f, count, t0=0., t1=1., dt=0.0001):
     -------
     points, left control points, right control points
     """
-
+    
+    if dt is None:
+        dt=(t1-t0)/10000
+    
     count  = max(2, count)
     delta  = (t1 - t0) / (count - 1)
-    ts     = t0 + np.arange(count) * delta
-
+    ts     = np.linspace(t0, t1, count)
+    
     try:
         points = f(ts)
         ders   = (f(ts+dt) - f(ts-dt)) /2 /dt
+
     except:
         points = np.array([f(t)    for t in ts])
         d1     = np.array([f(t+dt) for t in ts])
@@ -79,59 +107,133 @@ def control_points(f, count, t0=0., t1=1., dt=0.0001):
 
     ders *= delta / 3
 
-    return points, points - ders, points + ders
-    
-# ---------------------------------------------------------------------------
-# List of points interpolated as a curve
+    return points, points - ders, points + ders    
 
-class PointsInterpolation():
-    """Class to interpolate a series of points
     
+# ====================================================================================================
+# Bezier interpolations from an array of seroes of Bezier control points
+
+class Beziers():
+    """Bezier interpolations from an array of seroes of Bezier control points.
+    
+    Can manage an array of curves:
+        The shape of the points is (shape, count, 3)
+        
+    Left anf right interpolation points are optional. If they are not provided,
+    they are computed.
     """
 
     def __init__(self, points, lefts=None, rights=None):
         """
         Parameters
         ----------
-        points : array of vectors
-            The array of points to interpolate
+        points : series of vectors or array of series of vectors
+            The series of points to interpolate
             
-        lefts : array of vectors, optional
+        lefts : series of vectors or array of series of vectors, optional
             The left control points
             
-        rights : array of vectors, optional
+        rights : series of vectors or array of series of vectors, optional
             The right control points 
         """
 
         self.points = np.array(points)
         
         # Compute the derivatives if lefts and rights are not given
-
-        der       = np.array(self.points)
-        der[1:-1] = self.points[2:] - self.points[:-2]
-        der[0]    = (self.points[1] - self.points[0])/2
-        der[-1]   = (self.points[-1] - self.points[-2])/2
-
-        der *= 2/(len(self.points)-1)/3
-
+        
+        der = np.empty(self.points.shape, float)
+        der[..., 1:-1, :] = self.points[..., 2:, :] - self.points[..., :-2, :]
+        der[..., 0, :]    = (self.points[..., 1,:] - self.points[..., 0, :])/2
+        der[..., -1, :]   = (self.points[..., -1, :] - self.points[..., -2, :])/2
+        
+        nrm       = np.linalg.norm(der, axis=-1)
+        nrm[abs(nrm) < 0.001] = 1.
+        der = der / np.expand_dims(nrm, axis=-1)
+        
+        dists = np.expand_dims(np.linalg.norm(self.points[..., 1:, :] - self.points[..., :-1, :], axis=-1), axis=-1)
+        
+        self.lefts = np.array(self.points)
         if lefts is None:
-            self.lefts = self.points - der
+            self.lefts[..., 1:, :] -= der[..., 1:, :]*dists/3
+            self.lefts[..., 0, :]  -= der[..., 0, :]*dists[..., 0, :]/3
         else:
-            self.lefts = lefts
+            self.lefts[:] = lefts
 
+        self.rights = np.array(self.points)
         if rights is None:
-            self.rights = self.points + der
+            self.rights[..., :-1, :] += der[..., :-1,:]*dists/3
+            self.rights[..., -1, :]  += der[..., -1, :]*dists[..., -1, :]/3
         else:
-            self.rights = rights
+            self.rights[:] = rights   
+            
+    def __repr__(self):
+        return f"<Array{self.shape} of Bezier curves ({self.size}) made of {self.count} {self.vdim}D-points>"
+            
+    # ====================================================================================================
+    # Dimensions of the curves
+            
+    @property
+    def shape(self):
+        """Shape of array of curves.
+        
+        The shape of the control points array is (shape, count, vdim)
 
+        Returns
+        -------
+        tuple
+            User shape of the array of Bezier curves.
+        """
+        
+        return self.points.shape[:-2]
+    
+    @property
+    def size(self):
+        """Size of array of curves.
+        
+        Size of tyhe shape of the control points array is (shape, count, vdim)
+
+        Returns
+        -------
+        int
+            Number of Bezier curves.
+        """
+        
+        shape = self.shape
+        return 1 if shape == () else np.product(shape)
+    
     @property
     def count(self):
-        """Number of control points"""
-        
-        return len(self.points)
+        """Number of control points per Bezier curve.
 
+        Returns
+        -------
+        int
+            How many control points in each curve.
+        """
+        
+        return self.points.shape[-2]
+    
+    @property
+    def vdim(self):
+        """Dimension of the control points vectors.
+
+        Returns
+        -------
+        int
+            Dimension of the control points vectors.
+        """
+        
+        return self.points.shape[-1] 
+
+    # ====================================================================================================
+    # Compute the points on a value or array of values
+            
     def __call__(self, t):
-        """Compute the interpolation
+        """Compute the interpolation.
+        
+        - points shape: (shape, count, 3)
+        - t shape:      (n,)
+        - Result shape: (shape, n, 3)
         
         Parameters
         ----------
@@ -142,62 +244,110 @@ class PointsInterpolation():
         -------
         vector or array of vectors
         """
-
+    
         # Parameter is not an array
         if not hasattr(t, '__len__'):
-            return self([t])[0]
-
-        # Ok, we have an array as an input
-        n     = len(self.points)
-        delta = 1./(n - 1)
+            return self([t])[..., 0, :]
         
         # Make sure it is an np array
-        ts = np.array(t)
+        ts = np.array(t, float)
+        n = len(ts)
         
         # And that it is between 0 and 1
         ts[np.where(ts < 0)] = 0
         ts[np.where(ts > 1)] = 1
         
-        # Indices
-        inds = (ts*(n-1)).astype(np.int)
+        # Number of bezier points
+        count = self.count 
         
-        # Indices bounds
-        inds[np.greater(inds, n-2)] = n-2
-        inds[np.less(inds, 0)]      = 0
+        # Indices
+        inds = (ts*(count-1)).astype(int)
+        inds[inds == count-1] = count-2   # Ensure inds+1 won't crash
+        
+        # Location within the interval
+        delta = 1/(count - 1)             
         
         # Bezier computation
-        ps = (ts - inds*delta) / delta
+        
+        ps = ((ts - inds*delta) / delta).reshape(n, 1) # 1 for inds == count-1 shifted to count-2 !
 
         ps2  = ps*ps
         ps3  = ps2*ps
         _ps  = 1 - ps
         _ps2 = _ps*_ps
         _ps3 = _ps2*_ps
+        
+        v  = self.points[..., inds, :]*_ps3
+        v += 3*self.rights[..., inds, :]*_ps2*ps
+        v += 3*self.lefts[..., inds+1, :]*_ps*ps2
+        v += self.points[..., inds+1, :]*ps3
+        
+        return v
+    
+    # ====================================================================================================
+    # The control points
 
-        return self.points[inds]*_ps3[:,np.newaxis] + 3*self.rights[inds]*(_ps2*ps)[:,np.newaxis] + 3*self.lefts[inds+1]*(_ps*ps2)[:,np.newaxis] + self.points[inds+1]*ps3[:,np.newaxis]
-
-    def bezier(self):
+    def control_points(self):
         """Return the points and the left and rigth control points"""
         
         return self.points, self.lefts, self.rights
     
-    def plot(self, count=100):
+    # ====================================================================================================
+    # To Blender curve vertices
+    # A Blender curve can be initialized in one shot with the profile structure
+    # Profile is an array with one entry per curve. Each entry has 3 values:
+    # - 1 or 3: multiplicator of the number of vertices (3 for Bezier)
+    # - n     : number of vertices
+    # - type  : curve type, 0 for Bezier
+    
+    def blender_vertices(self):
+        
+        profile = np.empty((self.size, 3), int)
+        profile[:] = (3, self.count, 0)
+        
+        verts = np.zeros((self.shape + (3, self.count, 3)), float)
+        verts[..., 0, :, :self.vdim] = self.points
+        verts[..., 1, :, :self.vdim] = self.lefts
+        verts[..., 2, :, :self.vdim] = self.rights
+        
+        return verts.reshape(self.size*self.count*3, 3), profile
+    
+    # ====================================================================================================
+    # DEBUG : plot the curves
+    
+    def plot(self, count=100, points=True, controls=False, curves=True):
         """Plot the interpolation"""
         
         import matplotlib.pyplot as plt
         
-        fig, ax = plt.subplots()
-        ax.plot(self.points[:, 0], self.points[:, 1], 's')
+        pts = self.points.reshape(self.size, self.count, self.vdim)
+        lfs = self.lefts.reshape(self.size, self.count, self.vdim)
+        rgs = self.rights.reshape(self.size, self.count, self.vdim)
         
-        t = np.linspace(-0.1, 1.1, 100)
+        fig, ax = plt.subplots()
+        if points:
+            for i in range(self.size):
+                ax.plot(pts[i, :, 0], pts[i, :, 1], 'o')
+                if controls:
+                    ax.plot(lfs[i, :, 0], lfs[i, :, 1], 'o')
+                    ax.plot(rgs[i, :, 0], rgs[i, :, 1], 'o')
+        
+        t = np.linspace(0, 1, 100)
         p = self(t)
         
-        ax.plot(p[:, 0], p[:, 1])
+        p = p.reshape(self.size, len(t), self.vdim)
+        
+        if curves:
+            for i in range(self.size):
+                ax.plot(p[i, :, 0], p[i, :, 1], '-')
         
         plt.show()
         
-    @staticmethod
-    def demo(ctl_points=True):
+    # ====================================================================================================
+    # DEBUG : a demo
+        
+    @classmethod
+    def demo(cls, shape=(), ctl_points=True, seed=0):
         """A simple demo
         
         Parameters
@@ -210,35 +360,78 @@ class PointsInterpolation():
         plot with the control points and the interpolated curve
         
         """
-
-        # Interpolate a damped sinusoid
-        def f(x):
-            p = np.zeros((len(x), 2), float)
+        
+        # ---------------------------------------------------------------------------
+        # A damped sinusoid
+        
+        def f(x, seed=0):
+            
+            np.random.seed(seed)
+            a = np.random.normal(1, .4)
+            w = np.random.normal(1, .4)
+            
+            n = len(x) if hasattr(x, '__len__') else 1 
+            
+            p = np.zeros((n, 2), float)
             p[:, 0] = x
-            p[:, 1] = np.sin(x)/x
-            return p
+            p[:, 1] = a*np.sin(w*x)/x
+            
+            if hasattr(x, '__len__'):
+                return p
+            else:
+                return p[0]
+            
+        # ---------------------------------------------------------------------------
+        # A shaped array of damped sinusoid
+        
+        def fa(x, shape, seed=0):
+            
+            if not hasattr(shape, '__len__'): shape = (shape,)
+            size = int(np.product(shape))
+            n = len(x) if hasattr(x, '__len__') else 1 
+            
+            r = np.empty((size, n, 2), float)
+            
+            for i in range(size):
+                r[i] = f(x, seed=seed+i)
+                
+            if hasattr(x, '__len__'):
+                return r.reshape(shape + (n, 2))
+            else:
+                return r.reshape((n, 2))
+            
+        if seed is None: seed = np.random.randint(10000000)
+                
+        
+        # Shape
+        size = 1 if shape == () else np.product(shape)
         
         # Number of points
         count= 10
 
         if ctl_points:
             
-            p, l, r = control_points(f, count, 0.001, 10.)
+            p, l, r = control_points(lambda x : fa(x, shape, seed=seed), count, 0.001, 10.)
             
         else:
+            p = np.zeros((size,) + (count, 2), float)
             x = np.linspace(0.01, 10., count)
-            p = f(x)
+            for i in range(size):
+                p[i] = f(x, seed+i)
+            p = p.reshape(shape + (count, 2))
             l = None
             r = None
+            
+        beziers = cls(p, l, r)
+        beziers.plot()
         
-        intrp = PointsInterpolation(p, l, r)
-        intrp.plot()
-        
-# ---------------------------------------------------------------------------
-# User friendly
+        return beziers
+    
+# ====================================================================================================
+# Return Bezier control points from Bezier control points
 
-def from_points(count, verts, lefts=None, rights=None):
-    """Compute control points from interpolation points
+def bezier_control_points(count, verts, lefts=None, rights=None):
+    """Compute count control points from any series of Bezier control points.
     
     Used both to reduce the number of points for interpolation and
     to compute left and rigth control points.
@@ -260,47 +453,28 @@ def from_points(count, verts, lefts=None, rights=None):
     Returns
     -------
     3 arrays of count vectors
-        control points, left control points, right control points    
-    
+        control points, left control points, right control points        
     """        
         
-    vf = PointsInterpolation(verts, lefts, rights)
-    return control_points(vf, count)
+    beziers = Beziers(verts, lefts, rights)
+    return control_points(beziers, count)
 
-def from_function(count, f, t0, t1):
-    """Compute control points from a function
-    
-    Parameters
-    ----------
-    count : int
-        Number of control points to compute
-        
-    f : function, template f(float) -> vector
-        The function to interpolate
-        
-    t0 : float
-        The starting value
-        
-    t1 : float
-        The ending value
-        
-    Returns
-    -------
-    3 arrays of count vectors
-        control points, left control points, right control points    
-    """
-    
-    return control_points(f, count, t0, t1, dt=(t1-t0)/10000)
 
-# ---------------------------------------------------------------------------
-# Function
+# ====================================================================================================
+# Interpolation 2D polynom
 
-class InterpolationPolynom():
+class Polynoms():
     """Interpolate x, y values with polynoms
     
     Each interval is interpolated by a polynom of degree 3 to 
     produce a continuous curve between intervals.
     First and last interval are only of degree 2.
+    
+    The set of polynoms is a shaped array:
+        x & y: array(shape, count) of floats
+        
+    The call Polynoms(t) return an array(shape) of floats
+    The call Polynoms(array(n) of t) retuens an array(shape, n) of floats
     """
     
     def __init__(self, x, y, periodic=False):
@@ -317,11 +491,35 @@ class InterpolationPolynom():
             The interpolation is periodic
         """
         
-        self.x = np.array(x)
         self.y = np.array(y)
+        self.x = np.empty(self.y.shape, float)
+        self.x[:] = x
+        
         self.periodic = periodic
         
-        self.a, self.b, self.c, self.d = InterpolationPolynom.computePolynoms(self.x, self.y)
+        self.a, self.b, self.c, self.d = Polynoms.coefficients(self.x, self.y)
+        
+    def __repr__(self):
+        return f"<Array{self.shape} of polynomial curves ({self.size}) made of {self.count} points>"
+        
+    # ====================================================================================================
+    # Dimensions of the polynomial curves
+    
+    @property
+    def shape(self):
+        return self.x.shape[:-1]
+    
+    @property
+    def size(self):
+        shape = self.shape
+        return 1 if self.shape == () else np.product(shape)
+    
+    @property
+    def count(self):
+        return self.x.shape[-1]
+    
+    # ====================================================================================================
+    # The x intervals
         
     @property
     def delta_x(self):
@@ -332,7 +530,10 @@ class InterpolationPolynom():
         array of floats
             The dim of the array is one lesser than the number of points
         """
-        return self.x[-1] - self.x[0]
+        return self.x[..., -1] - self.x[..., 0]
+    
+    # ====================================================================================================
+    # Inverted functions
     
     @property
     def invert(self):
@@ -344,10 +545,13 @@ class InterpolationPolynom():
             Interpolations computed with y, x
         """
         
-        return InterpolationPolynom(self.y, self.x, self.periodic)
+        return Polynoms(self.y, self.x, self.periodic)
+    
+    # ====================================================================================================
+    # Compute the polynomial coefficients
         
     @staticmethod
-    def computePolynoms(x, y):
+    def coefficients(x, y):
         """Compute the coefficients of the polynoms from the values
         
         Parameters
@@ -364,66 +568,133 @@ class InterpolationPolynom():
             The a, b, c, d coefficients of the intervals
         """
         
-        # ----- Number of points
-        n = len(x)                  
-        
-        # There are:
-        # n-1 : polynoms from 0 to n-2
-        # n-3 : polynoms of degree 3 from 1 to n-3
-        # 1   : polynom of degree 2 at 0
-        # 1   : polynom of degree 2 at n-2
-        
-        # ----- The four polynoms coefficients
-        
-        a = np.zeros(n-1, np.float)
-        b = np.zeros(n-1, np.float)
-        c = np.zeros(n-1, np.float)
-        d = np.zeros(n-1, np.float)
-        
-        # ----- Compute the n-2 derivatives (excluding 0 and n-1 extremity points)
-        
-        ders = (y[2:] - y[:-2])/(x[2:] - x[:-2])
-        
-        # ----- Helpers
-
-        d1 = ders[:-1]
-        d2 = ders[1:]
-        
-        x_2 = x*x
-        
-        x1 = x[1:-2]
-        x2 = x[2:-1]
-        y1 = y[1:-2]
-        y2 = y[2:-1]
-        
-        x21 = x2 - x1
-        
-        # ----- n-3 polynoms of degree 3
-        
-        a[1:-1] = (d1 + d2 - 2*(y2 - y1)/x21)  / x21**2
-        b[1:-1] = -1.5*a[1:-1]*(x2 + x1) + 0.5*(d2 - d1)/x21
-        c[1:-1] = 3*a[1:-1]*x1*x2 + (d1*x2 - d2*x1)/x21
-        
-        # ----- First polynom of degree 2 (a[0] is initialized to 0)
-        
-        dx = x[1] - x[0]
-        b[0] = (ders[0] - (y[1] - y[0])/dx)/dx
-        c[0] = ders[0] - 2*b[0]*x[1]
-        
-        dx = (x[-1] - x[-2])
-        b[-1] = - (ders[-1] - (y[-1] - y[-2])/dx)/dx
-        c[-1] = ders[-1] - 2*b[-1]*x[-2]
-        
-        # ----- Computation of d
-        
-        d = y[:-1] - a*x_2[:-1]*x[:-1] - b*x_2[:-1] - c*x[:-1]   
-        
-        # ----- We are good
-        
-        return a, b, c, d
+        if True:
+            
+            shape = np.shape(x)[:-1]
+            n = np.shape(x)[-1]
+            
+            # For each curve, there are:
+            # n-1 : polynoms from 0 to n-2
+            # n-3 : polynoms of degree 3 from 1 to n-3
+            # 1   : polynom of degree 2 at 0
+            # 1   : polynom of degree 2 at n-2
+            
+            # ----- The four polynoms coefficients
+            
+            a = np.zeros(shape + (n-1,), float)
+            b = np.zeros(shape + (n-1,), float)
+            c = np.zeros(shape + (n-1,), float)
+            d = np.zeros(shape + (n-1,), float)
+            
+            # ----- Compute the n-2 derivatives (excluding 0 and n-1 extremity points)
+            
+            ders = (y[..., 2:] - y[..., :-2])/(x[..., 2:] - x[..., :-2])
+            
+            # ----- Helpers
     
-    def __call__(self, x):
-        """Compute the interpolation of values
+            d1 = ders[..., :-1]
+            d2 = ders[..., 1:]
+            
+            x_2 = x*x
+            
+            x1 = x[..., 1:-2]
+            x2 = x[..., 2:-1]
+            y1 = y[..., 1:-2]
+            y2 = y[..., 2:-1]
+            
+            x21 = x2 - x1
+            
+            # ----- n-3 polynoms of degree 3
+            
+            a[..., 1:-1] = (d1 + d2 - 2*(y2 - y1)/x21)  / x21**2
+            b[..., 1:-1] = -1.5*a[..., 1:-1]*(x2 + x1) + 0.5*(d2 - d1)/x21
+            c[..., 1:-1] = 3*a[..., 1:-1]*x1*x2 + (d1*x2 - d2*x1)/x21
+            
+            # ----- First polynom of degree 2 (a[0] is initialized to 0)
+            
+            dx = x[..., 1] - x[..., 0]
+            b[..., 0] = (ders[..., 0] - (y[..., 1] - y[..., 0])/dx)/dx
+            c[..., 0] = ders[..., 0] - 2*b[..., 0]*x[..., 1]
+            
+            dx = (x[..., -1] - x[..., -2])
+            b[..., -1] = - (ders[..., -1] - (y[..., -1] - y[..., -2])/dx)/dx
+            c[..., -1] = ders[..., -1] - 2*b[..., -1]*x[..., -2]
+            
+            # ----- Computation of d
+            
+            d = y[..., :-1] - a*x_2[..., :-1]*x[..., :-1] - b*x_2[..., :-1] - c*x[..., :-1]   
+            
+            # ----- We are good
+            
+            return a, b, c, d            
+            
+            
+        else:
+            n = len(x)                  
+            
+            # There are:
+            # n-1 : polynoms from 0 to n-2
+            # n-3 : polynoms of degree 3 from 1 to n-3
+            # 1   : polynom of degree 2 at 0
+            # 1   : polynom of degree 2 at n-2
+            
+            # ----- The four polynoms coefficients
+            
+            a = np.zeros(n-1, np.float)
+            b = np.zeros(n-1, np.float)
+            c = np.zeros(n-1, np.float)
+            d = np.zeros(n-1, np.float)
+            
+            # ----- Compute the n-2 derivatives (excluding 0 and n-1 extremity points)
+            
+            ders = (y[2:] - y[:-2])/(x[2:] - x[:-2])
+            
+            # ----- Helpers
+    
+            d1 = ders[:-1]
+            d2 = ders[1:]
+            
+            x_2 = x*x
+            
+            x1 = x[1:-2]
+            x2 = x[2:-1]
+            y1 = y[1:-2]
+            y2 = y[2:-1]
+            
+            x21 = x2 - x1
+            
+            # ----- n-3 polynoms of degree 3
+            
+            a[1:-1] = (d1 + d2 - 2*(y2 - y1)/x21)  / x21**2
+            b[1:-1] = -1.5*a[1:-1]*(x2 + x1) + 0.5*(d2 - d1)/x21
+            c[1:-1] = 3*a[1:-1]*x1*x2 + (d1*x2 - d2*x1)/x21
+            
+            # ----- First polynom of degree 2 (a[0] is initialized to 0)
+            
+            dx = x[1] - x[0]
+            b[0] = (ders[0] - (y[1] - y[0])/dx)/dx
+            c[0] = ders[0] - 2*b[0]*x[1]
+            
+            dx = (x[-1] - x[-2])
+            b[-1] = - (ders[-1] - (y[-1] - y[-2])/dx)/dx
+            c[-1] = ders[-1] - 2*b[-1]*x[-2]
+            
+            # ----- Computation of d
+            
+            d = y[:-1] - a*x_2[:-1]*x[:-1] - b*x_2[:-1] - c*x[:-1]   
+            
+            # ----- We are good
+            
+            return a, b, c, d
+        
+    # ====================================================================================================
+    # Compute the values
+    
+    def __call__(self, t):
+        """Compute the interpolation of values.
+        
+        If x is a single value, return an array of shape floats.
+        If x is an array of n floats, return an array (shape, n) floats
         
         Parameters
         ----------
@@ -436,37 +707,52 @@ class InterpolationPolynom():
         """
         
         # Only a single value
-        if not hasattr(x, "__len__"):
-            return self([x])[0]
+        if not hasattr(t, "__len__"):
+            return self([t])[..., 0]
         
+        n = len(t)
         
         # Modulo
         if self.periodic:
-            x = np.mod(x, self.delta_x)
-        
+            t = np.mod(t, self.delta_x)
+            
         # results
-        y = np.zeros(len(x), np.float)
+        y = np.zeros(self.shape + (n,), float)
         
         # Loop on the curves
-        ncurves = len(self.x) - 1
+        ncurves = self.count - 1   #len(self.x) - 1
+        xshape = self.shape + (1,)
         for i in range(ncurves):
             if i == 0:
-                ks = np.argwhere(x <= self.x[1])
+                wh = t <= np.reshape(self.x[..., 1], xshape)
             elif i == ncurves-1:
-                ks = np.argwhere(x > self.x[ncurves-1])
+                wh = t > np.reshape(self.x[..., ncurves-1], xshape)
             else:
-                ks = np.argwhere(np.logical_and(x > self.x[i], x <= self.x[i+1]))
+                wh = np.logical_and(t > np.reshape(self.x[..., i], xshape) , t <= np.reshape(self.x[..., i+1], xshape))
+            
+            k = np.argwhere(wh)
+            t_ind = k[..., -1]
+            s_ind = k[..., :-1]
                 
-            if len(ks) > 0:
+            if len(k) > 0:
                 #ks = ks.reshape(len(ks))
-                x_2 = x[ks] * x[ks]
-                y[ks] = self.a[i]*x_2*x[ks] + self.b[i]*x_2 + self.c[i]*x[ks] + self.d[i]
+                t_2 = t[t_ind] * t[t_ind]
+                
+                s = tuple(np.insert(s_ind, len(self.shape), i, axis=-1).transpose())
+                
+                aa = np.squeeze(self.a[s])*t_2*t[t_ind]
+                bb = np.squeeze(self.b[s])*t_2
+                cc = np.squeeze(self.c[s])*t[t_ind]
+                dd = np.squeeze(self.d[s])
+                
+                y[wh] = aa + bb + cc + dd
                 
         return y
     
-    # ----- For debug
+    # ====================================================================================================
+    # Debug: plot the functions
     
-    def plot(self, dx=None):
+    def plot(self, x, points=True, curves=True):
         """Plot the interpolation curve
         
         Parameters
@@ -480,22 +766,38 @@ class InterpolationPolynom():
         # ----- The points
         
         fig, ax = plt.subplots(1, 1)
-        ax.plot(self.x, self.y, 'o-')
+        if points:
+            for i in range(self.size):
+                ax.plot(np.reshape(self.x, (self.size, self.count))[i], np.reshape(self.y, (self.size, self.count))[i], 'o')
         
         # ----- The curve
         
-        if dx is None:
-            dx = 0.1*self.delta_x
-        x = np.linspace(self.x[0] - dx, self.x[-1] + dx, 100)
-        ax.plot(x, self(x))
+        #if dx is None:
+        #    dx = 0.1*self.delta_x
+            
+        #x = np.linspace(self.x[0] - dx, self.x[-1] + dx, 100)
+        y = self(x)
+        size = int(np.product(np.shape(y)[:-1]))
+        if curves:
+            if size == 0:
+                ax.plot(x, y)
+            else:
+                y = np.reshape(y, (size, len(x)))
+                for i in range(size):
+                    ax.plot(x, y[i])
         
         plt.show()
         
-    @staticmethod
-    def demo():
+    # ====================================================================================================
+    # Debug: plot the functions
+        
+    @classmethod
+    def demo(cls):
         x = np.linspace(0, 2*np.pi, 5)
         y = np.sin(x)
         
-        f = InterpolationPolynom(x, y, True)
+        f = cls(x, y, True)
         f.plot(7)
+        
+        return f
 

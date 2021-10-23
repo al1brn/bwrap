@@ -429,7 +429,6 @@ class WSplines(WStruct):
                 
         return verts
     
-    
     # ===========================================================================
     # Default access to the vertices
     
@@ -488,5 +487,10 @@ class WSplines(WStruct):
                 index += n
     
         self.update_tag()
+        
+    # ===========================================================================
+    # Only 3D vertices
+    
+        
     
     

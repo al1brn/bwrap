@@ -349,7 +349,10 @@ class Easing():
         self.auto_ease = easing['auto']
         
     def __repr__(self):
-        return f"<Easing {self.name} {self.auto_ease}>"
+        s = f"<Easing {self.name} {self.auto_ease}"
+        if self.name == 'BEZIER':
+            s += f" P1: [{self.P1[0]:.2f}, {self.P1[1]:.2f}], P2: [{self.P2[0]:.2f}, {self.P2[1]:.2f}]"
+        return s + ">"
         
     # ----- Left and right tangents
     
@@ -723,8 +726,8 @@ class Easing():
         rect = Rect(kf0.co, kf1.co)
         if self.name == 'BEZIER':
             
-            self.P1 = rect.normalize(kf0.handle_right)
-            self.P2 = rect.normalize(kf1.handle_left)
+            self.P1 = rect.normalize(kf0.handle_right, clip=False)
+            self.P2 = rect.normalize(kf1.handle_left, clip=False)
             
         else:
             #self.factor    = 10
@@ -799,13 +802,18 @@ class BCurve():
         self.extrapolation = extrapolation
         
     def __repr__(self):
-        s = f"<BCurve {len(self.easings)} easing(s)"
+        s = f"<BCurve {len(self.easings)} easing(s), extrapolation: {self.extrapolation}"
         if len(self.points) == 0:
             s += " no points"
         elif len(self.points) == 1:
             s += f" single point: ({self.points[0][0]:.1f} {self.points[0][1]:.1f})]"
         else:
             s += f" into points:\n{self.points}"
+            
+        s += "\neasings"
+        for e in self.easings:
+            s += f"\n{e}"
+            
         return s + ">"
         
     # ---------------------------------------------------------------------------
@@ -1193,8 +1201,9 @@ class BCurve():
         # ----- Extrapolation
         
         if self.extrapolation == 'CONSTANT':
-            y[t<bounds.x0] = bounds.y0
-            y[t>bounds.x1] = bounds.y1
+            
+            y[t<bounds.x0] = self.points[0, 1]
+            y[t>bounds.x1] = self.points[-1, 1]
             
         else:
             tg = bounds.y_amp/bounds.x_amp
