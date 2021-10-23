@@ -132,18 +132,47 @@ def dispersion(radius, shape, ndim=3, seed=0):
 # ====================================================================================================
 # Build a random shaped array of floats or vectors
 
-def shaped_array(shape, value, scale=None, force_shape=False):
+def shaped_array(shape, ndim, value, scale=None):
     
+    # User shape
     if not hasattr(shape, '__len__'): shape = (shape,)
+    if hasattr(ndim, '__len__'):
+        shape += ndim
+    elif ndim > 1:
+        shape += (ndim,)
     
-    v_shape = np.shape(value)
-    a_shape = shape if v_shape == () else shape + v_shape
+    v = np.zeros(shape, float)
+    v[:] = value
+    
+    if scale is None:
+        return v
+    
+    s = np.zeros(shape, float)
+    s[:] = scale
+
+    return np.random.normal(v, s, shape)    
+        
+    
+    
+    
+    # Array shape
+    if ndim == 1:
+        a_shape = shape
+    else:
+        a_shape = shape + (ndim,)
+    
+    #v_shape = np.shape(value)
+    #a_shape = shape if v_shape == () else shape + v_shape
     
     # ---------------------------------------------------------------------------
     # No scale : nothing to do
     # Up to the caller to ensure broadcasing will work :-)
     
     if scale is None:
+        a = np.zeros(a_shape, float)
+        a[:] = value
+        return a
+        
         if force_shape:
             return np.resize(value, a_shape)
         else:
@@ -152,14 +181,27 @@ def shaped_array(shape, value, scale=None, force_shape=False):
     # ---------------------------------------------------------------------------
     # Scale with value of one dimension : let's go
     
-    if v_shape == ():
+    v = np.zeros(a_shape, float)
+    v[:] = value
+
+    s = np.zeros(a_shape, float)
+    s[:] = scale
+    
+    return np.random.normal(v, s, shape)
+
+    if ndim == 1:
         return np.random.normal(value, scale, shape)
+        
+    
+    #if v_shape == ():
+    #    return np.random.normal(value, scale, shape)
     
     # ---------------------------------------------------------------------------
     # Several dimensions
     
     a = np.empty(a_shape, float)
     s = np.resize(scale, len(value))
+    
     for i in range(len(value)):
         a[..., i] = np.random.normal(value[i], s[i], shape)
         
@@ -183,8 +225,6 @@ class Motion():
             self.value = value
             self.speed = speed
             self.acc   = acc
-        
-        self.shape = np.shape(value)
         
         self.time_functions  = []
         self.value_functions = []
@@ -227,33 +267,33 @@ class Motion():
                 return self.value + (self.speed + self.acc*ts/2)*ts
 
     @classmethod
-    def Constant(cls, shape, value, value_scale=None, seed=0):
+    def Constant(cls, shape, value, value_scale=None, ndim=3, seed=0):
         
         if seed is not None:
             np.random.seed(seed)
             
         if not hasattr(shape, '__len__'): shape = (shape,)
         
-        return cls(shaped_array(shape, value, scale=value_scale, force_shape=True))
+        return cls(shaped_array(shape, ndim, value, scale=value_scale))
             
     
     @classmethod
-    def Speed(cls, shape, value, speed, value_scale=None, speed_scale=None, seed=0):
+    def Speed(cls, shape, value, speed, value_scale=None, speed_scale=None, ndim=3, seed=0):
         
         motion = Motion.Constant(shape, value, value_scale, seed=seed)
-        motion.speed = shaped_array(shape, speed, speed_scale)
+        motion.speed = shaped_array(shape, ndim, speed, scale=speed_scale)
         
         return motion
         
     @classmethod
-    def Accelerated(cls, shape, value, speed, acc, value_scale=None, speed_scale=None, acc_scale=None, seed=0):
+    def Accelerated(cls, shape, value, speed, acc, value_scale=None, speed_scale=None, acc_scale=None, ndim=3, seed=0):
         
         if speed is None:
             motion = Motion.Normal(shape, value, value_scale, seed=seed)
         else:
             motion = Motion.Speed(shape, value, speed, value_scale, speed_scale, seed=seed)
             
-        motion.acc = shaped_array(shape, acc, acc_scale)
+        motion.acc = shaped_array(shape, ndim, acc, scale=acc_scale)
         
         return motion
     
@@ -450,8 +490,8 @@ class Retime():
             np.random.seed(seed)
         
         # Target start and end
-        prologs = shaped_array(count, value = prolog[0], scale = prolog[1])
-        epilogs = shaped_array(count, value = epilog[0], scale = epilog[1])
+        prologs = shaped_array(count, (), value = prolog[0], scale = prolog[1])
+        epilogs = shaped_array(count, (), value = epilog[0], scale = epilog[1])
         
         # Durations must be positive
         durations = np.clip(epilogs - prologs, (epilog[0] - prolog[0])/intervals[0]/10, None)
@@ -460,7 +500,7 @@ class Retime():
         epilogs = prologs + durations
         
         # Number of intervals
-        counts  = np.clip(shaped_array(count, value = intervals[0], scale = intervals[1]).astype(int), 1, None)
+        counts  = np.clip(shaped_array(count, (), value = intervals[0], scale = intervals[1]).astype(int), 1, None)
         
         print("counts", counts)
         

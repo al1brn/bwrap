@@ -153,6 +153,11 @@ class Stacker():
         
         self.profile_     = np.zeros((0, 3), int)
         
+        # Initial location
+        
+        self.location    = np.zeros(3, float)
+        
+        
     def __repr__(self):
         return f"<Stacker: {len(self):3d} x {self.nverts:3d} = {len(self)*self.nverts:4d} vertices, faces: {self.nfaces} '{self.name}'>"
         
@@ -238,7 +243,6 @@ class Stacker():
     
     def get_uvs(self, name):
         uvs = self.uvs_.get(name)
-        #print("stacker get_uvs", name, len(uvs), [len(uv) for uv in uvs])
         if uvs is None:
             uvs = self.empty_uvs
             self.uvs_[name] = uvs
@@ -259,7 +263,6 @@ class Stacker():
     
     def setup_spline(self, spline_index, target_spline):
         pass
-
 
 # =============================================================================================================================
 # Object stacker
@@ -320,7 +323,48 @@ class ObjectStacker(Stacker):
         """
         
         target_spline.copy_from(self.wobject.data.splines[spline_index])
-    
+        
+        
+# =============================================================================================================================
+# Mesh face stacker
+# The faces of a mesh object are stacked individually
+
+class MeshFaceStacker(Stacker):
+    """Provides the geometry from the faces of a mesh object.
+    """
+        
+    def __init__(self, wobject, verts, uvmaps, face_index, uvs_index):
+        
+        mesh = wobject.data
+        face = mesh.polygons[face_index]
+        
+        nverts = len(face.vertices)
+        super().__init__(nverts)
+        
+        # Vertices
+        self.location = face.center
+        self.verts_   = np.array(verts[face.vertices]) - self.location
+        
+        # One face
+        self.faces_ = [[i for i in range(nverts)]]
+        
+        # One material index
+        self.mat_count_   = len(wobject.wmaterials)
+        self.mat_indices_ = np.array([wobject.material_indices[face_index]])
+        
+        # Copy the uv maps
+        self.uvs_size_ = nverts
+        uvs_indices = [uvs_index + i for i in range(nverts)]
+        
+        for name in wobject.uvmaps:
+            self.uvs_[name] = np.array([uvmaps[name][uvs_indices]])
+            
+        # Name
+        self.name_ = f"Face {face_index} of {wobject.name}"
+        
+    @property
+    def name(self):
+        return self.name_
     
 # =============================================================================================================================
 # A char stacker as a mesh
@@ -490,7 +534,11 @@ class Stack():
     def __repr__(self):
         s = f"<Stack of {len(self)} objects:\n"
         for i, stacker in enumerate(self):
-            s += f" {i:3d}: {stacker}\n"
+            if (i <= 10) or (i >= len(self)-5):
+                s += f" {i:3d}: {stacker}\n"
+            elif i == 11:
+                s += "...\n"
+                
         return s + ">"
         
     def __len__(self):
@@ -887,6 +935,31 @@ class Stack():
         
         return self.stack(ObjectStacker(name), count)
     
+    def stack_faces(self, wobject):
+        
+        verts = wobject.wmesh.verts
+        uvmaps = {}
+        for name in wobject.uvmaps:
+            uvmaps[name] = wobject.wmesh.get_uvs(name)
+            
+        uvs_index = 0
+        for i in range(wobject.wmesh.poly_count):
+            stacker = self.stack(MeshFaceStacker(wobject, verts, uvmaps, i, uvs_index), count=1)
+            uvs_index += stacker.nverts
+        
+        return
+        
+        
+        
+        
+        
+        
+        
+        uvs_index = 0
+        for i in range(wobject.wmesh.poly_count):
+            stacker = self.stack(MeshFaceStacker(wobject.name, i, uvs_index), count=1)
+            uvs_index += stacker.nverts
+    
     # ------------------------------------------------------------------------------------------
     # Shuffle the instances
     
@@ -954,7 +1027,7 @@ class Stack():
     # ------------------------------------------------------------------------------------------
     # Set the materials to the target
     
-    def set_materials_indices(self, name):
+    def set_materials_indices(self, name, with_offset=True):
         """Set the material indices into the target object.
 
         Parameters
@@ -978,8 +1051,9 @@ class Stack():
         
         for i_stacker, (index, size) in zip(stack_indices, slices):
             stacker = self[i_stacker]
-            mat_indices[index:index+size] = stacker.mat_indices + stacker.mat_offset
-        
+            offset = stacker.mat_offset if with_offset else 0
+            mat_indices[index:index+size] = stacker.mat_indices + offset
+            
         wtarget.material_indices = mat_indices
         
     # ====================================================================================================
@@ -1100,6 +1174,7 @@ class Stack():
                 
             uvmap = wtarget.get_uvmap(name, create=True)
             uvmap.data.foreach_set('uv', uvs.reshape(2*n))
+        
             
     # ----------------------------------------------------------------------------------------------------
     # Initialize a curve object with the content

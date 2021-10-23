@@ -9,7 +9,6 @@ Created on Tue Jul 13 14:03:31 2021
 import numpy as np
 import bpy
 
-from ..blender import blender
 from ..maths.transformations import Transformations, SlaveTransformations
 from .stacker import Stack
 
@@ -157,6 +156,8 @@ class Crowd(Transformations):
         s  = f"<Crowd {self.shape}, {self.size} duplicates, type={self.stack.object_type}: '{self.wobject.name}'\n"
         s += f"   stack                  : {self.stack}\n"
         s += f"   total vertices         : {self.nverts}\n"
+        
+        s += f"   var blocks             : {self.var_blocks}\n"
         s += f"   animation              : {self.animation}"
         if self.animation:
             s += f", {len(self.blocks)} steps\n"
@@ -172,7 +173,7 @@ class Crowd(Transformations):
     
     @classmethod
     def FromObject(cls, model, shape=(), name=None):
-        """Initialize the crowd with by creating shape duplicates of the model.
+        """Initialize the crowd by creating shape duplicates of the model.
         
         These three initializations are valid:
             - Crowd("Model", 1000)
@@ -234,7 +235,7 @@ class Crowd(Transformations):
         
         crowd.init_from_stack(shape)
         
-        # ----- Set the geometry from the stack
+        # ----- Done
         
         return crowd
 
@@ -249,6 +250,7 @@ class Crowd(Transformations):
         crowd.init_from_stack()
         
         return crowd
+    
         
     # ====================================================================================================
     # Init from a list of objects
@@ -268,6 +270,52 @@ class Crowd(Transformations):
             stack.shuffle(seed)
             
         return cls.FromStack(stack, name, var_blocks=var_blocks)
+    
+    # ====================================================================================================
+    # Initialize from the faces of a Mesh object
+    
+    @classmethod
+    def Faces(cls, model, name=None, var_blocks=False):
+        """Initialize the crowd from the faces of a Mesh object.
+        """
+        
+        # ---------------------------------------------------------------------------
+        # ----- The model
+        
+        wmodel = wrap(model)
+        
+        if wmodel.object_type != 'Mesh':
+            raise WError(f"Crowd from mesh faces initialization error: {wmodel.name} must be a mesg, not {wmodel.object_type}.",
+                Class = "Crowd",
+                Method = "Faces",
+                model = model)
+            
+        if name is None:
+            name = "Faces of " + wmodel.name
+        
+        # ---------------------------------------------------------------------------
+        # ----- Create the crowd
+        
+        crowd = Crowd(wmodel.object_type, None, name, wmodel, var_blocks=var_blocks)
+        
+        # ---------------------------------------------------------------------------
+        # ----- Use a stack to build the vertices
+        
+        crowd.stack = Stack(wmodel.object_type, var_blocks=crowd.var_blocks)
+        crowd.stack.stack_faces(wmodel)
+        
+        # ----- Set the geometry from the stack
+        
+        crowd.init_from_stack(shape=None)
+        
+        # ----- Initial locations matter
+        
+        crowd.location = [stacker.location for stacker in crowd.stack]
+        
+        
+        # ----- Done
+        
+        return crowd    
     
     # ====================================================================================================
     # The main model is the first one in the stack
@@ -323,8 +371,6 @@ class Crowd(Transformations):
             
         else:
             raise WError("Not yet implemented")
-                
-        
         
     
     def set_blocks(self, blocks):
@@ -375,12 +421,13 @@ class Crowd(Transformations):
         # ---------------------------------------------------------------------------
         # Set the geometry to the object
         
+        self.copy_materials_from_model()  
+
         self.stack.set_to_object(self.wobject)
         self.nverts      = self.wobject.verts_count
         self.block_size  = self.stack.max_nverts
         self.total_verts = self.size * self.block_size
         
-        self.copy_materials_from_model()  
         
         # ---------------------------------------------------------------------------
         # Set the base vertices
