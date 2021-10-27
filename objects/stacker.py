@@ -367,6 +367,72 @@ class MeshFaceStacker(Stacker):
         return self.name_
     
 # =============================================================================================================================
+# Mesh faces stacker
+# The faces of a mesh object are stacked individually
+
+class MeshFacesStacker(Stacker):
+    """Provides the geometry from a group of faces of a mesh object.
+    """
+        
+    def __init__(self, wobject, verts, group):
+        
+        mesh = wobject.data
+        
+        fs = []
+        vs = []
+        uvs_size = 0
+        for face_index in group:
+            poly = mesh.polygons[face_index]
+            face = []
+            for iv in poly.vertices:
+                if iv in vs:
+                    new_iv = vs.index(iv)
+                else:
+                    new_iv = len(vs)
+                    vs.append(iv)
+                    
+                face.append(new_iv)
+                
+            fs.append(face)
+            uvs_size += len(face)
+        
+        nverts = len(vs)
+        super().__init__(nverts)
+        
+        # Vertices
+        self.verts_   = np.array(verts[vs])
+        self.location = np.average(self.verts_, axis=0)
+        self.verts_  -= self.location
+        
+        # Faces
+        self.faces_ = fs
+        
+        # material indices
+        self.mat_count_   = len(wobject.wmaterials)
+        self.mat_indices_ = np.array(wobject.material_indices[group])
+        
+        # Copy the uv maps
+        self.uvs_size_ = uvs_size
+        wmesh = wobject.wmesh
+        for name in wobject.uvmaps:
+            uvs = np.zeros((uvs_size, 2), float)
+            index = 0
+            for i_face, face_index in enumerate(group):
+                n = len(self.faces[i_face])
+                uvs[index:index+n] = wmesh.get_poly_uvs(name, face_index)
+                index += n
+                
+            self.uvs_[name] = uvs
+            
+        # Name
+        self.name_ = f"Group of {len(group)} faces of {wobject.name}"
+        
+    @property
+    def name(self):
+        return self.name_
+    
+    
+# =============================================================================================================================
 # A char stacker as a mesh
 
 class MeshCharStacker(Stacker):
@@ -946,19 +1012,14 @@ class Stack():
         for i in range(wobject.wmesh.poly_count):
             stacker = self.stack(MeshFaceStacker(wobject, verts, uvmaps, i, uvs_index), count=1)
             uvs_index += stacker.nverts
+            
+    def stack_grouped_faces(self, wobject, groups):
         
-        return
+        verts = wobject.wmesh.verts
+        for group in groups:
+            self.stack(MeshFacesStacker(wobject, verts, group), count=1)
+            
         
-        
-        
-        
-        
-        
-        
-        uvs_index = 0
-        for i in range(wobject.wmesh.poly_count):
-            stacker = self.stack(MeshFaceStacker(wobject.name, i, uvs_index), count=1)
-            uvs_index += stacker.nverts
     
     # ------------------------------------------------------------------------------------------
     # Shuffle the instances
@@ -1444,7 +1505,8 @@ class Stack():
         
         # ----- All instances have the same size
         
-        nmax = np.max(slices[:, 1])
+        #nmax = np.max(slices[:, 1])
+        nmax = self.max_nverts
         if np.min(slices[:, 1]) == nmax:
             return None
         

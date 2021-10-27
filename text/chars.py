@@ -191,6 +191,20 @@ class Chars(Crowd):
         
         self.reset()
         self.set_chars(align=True)
+
+    @property
+    def char_x_base(self):
+        return self.ftext.text_format.char_x_base
+    
+    @char_x_base.setter
+    def char_x_base(self, value):
+        self.ftext.text_format.char_x_base = value
+        
+        self.reset()
+        self.set_chars(align=True)
+        
+        
+    
     
     # ===========================================================================
     # glyphes parameters

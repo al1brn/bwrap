@@ -728,7 +728,7 @@ class TransformationsSlicer(Transformations):
         self.slice  = index
         
     def __repr__(self):
-        return f"Slicer transformations of slice {self.slice} on:\n{self.mother}"
+        return f"<Slicer transformations of shape {self.shape} with slice {self.slice}, mother shape: {self.mother.shape}>"
     
     @property
     def tmat(self):
@@ -813,7 +813,7 @@ class ObjectTransformations(Transformations):
         return self.wrapped.up_axis
     
 # =============================================================================================================================
-# Mulitple transformation matrices to be used with the objects of a collection
+# Multiple transformation matrices to be used with the objects of a collection
 
 class ObjectsTransformations(Transformations):
     

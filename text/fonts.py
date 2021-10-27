@@ -1139,6 +1139,9 @@ class Ttf(Struct):
         cf.bold_shift = int(self.bold_base*cf.bold)
         cf.scale = cf.scales(self.ratio(text_format))
         
+        if text_format is not None:
+            cf.x_base = text_format.char_x_base
+        
         return cf
     
     def char_metrics(self, c, char_format=None, text_format=None):
@@ -1182,7 +1185,7 @@ class Ttf(Struct):
     def mesh_char(self, c, char_format=None, text_format=None, return_faces=False):
         
         cf = self.adapt_char_format(char_format, text_format)
-
+        
         return self.get_glyphe(ord(c)).raster(
             delta=self.raster_delta, lowest_geometry=self.raster_low,
             char_format=cf, plane=self.display_plane, return_faces=return_faces)

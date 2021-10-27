@@ -967,7 +967,7 @@ class Animator():
 
 def engine_handler(scene):
     if  scene.bw_engine_animate:
-        print(f"{scene.frame_current}", "-"*50)
+        #print(f"{scene.frame_current}", "-"*50)
         depsgraph.depsgraph()
         Engine.animate(scene)
         depsgraph.reset_depsgraph()

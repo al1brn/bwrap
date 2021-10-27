@@ -15,8 +15,10 @@ from ..core.plural import getattrs, setattrs
 from .wmaterials import WMaterials
 from .wshapekeys import WShapeKeys
 from ..maths import geometry as geo
+from ..maths.symarray import SymArray
 
 from ..core.commons import WError
+
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +248,18 @@ class WMesh(WID):
         verts = self.linear_verts
         return [ [list(verts[i]) for i in poly] for poly in polys]
     
+    
+    # Group of faces
+    def get_group_indices(self, group):
+        vs = []
+        for i_face in group:
+            for iv in self.wrapped.polygons[i_face].vertices:
+                if not iv in vs:
+                    vs.append(iv)
+        return vs  
+    
     # ---------------------------------------------------------------------------
-    # Polygons centersand normals
+    # Polygons centers and normals
 
     @property
     def poly_centers(self):
@@ -334,8 +346,8 @@ class WMesh(WID):
     @property
     def all_uvs(self):
         uvmaps = {}
-        for name in self.wrapped.uv_layers:
-            uvmaps[name] = self.get_uvs(name)
+        for uvmap in self.wrapped.uv_layers:
+            uvmaps[uvmap.name] = self.get_uvs(uvmap.name)
         return uvmaps
     
     @all_uvs.setter
@@ -750,6 +762,159 @@ class WMesh(WID):
     def wshape_keys(self):
         return WShapeKeys(self.wrapped)
         
+    # ===========================================================================
+    # Faces neighborhood
+    
+    def edges_faces_array(self):
+        
+        # Array (edge_count, 2) of edges
+        edges = np.array(self.edge_indices)
+        
+        # Number of edges and faces
+        e_count = len(edges)
+        f_count = self.poly_count
+        
+        # Array linking edges width faces
+        # A line is an edge
+        # In a line, all values are null but 2
+        a = np.zeros((e_count, f_count), bool)
+        
+        # Loop on the faces
+        for face_index, p in enumerate(self.wrapped.polygons):
+            for e in p.edge_keys:
+                b = edges == e # Array of tuples of bool
+                i = np.argwhere(b[:, 0] * b[:, 1])[0]
+                a[i, face_index] = True
+                
+        return a
+    
+    def connected_faces_array(self):
+        
+        # Cross edges --> faces
+        ef = self.edges_faces_array()
+        
+        # Note : Numpy matmult too slow for big dims
+        #cf = np.matmul(ef.transpose(), ef)
+        #cf[np.diag_indices(self.poly_count)] = False
+        
+        f_count = self.poly_count
+        cf = np.zeros((f_count, f_count), bool)
+        for i_edge in range(len(ef)):
+            edge = np.argwhere(ef[i_edge, :]).reshape(2)
+            cf[edge[0], edge[1]] = True
+            cf[edge[1], edge[0]] = True
+            
+        return cf
+
+    def randomly_grouped_faces(self, size=3, count=None, seed=0):
+        
+        if seed is not None:
+            np.random.seed(seed)
+            
+        faces_count = self.poly_count
+        
+        if count is None:
+            count = int(round(faces_count / size))
+
+        # Initialize the group on a random selection of faces
+            
+        count = max(1, min(faces_count, count))
+        
+        base = np.random.choice(np.arange(faces_count), count, replace=False)
+        
+        faces = np.zeros(faces_count, int)
+        faces[base] = 1 + np.arange(count)
+        groups = [[b] for b in base]
+        
+        # Connected faces
+        connected_faces = self.connected_faces_array()
+        
+        # ---------------------------------------------------------------------------
+        # Starting from faces in a group propagate to a free neighbor
+        
+        while np.count_nonzero(faces) != faces_count:
+            
+            # Faces in a group
+            gf = np.argwhere(faces != 0)
+            gf = np.reshape(gf, np.size(gf))
+            
+            # All the neighbors of these faces
+            nb = np.argwhere(connected_faces[gf, :])[:, 1]
+            nb = np.unique(np.reshape(nb, np.size(nb)))
+            
+            # Keep only the ones not belonging to a group
+            gz = np.argwhere(faces[nb] == 0)
+            gz = np.reshape(gz, np.size(gz))
+            
+            nb = nb[gz]
+            
+            if len(nb) == 0:
+                # Put the reamining faces in group 0
+                zf = np.argwhere(faces == 0)
+                zf = np.reshape(zf, np.size(zf))
+                faces[zf] = 1
+                groups[0].extend(zf)
+                break
+            
+            # Loop on these faces to put them in a group
+            for i_face in nb:
+                
+                # All the connected faces
+                w = np.argwhere(connected_faces[i_face, :])
+                w = np.reshape(w, np.size(w))
+                
+                # The groups  of the neighbors
+                g = faces[w]
+                wg = np.where(g != 0)[0]
+                
+                # Select one (we are sure at least one :-)
+                
+                g_index = np.random.choice(g[wg], 1)[0]
+                faces[i_face] = g_index
+                groups[g_index-1].append(i_face)
+
+            
+        # ---------------------------------------------------------------------------
+        # Ok, we can return the groups
+        
+        return groups  
+    
+    # ===========================================================================
+    # Detach groups
+    
+    def explode(self, groups=None):
+        
+        if groups is None:
+            groups = [[i] for i in range(self.poly_count)]
+            
+        verts = self.verts
+            
+        new_faces = [None] * self.poly_count
+        new_verts = []
+        
+        v_index = 0
+        for group in groups:
+            known_verts = []
+            for i_face in group:
+                poly = self.wrapped.polygons[i_face]
+                face = []
+                for iv in poly.vertices:
+                    if iv in known_verts:
+                        new_iv = known_verts.index(iv)
+                    else:
+                        new_iv = len(known_verts)
+                        known_verts.append(iv)
+                    
+                    face.append(v_index + new_iv)
+                
+                new_faces[i_face] = face
+            
+            new_verts.extend(list(verts[known_verts]))
+            v_index += len(known_verts)
+            
+        return new_verts, new_faces
+            
+    
     # ===========================================================================
     # Properties and methods to expose to WMeshObject
     

@@ -857,6 +857,26 @@ class Glyphe():
         return self.yMax(char_format) - self.yMin(char_format)
     
     # ===========================================================================
+    # Align horizontally
+    
+    def x_align(self, contours, char_format):
+        
+        if char_format is None:
+            return contours
+
+        if char_format.x_base == 'LEFT':
+            return contours
+        
+        if char_format.x_base == 'CENTER':
+            xmin = self.xMin(char_format)
+            dx = xmin + (self.xMax(char_format) - xmin) // 2
+        else:
+            dx = self.xMax(char_format)
+            
+        return [contour - np.array([dx, 0]) for contour in contours]
+    
+    
+    # ===========================================================================
     # Bold contours
     
     def fmt_contours(self, char_format=None):
@@ -963,8 +983,9 @@ class Glyphe():
         
         scale = 1 if char_format is None else (char_format.xscale, char_format.yscale)
         
+        contours = self.x_align(self.fmt_contours(char_format), char_format)
         beziers = []
-        for pts in self.fmt_contours(char_format):
+        for pts in contours:
             
             n = len(pts)
             
@@ -1021,11 +1042,11 @@ class Glyphe():
         
         if return_faces:
             
-            contours = self.contours
+            contours = self.x_align(self.contours, char_format)
             
         else:
             
-            contours = self.fmt_contours(char_format)
+            contours = self.x_align(self.fmt_contours(char_format), char_format)
             
         # ---------------------------------------------------------------------------
         # The rasterization is computed on the unformatted contours

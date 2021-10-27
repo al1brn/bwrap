@@ -153,11 +153,27 @@ class Crowd(Transformations):
     
     def __repr__(self):
             
-        s  = f"<Crowd {self.shape}, {self.size} duplicates, type={self.stack.object_type}: '{self.wobject.name}'\n"
+        s  = f"<Crowd {self.shape}, {self.size} duplicates, type={self.object_type}: '{self.wobject.name}'\n"
+        s += f"   locked                 : {self.locked}\n"
         s += f"   stack                  : {self.stack}\n"
-        s += f"   total vertices         : {self.nverts}\n"
-        
+        s += f"   vertices count         : {self.nverts}\n"
         s += f"   var blocks             : {self.var_blocks}\n"
+        if not self.var_blocks:
+            s += f"   total vertices         : {self.total_verts}\n"
+            s += f"   block size             : {self.block_size}\n"
+    
+            ratio = self.nverts/self.total_verts*100
+            s += f"   use vertices           : {ratio:.1f}%\n"
+        
+            if self.true_vertices is None:
+                tvs = None
+            else:
+                tvs = f"{len(self.true_vertices)} -> {self.true_vertices}"
+                if len(tvs) > 40:
+                    tvs = tvs[:40] + '...]'
+            
+            s += f"   true vertices          : {tvs}\n"
+        
         s += f"   animation              : {self.animation}"
         if self.animation:
             s += f", {len(self.blocks)} steps\n"
@@ -285,7 +301,7 @@ class Crowd(Transformations):
         wmodel = wrap(model)
         
         if wmodel.object_type != 'Mesh':
-            raise WError(f"Crowd from mesh faces initialization error: {wmodel.name} must be a mesg, not {wmodel.object_type}.",
+            raise WError(f"Crowd from mesh faces initialization error: {wmodel.name} must be a mesh, not {wmodel.object_type}.",
                 Class = "Crowd",
                 Method = "Faces",
                 model = model)
@@ -315,7 +331,43 @@ class Crowd(Transformations):
         
         # ----- Done
         
-        return crowd    
+        return crowd   
+    
+    # ====================================================================================================
+    # Initialize from group of faces of a Mesh object
+    
+    @classmethod
+    def GroupedFaces(cls, model, groups, name=None, var_blocks=False):
+        """Initialize the crowd from the faces of a Mesh object.
+        """
+        
+        # ---------------------------------------------------------------------------
+        # ----- The model
+        
+        wmodel = wrap(model)
+        
+        if wmodel.object_type != 'Mesh':
+            raise WError(f"Crowd from mesh faces initialization error: {wmodel.name} must be a mesh, not {wmodel.object_type}.",
+                Class = "Crowd",
+                Method = "Faces",
+                model = model)
+            
+        if name is None:
+            name = "Faces of " + wmodel.name
+            
+        # ---------------------------------------------------------------------------
+        # ----- Create the crowd
+        
+        crowd = Crowd(wmodel.object_type, None, name, wmodel, var_blocks=var_blocks)
+        
+        # ---------------------------------------------------------------------------
+        # ----- Set the geometry from the grouped faces
+        
+        crowd.init_from_faces(groups=groups, shape=None)
+        
+        # ----- Done
+        
+        return crowd        
     
     # ====================================================================================================
     # The main model is the first one in the stack
@@ -352,8 +404,6 @@ class Crowd(Transformations):
     #   - an array of (shape, nverts, ndim) which is the base array of the duplicates
     
     def set_block(self, index, block):
-        
-        #print("set_block, index=", index, "char", self.ftext.array_of_chars[index], "len", len(self.blocks[index]))
         
         if self.var_blocks:
             
@@ -410,7 +460,7 @@ class Crowd(Transformations):
             self.blocks = np.insert(blocks, 3, 1, axis=-1)
 
     # ====================================================================================================
-    # Set the blocks vertices
+    # Init the Crowd from stackers stacked in a stcak :-)
 
     def init_from_stack(self, shape=None):
         
@@ -428,7 +478,6 @@ class Crowd(Transformations):
         self.block_size  = self.stack.max_nverts
         self.total_verts = self.size * self.block_size
         
-        
         # ---------------------------------------------------------------------------
         # Set the base vertices
         
@@ -440,6 +489,79 @@ class Crowd(Transformations):
         
         if shape is not None:
             self.reshape(shape)
+            
+    # ====================================================================================================
+    # Init the Crowd from faces, grouped or not, of an object
+
+    def init_from_faces(self, groups=None, shape=None):
+        
+        wmesh = self.wmodel.wmesh
+        
+        self.lock()
+        
+        if groups is None:
+            groups = [[i] for i in range(wmesh.poly_count)]
+        count = len(groups)
+        
+        self.resize(count)
+        
+        # ---------------------------------------------------------------------------
+        # Get faces and vertices from the model
+        
+        verts, faces = wmesh.explode(groups)
+        self.wobject.new_geometry(verts, faces)
+        
+        # ---------------------------------------------------------------------------
+        # New vertices can have been created but faces / uv maps are identical
+        
+        self.copy_materials_from_model()
+        self.wobject.wmesh.material_indices = wmesh.material_indices
+        self.wobject.wmesh.all_uvs = wmesh.all_uvs
+        
+        # ---------------------------------------------------------------------------
+        # Now we can set the blocks to animate de groups
+        
+        block_size = 0
+        b_inds = [None] * count
+        for i_group, group in enumerate(groups):
+            inds = self.wobject.wmesh.get_group_indices(group)
+            block_size = max(len(inds), block_size)
+            b_inds[i_group] = inds
+            
+        blocks = np.zeros((count, block_size, 3), float)
+        verts  = self.wobject.wmesh.verts
+        locs   = np.zeros((count, 3), float)
+        true_inds = []
+        true_inds_offset = 0
+        for i_block, inds in enumerate(b_inds):
+            n = len(inds)
+            vs = verts[inds]
+            locs[i_block] = np.average(vs, axis=0)
+            blocks[i_block, :n, :] = vs - locs[i_block]
+            
+            true_inds.extend(list(np.array(inds) + true_inds_offset))
+            true_inds_offset += block_size - n
+            
+            
+        self.var_blocks = False
+        self.set_blocks(blocks)
+        
+        self.animation     = False
+
+        # Dimensions
+        
+        self.nverts        = self.wobject.verts_count
+        self.block_size    = block_size
+        self.total_verts   = self.size * self.block_size
+        self.true_vertices = true_inds
+        
+        # Blocks initial location
+        
+        self.location = locs
+        self.unlock()
+        
+        if shape is not None:
+            self.reshape(shape)            
         
     # ====================================================================================================
     # Set an animation
@@ -483,16 +605,32 @@ class Crowd(Transformations):
     # Utilities
     
     @property
+    def object_type(self):
+        if self.stack is None:
+            return self.wmodel.type
+        else:
+            return self.stack.object_type
+    
+    @property
     def is_curve(self):
-        return self.stack.is_curve
+        if self.stack is None:
+            return self.wmodel.type == 'CURVE'
+        else:
+            return self.stack.is_curve
 
     @property
     def is_mesh(self):
-        return self.stack.is_mesh
+        if self.stack is None:
+            return self.wmodel.type == 'MESH'
+        else:
+            return self.stack.is_mesh
     
     @property
     def is_text(self):
-        return self.stack.object_type == 'CurveText'
+        if self.stack is None:
+            return False
+        else:
+            return self.stack.object_type == 'CurveText'
 
     @property
     def is_mesh_text(self):
@@ -526,6 +664,11 @@ class Crowd(Transformations):
 
         return self.wobject.rotation_euler.order
     
+    @euler_order.setter
+    def euler_order(self, value):
+        self.wobject.rotation_euler.order = value
+        
+    
     @property
     def track_axis(self):
         """Overrides the supper class method.
@@ -540,6 +683,22 @@ class Crowd(Transformations):
         
         return self.wobject.track_axis
     
+    @track_axis.setter
+    def track_axis(self, value):
+        if value in ['X', '+X', 'POS_X']:
+            self.wobject.track_axis = 'POS_X'
+        elif value in ['-X', 'NEG_X']:
+            self.wobject.track_axis = 'NEG_X'
+        elif value in ['Y', '+Y', 'POS_Y']:
+            self.wobject.track_axis = 'POS_Y'
+        elif value in ['-Y', 'NEG_Y']:
+            self.wobject.track_axis = 'NEG_Y'
+        elif value in ['Z', '+Z', 'POS_Z']:
+            self.wobject.track_axis = 'POS_Z'
+        elif value in ['-Z', 'NEG_Z']:
+            self.wobject.track_axis = 'NEG_Z'
+        
+    
     @property
     def up_axis(self):
         """Overrides the supper class method.
@@ -553,6 +712,11 @@ class Crowd(Transformations):
         """
         
         return self.wobject.up_axis
+    
+    @up_axis.setter
+    def up_axis(self, value):
+        self.wobject.up_axis = value
+        
     
     # ====================================================================================================
     # Duplicates have vertices, faces, material indices...
@@ -640,6 +804,7 @@ class Crowd(Transformations):
         -------
         None.
         """
+        
         # The slave transformation can call apply()
         
         mem_locked = self.locked
@@ -654,7 +819,10 @@ class Crowd(Transformations):
             
             verts = np.zeros((self.verts_count, ndim-1))
             
-            for dupl_index, mat in enumerate(self.tmat.reshape(self.size, 4, 4)):
+            mem_shape = self.shape
+            self.reshape(self.size)
+            
+            for dupl_index in range(self.size):
                 
                 block = np.array(self.blocks[dupl_index])
                 
@@ -675,6 +843,8 @@ class Crowd(Transformations):
                 # ----- Set in the target array while suppressing the 4th dim
                 
                 verts[self.blocks_slices[dupl_index]] = np.delete(block, 3, axis=-1)
+                
+            self.reshape(mem_shape)
                 
             # ----- Set the vertices to the object
             
@@ -707,8 +877,13 @@ class Crowd(Transformations):
                     base = self.blocks[i0]*(1-p) + self.blocks[i0+1]*p
                     
             else:
+                if self.stack is None:
+                    stack1 = False
+                else:
+                    stack1 = len(self.stack) == 1
                 
-                if (len(self.group_transfos) == 0) and (len(self.deformations) == 0) and (len(self.stack) == 1):
+                if (len(self.group_transfos) == 0) and (len(self.deformations) == 0) and stack1:
+                    
                     # Models is shape (1, verts, ndim)
                     base = self.blocks
                 else:
@@ -716,7 +891,6 @@ class Crowd(Transformations):
                     # Make sure the shape is correct
                     base = np.resize(self.blocks, self.shape + (self.block_size, ndim))
                     
-     
             # -----------------------------------------------------------------------------------------------------------------------------
             # Step 2 : group transformations and deformations
             

@@ -1393,3 +1393,61 @@ def interpolation_function(shape="/", name=None):
 
     return bc
 
+# =============================================================================================================================
+# Interpolate function
+
+def interpolate(x, x_min=0., x_max=1., y_min=0., y_max=1., interpolation='LINEAR', extrapolation='CONSTANT'):
+    
+    bc = BCurve.Single((0., 0.), (1., 1.), name=interpolation, extrapolation=extrapolation)
+    
+    if np.shape(x) == ():
+        return bc(x, [x_min, x_max], [y_min, y_max])
+    
+    xbounds = np.empty(np.shape(x)+(2,), float)
+    ybounds = np.empty(np.shape(x)+(2,), float)
+    
+    xbounds[:, 0] =  x_min
+    xbounds[:, 1] =  x_max
+    ybounds[:, 0] =  y_min
+    ybounds[:, 1] =  y_max
+    
+    return bc(x, xbounds, ybounds)
+
+# =============================================================================================================================
+# Vector interpolation
+
+def norm_interpolate(v, x_min=0., x_max=1., y_min=0., y_max=1., interpolation='LINEAR', extrapolation='CONSTANT'):
+    nrms = np.linalg.norm(v, axis=-1)
+    new_nrms = interpolate(nrms, x_min, x_max, y_min, y_max, interpolation, extrapolation)
+    nrms[nrms < 1e-8] = 1
+    return v * np.expand_dims(new_nrms / nrms, axis=-1)
+
+
+
+
+def test_interpolate():
+
+    import matplotlib.pyplot as plt
+    
+    count = 50
+    x = np.linspace(-2, 3, count)
+    
+    np.random.seed(0)
+    x0 = np.random.normal(-1, .01, count)
+    x1 = np.random.normal(2, .01, count)
+    y0 = np.random.normal(10, .1, count)
+    y1 = np.random.normal(20, .1, count)
+    
+    y = interpolate(x, x0, x1, y0, y1, 'BEZIER')
+    
+    fig, ax = plt.subplots()
+    
+    ax.plot(x, y)
+    
+    plt.show()
+
+    
+    
+    
+
+

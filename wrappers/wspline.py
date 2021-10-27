@@ -85,7 +85,7 @@ class WSpline(WStruct):
             a = np.empty(n*3, float)
             self.points.foreach_get('co', a)
 
-            if self.with_handles:
+            if with_handles:
                 v = np.empty((3, n, 3), float)
                 v[0] = np.reshape(a, (n, 3))
                 
@@ -118,7 +118,7 @@ class WSpline(WStruct):
                 ex_shape = (3, n, 3)
                 if shape != ex_shape:
                     raise WError(f"Vertices array has an incorrect shape. Expected is {ex_shape}, passed is {shape}",
-                                 Class = "Spline", Method="set_°vertices")
+                                 Class = "Spline", Method="set_vertices")
                     
                 a = np.array(verts[0]).reshape(n*3)
                 self.points.foreach_set('co', a)
@@ -131,7 +131,7 @@ class WSpline(WStruct):
                 ex_shape = (n, 3)
                 if shape != ex_shape:
                     raise WError(f"Vertices array has an incorrect shape. Expected is {ex_shape}, passed is {shape}",
-                                 Class = "Spline", Method="set_°vertices")
+                                 Class = "Spline", Method="set_vertices")
                     
                 a = np.array(verts).reshape(n*3)
                 self.points.foreach_set('co', a)
@@ -176,6 +176,18 @@ class WSpline(WStruct):
         self.use_bezier_v         = other.use_bezier_v
         self.use_smooth           = other.use_smooth
         self.material_index       = other.material_index
+        
+    # ---------------------------------------------------------------------------
+    # Get a Bezier function
+    
+    def get_bezier(self):
+        
+        if self.use_bezier:
+            verts = self.get_vertices(with_handles=True)
+            return Beziers(verts[0], verts[1], verts[2])
+        else:
+            return Beziers(self.get_vertices(with_w=False))
+        
         
     # ===========================================================================
     # Generated source code for WSpline class

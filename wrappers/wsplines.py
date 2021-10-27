@@ -273,29 +273,56 @@ class WSplines(WStruct):
     # ===========================================================================
     # A user friendly version of the profile setting
     #
+    # 
+    #
     # set_profile('BEZIER', 3, 10) : Create 10 BEZIER splines of 3 points
     
     def set_profile(self, types='BEZIER', lengths=2, count=None):
+        """Set the profile of the splines.
+        
+        Parameters are single values of array fo values. Arrays shapes
+        must be consistent :-)
+    
+        Examples:
+            - 'BEZIER', 7, 1         : 1 Bezier spline of 7 points
+            - ['BEZIER', 'NURBS'], 6 : 2 splines of 6 points
+            - 'BEZIER', (6, 7, 9)    : 3 bezier splines of 6, 7 and 9 points
+            - 'BEZIER', 7, 10        : 10 bezier splines of 7 points
+
+        Parameters
+        ----------
+        types : string or array fo string, optional
+            The splines types. The default is 'BEZIER'.
+        lengths : int or array of ints, optional
+            The number of points in the splines. The default is 2.
+        count : int or array of int, optional
+            The number of splines to create if not given by the previous parameters. The default is None.
+
+        Returns
+        -------
+        None.
+        """
+        
+        # Convert the types strings into int code
         
         if type(types) is str:
             atypes = [WSplines.spline_type_index(types)]
         else:
             atypes = [WSplines.spline_type_index(t) for t in types]
-            
-        acount = [3 if i == 0 else 1 for i in atypes]
-
-            
-        if hasattr(lengths, '__len__'):
-            alengths = lengths
-        else:
-            alengths = [lengths]
-            
-        if count is None:
-            count = max(len(atypes), len(alengths))
         
-        profile = np.array((count, 3), int)
-        profile[:, 0] = acount
-        profile[:, 1] = alengths
+        
+        # The number of splines to create
+        
+        if count is None:
+            count = len(atypes)
+            if hasattr(lengths, '__len__'):
+                count = max(len(lengths), count)
+                
+        # The profile array
+        
+        profile = np.zeros((count, 3), int)
+        profile[:, 0] = [3 if i == 0 else 1 for i in atypes]
+        profile[:, 1] = lengths
         profile[:, 2] = atypes
         
         self.profile = profile
@@ -488,9 +515,6 @@ class WSplines(WStruct):
     
         self.update_tag()
         
-    # ===========================================================================
-    # Only 3D vertices
-    
         
     
     
