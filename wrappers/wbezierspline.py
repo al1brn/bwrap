@@ -271,7 +271,7 @@ class WBezierSpline(WSpline):
     # ---------------------------------------------------------------------------
     # Geometry from points
 
-    def from_points(self, count, verts, lefts=None, rights=None):
+    def from_points(self, verts, lefts=None, rights=None, length=None):
         """Create a curve from a series of vertices.
         
         This function is similar to set_handles but here the number of control points
@@ -280,22 +280,27 @@ class WBezierSpline(WSpline):
 
         Parameters
         ----------
-        count : int
-            The number of vertices for the curve.
         verts : array of vertices
             Interpolation vertices.
         lefts : array of vertices, optional
             Left handles. The default is None.
         rights : array of vertices, optional
             Right handles. The default is None.
+        length : int
+            The number of vertices for the curve. Default is None
 
         Returns
         -------
         None.
         """
         
-        vf = Beziers(verts, lefts, rights)
-        vs, ls, rs = control_points(vf, count)
+        if length is None:
+            vf = Beziers(verts, lefts, rights)
+            vs = vf.points
+            ls = vf.lefts
+            rs = vf.rights
+        else:
+            vs, ls, rs = control_points(vf, length)
 
         self.set_handles(vs, ls, rs)
 

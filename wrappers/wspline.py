@@ -181,7 +181,6 @@ class WSpline(WStruct):
     # Get a Bezier function
     
     def get_bezier(self):
-        
         if self.use_bezier:
             verts = self.get_vertices(with_handles=True)
             return Beziers(verts[0], verts[1], verts[2])

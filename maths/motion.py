@@ -52,7 +52,7 @@ def box_uniform(a, b, shape, seed=0):
 # ----------------------------------------------------------------------------------------------------
 # Uniform in a circle
 
-def sphere_uniform(radius, shape, ndim=3, seed=0):
+def sphere_uniform(radius, shape, ndim=3, to3D=True, seed=0):
     
     if seed is not None:
         np.random.seed(seed)
@@ -60,23 +60,35 @@ def sphere_uniform(radius, shape, ndim=3, seed=0):
     a_shape = shape if hasattr(shape, '__len__') else (shape,)
     count = 1 if a_shape == () else np.product(a_shape)
     
+    vdim = 3 if to3D else ndim
+    
+    # ---------------------------------------------------------------------------
+    # Add 0 to z if ndim == 2 and to_3D
+
+    def to_target_dim(v):
+        if ndim == 2 and to3D:
+            return np.insert(v, 2, 0, axis=-1)
+        else:
+            return v
+
+    # ---------------------------------------------------------------------------
+    # Initialization
+    
+    P0 = np.zeros(ndim, float)
+    P1 = np.zeros(ndim, float)
+    P0[:] = -radius
+    P1[:] = radius
+    
     if ndim == 2:
-        n = int(count*1.6)  # Greater that 4/pi
-        P0 = (-radius, -radius)
-        P1 = ( radius,  radius)
+        n  = int(count*1.6)  # Greater that 4/pi
     else:
         n = int(count*2.1)  # Greater that 8/(4/3pi)
-        P0 = (-radius, -radius, -radius)
-        P1 = ( radius,  radius, radius)
-        
-    # ---------------------------------------------------------------------------
-    # Let's generate in a box
     
     v0 = np.random.uniform(P0, P1, (n, ndim))
     v0 = v0[np.linalg.norm(v0, axis=-1) <= radius]
     
     if len(v0) >= count:
-        return v0[:count].reshape(a_shape + (ndim,))
+        return np.reshape(to_target_dim(v0[:count]), a_shape + (vdim,))
     
     # ---------------------------------------------------------------------------
     # Lack of luck, not enough within the disk
@@ -96,7 +108,7 @@ def sphere_uniform(radius, shape, ndim=3, seed=0):
 
         if len(v0) >= diff:
             v[index:count] = v0[:diff]
-            return v.reshape(a_shape + (ndim,))
+            return np.reshape(to_target_dim(v), a_shape + (vdim,))
         
         # :-(
         
@@ -511,8 +523,7 @@ class Retime():
             self.cum_widths = cum_widths
             self.ratios = ((self.target[1] - self.target[0]) / self.widths).transpose().reshape(np.size(self.widths))
 
-        self.return_ratio = False
-
+        self.return_ratios = False
 
     # ---------------------------------------------------------------------------
     # Random mapping

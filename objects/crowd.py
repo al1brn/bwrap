@@ -147,6 +147,7 @@ class Crowd(Transformations):
         self.animation = False
         self.group_transfos = {}
         self.deformations   = []
+        self.deformation_time = 0. # parameter used in deformation
         
     # ====================================================================================================
     # Content
@@ -834,7 +835,7 @@ class Crowd(Transformations):
                 # ----- Deformations
                 
                 for deform in self.deformations:
-                    block = deform(block, dupl_index)
+                    block[..., :3] = deform(self.deformation_time, block[..., :3], dupl_index)
                     
                 # ---- Transformation
                 
@@ -898,7 +899,7 @@ class Crowd(Transformations):
                 base[..., gt.indices, :4] = gt.pivot + gt.transfo.transform_verts4(base[..., gt.indices, :4] - gt.pivot)
                 
             for deform in self.deformations:
-                base = deform(base)
+                base = deform(self.deformation_time, base)
                 
             # -----------------------------------------------------------------------------------------------------------------------------
             # Step 3 : transformation

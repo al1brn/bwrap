@@ -111,10 +111,10 @@ def control_points(f, count, t0=0., t1=1., dt=None):
 
     
 # ====================================================================================================
-# Bezier interpolations from an array of seroes of Bezier control points
+# Bezier interpolations from an array of series of Bezier control points
 
 class Beziers():
-    """Bezier interpolations from an array of seroes of Bezier control points.
+    """Bezier interpolations from an array of series of Bezier control points.
     
     Can manage an array of curves:
         The shape of the points is (shape, count, 3)
@@ -164,7 +164,45 @@ class Beziers():
             self.rights[..., :-1, :] += der[..., :-1,:]*dists/3
             self.rights[..., -1, :]  += der[..., -1, :]*dists[..., -1, :]/3
         else:
-            self.rights[:] = rights   
+            self.rights[:] = rights()
+            
+        # ---------------------------------------------------------------------------
+        # Compute the computation arrays
+        #
+        # P = (1-t)^3P0 + 3t(1-t)^2P1 + 3t^2(1-t)P2 + t^3P3
+        # P0 : 1 - 3t + 3t^2 - t^3
+        # P1 : 3t - 6t^2 + 3t^3
+        # P2 : 3t^2 - 3t^3
+        # P3 : t^3
+        #
+        # P = t^3(-P0 + 3P1 - 3P2 + P3) + t^2.3(P0 - 2P1 + P2) + t.3(-P0 + P1) + P0
+        # P(0) = P0
+        # P(1) = P3
+        #
+        # Let's note:
+        # B0 = P3 - 3P2 + 3P1 - P0
+        # B1 = 3(P0 - 2P1 + P2)
+        # B2 = 3(P1 - P0)
+        # B3 = P0
+        #
+        # We have:
+        #
+        # P = t^3.B0 + t^2.B1 + t.B2 + P0 = t(t(t.B0 + B1) + B2) + P0
+        #
+        # Hence:
+        # P' = 3t^2.B0 + 2.t.B1 + B2 = t(3t.B0 + 2B1) + B2
+        # P'(0) = B2 = 3(P1 - P0)
+        # P(1)  = 3B0 + 2B1 + B2 = 3P3-9P2+9P1-3P0 + 6P0-12P1+6P2 + 3P1-3P0 = 3(P3 - P2) 
+        #
+        # And for acceleration
+        # P'' = 6t.B0 + 2.B1
+        
+        self.B3 = self.points[..., :-1, :]
+        
+        self.B0 = self.points[..., 1:, :] - 3*self.lefts[..., 1:, :] + 3*self.rights[..., :-1, :] - self.B3
+        self.B1 = 3*(self.B3 - 2*self.rights[..., :-1, :] + self.lefts[..., 1:, :])
+        self.B2 = 3*(self.rights[..., :-1, :] - self.B3)
+        
             
     def __repr__(self):
         return f"<Array{self.shape} of Bezier curves ({self.size}) made of {self.count} {self.vdim}D-points>"
@@ -224,50 +262,193 @@ class Beziers():
         """
         
         return self.points.shape[-1] 
-
+    
     # ====================================================================================================
     # Compute the points on a value or array of values
             
-    def __call__(self, t):
+    def __call__(self, t, individuals=False, der=0):
         """Compute the interpolation.
         
-        - points shape: (shape, count, 3)
-        - t shape:      (n,)
-        - Result shape: (shape, n, 3)
+        individuals indicates if there is one time per curve:
+            
+        - individuals = False (default)
+            - points shape: (shape, count, 3)
+            - t shape:      (n,)
+            - Result shape: (shape, n, 3)
+        
+        - individuals = True
+            - points shape: (shape, count, 3)
+            - t shape:      (shape)
+            - Result shape: (shape, 3)
         
         Parameters
         ----------
         t : float or array of floats
             The values where to compute the interpolation
+        individuals : bool, default = False
+            True if there is one time per curve.
+        der : int. Default 0
+            Return the value (0), the tangent (1) or the acceleration (2)
         
         Returns
         -------
         vector or array of vectors
         """
-    
-        # Parameter is not an array
-        if not hasattr(t, '__len__'):
-            return self([t])[..., 0, :]
         
-        # Make sure it is an np array
-        ts = np.array(t, float)
-        n = len(ts)
+        # ---------------------------------------------------------------------------
+        # Check that individuals argument is correct
         
-        # And that it is between 0 and 1
+        if individuals:
+            if self.shape != np.shape(t):
+                s = "Beziers call error: individuals=True requires the argument t to have the same shape as the Beziers class.\n"
+                s += f"   Beziers.shape: {self.shape}\n"
+                s += f"   t.shape:       {np.shape(t)}\n"
+                s += f"Beziers: {self}"
+                raise RuntimeError(s)
+                
+            if self.shape == ():
+                return self(t, individuals=False)
+            
+
+        # ---------------------------------------------------------------------------
+        # Parameter is a single float
+                
+        else:
+            if not hasattr(t, '__len__'):
+                return self([t])[..., 0, :]
+
+        n = np.product(np.shape(t))
+            
+        # ---------------------------------------------------------------------------
+        # Ensure the parameter t is within interval [0, 1]
+        
+        ts = np.reshape(np.array(t, float), (n,))
+        
         ts[np.where(ts < 0)] = 0
         ts[np.where(ts > 1)] = 1
         
-        # Number of bezier points
+        # ---------------------------------------------------------------------------
+        # Get the indices of the points intervals
+        
         count = self.count 
         
-        # Indices
         inds = (ts*(count-1)).astype(int)
         inds[inds == count-1] = count-2   # Ensure inds+1 won't crash
         
         # Location within the interval
-        delta = 1/(count - 1)             
+        delta = 1/(count - 1)  
+
+        # ---------------------------------------------------------------------------
+        # Beziers coefficients
         
-        # Bezier computation
+        ps = ((ts - inds*delta) / delta).reshape(n, 1) # 1 for inds == count-1 shifted to count-2 !
+        
+        if individuals:
+            # Shape to linear array of control points (count, count... count)
+            lsh = ((count-1)*n, 3)
+            
+            # Inds to the linear list of control points
+            # Reshape to get the target shape
+            inds = np.reshape(inds + np.arange(n)*(count-1), self.shape)
+            
+            if der == 2:
+                # P'' = 6t.B0 + 2.B1
+                return 6*ps*self.B0.reshape(lsh)[inds] + 2*self.B1.reshape(lsh)[inds]
+            elif der == 1:
+                # P' = t(3t.B0 + 2B1) + B2
+                return ps*(3*ps*self.B0.reshape(lsh)[inds] + 2*self.B1.reshape(lsh)[inds]) + self.B2.reshape(lsh)[inds]
+            else:
+                # P = t(t(t.B0 + B1) + B2) + B3
+                return ps*(ps*(ps*self.B0.reshape(lsh)[inds] + self.B1.reshape(lsh)[inds]) + self.B2.reshape(lsh)[inds]) + self.B3.reshape(lsh)[inds]
+            
+        else:
+            if der == 2:
+                # P'' = 6t.B0 + 2.B1
+                return 6*ps*self.B0[..., inds, :] + 2*self.B1[..., inds, :]
+            elif der == 1:
+                # P' = t(3t.B0 + 2B1) + B2
+                return ps*(3*ps*self.B0[..., inds, :] + 2*self.B1[..., inds, :]) + self.B2[...,inds, :]
+            else:
+                # P = t(t(t.B0 + B1) + B2) + B3
+                return ps*(ps*(ps*self.B0[..., inds, :] + self.B1[..., inds, :]) + self.B2[..., inds, :]) + self.B3[..., inds, :]
+        
+
+    # ====================================================================================================
+    # Compute the points on a value or array of values
+            
+    def call_OLD(self, t, individuals=False, der=0):
+        """Compute the interpolation.
+        
+        individuals indicates if there is one time per curve:
+            
+        - individuals = False (default)
+            - points shape: (shape, count, 3)
+            - t shape:      (n,)
+            - Result shape: (shape, n, 3)
+        
+        - individuals = True
+            - points shape: (shape, count, 3)
+            - t shape:      (shape)
+            - Result shape: (shape, 3)
+        
+        Parameters
+        ----------
+        t : float or array of floats
+            The values where to compute the interpolation
+        individuals : bool, default = False
+            True if there is one time per curve.
+        der : int. Default 0
+            Return the value (0), the tangent (1) or the acceleration (2)
+        
+        Returns
+        -------
+        vector or array of vectors
+        """
+        
+        # ---------------------------------------------------------------------------
+        # Check that individuals argument is correct
+        
+        if individuals:
+            if self.shape != np.shape(t):
+                s = "Beziers call error: individuals=True requires the argument t to have the same shape as the Beziers class.\n"
+                s += f"   Beziers.shape: {self.shape}\n"
+                s += f"   t.shape:       {np.shape(t)}\n"
+                s += f"Beziers: {self}"
+                raise RuntimeError(s)
+                
+            if self.shape == ():
+                return self(t, individuals=False)
+
+        # ---------------------------------------------------------------------------
+        # Parameter is a single float
+                
+        else:
+            if not hasattr(t, '__len__'):
+                return self([t])[..., 0, :]
+
+        n = np.product(np.shape(t))
+            
+        # ---------------------------------------------------------------------------
+        # Ensure the parameter t is within interval [0, 1]
+        
+        ts = np.reshape(np.array(t, float), (n,))
+        
+        ts[np.where(ts < 0)] = 0
+        ts[np.where(ts > 1)] = 1
+        
+        # ---------------------------------------------------------------------------
+        # Get the indices of the points intervals
+        
+        count = self.count 
+        
+        inds = (ts*(count-1)).astype(int)
+        inds[inds == count-1] = count-2   # Ensure inds+1 won't crash
+        
+        # Location within the interval
+        delta = 1/(count - 1)  
+
+        # ---------------------------------------------------------------------------
+        # Beziers coefficients
         
         ps = ((ts - inds*delta) / delta).reshape(n, 1) # 1 for inds == count-1 shifted to count-2 !
 
@@ -277,12 +458,28 @@ class Beziers():
         _ps2 = _ps*_ps
         _ps3 = _ps2*_ps
         
-        v  = self.points[..., inds, :]*_ps3
-        v += 3*self.rights[..., inds, :]*_ps2*ps
-        v += 3*self.lefts[..., inds+1, :]*_ps*ps2
-        v += self.points[..., inds+1, :]*ps3
+        # ---------------------------------------------------------------------------
+        # Bezier computation
         
-        return v
+        v  =   self.points[..., inds,   :]*_ps3
+        v += 3*self.rights[..., inds,   :]*_ps2*ps
+        v += 3*self.lefts [..., inds+1, :]*_ps *ps2
+        v +=   self.points[..., inds+1, :]*     ps3
+        
+        if individuals:
+            print("avant", v.shape, '-->', np.diagonal(v, axis1=-3, axis2=-2).shape)
+            return np.diagonal(v, axis1=-3, axis2=-2).T
+        else:
+            return v
+    
+    # ====================================================================================================
+    # Derivative
+    
+    def tangent(self, t, individuals=False):
+        return self(t, individuals=individuals, der=1)
+    
+    def curvature(self, t, individuals=False):
+        return self(t, individuals=individuals, der=2)
     
     # ====================================================================================================
     # The control points

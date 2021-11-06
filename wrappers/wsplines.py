@@ -133,7 +133,6 @@ class WSplines(WStruct):
 
         self.update_tag()
         
-        
     # ===========================================================================
     # Types
     
@@ -268,7 +267,6 @@ class WSplines(WStruct):
                 points.add(n - len(points))
                 
         self.update_tag()
-
                 
     # ===========================================================================
     # A user friendly version of the profile setting
@@ -329,6 +327,46 @@ class WSplines(WStruct):
         
         self.update_tag()
         
+    # ===========================================================================
+    # Initialize with a set of points
+    
+    def set_beziers(self, points, lefts=None, rights=None):
+        if np.shape(points) == 2:
+            points = np.reshape(points, (1,) + np.shape(points))
+            if lefts is not None:
+                lefts = np.reshape(lefts, (1,) + np.shape(points))
+            if rights is not None:
+                rights = np.reshape(rights, (1,) + np.shape(points))
+                
+        else:
+            points = np.array(points)
+            
+        count  = np.shape(points)[0]
+        length = np.shape(points)[1] 
+        
+        if lefts is None:
+            ls = [None] * count
+        else:
+            ls = lefts
+            
+        if rights is None:
+            rs = [None] * count
+        else:
+            rs = rights
+            
+        self.set_profile('BEZIER', length, count)
+        for i in range(len(points)):
+            ws = self[i]
+            ws.from_points(points[i], ls[i], rs[i])
+            
+            
+    def set_functions(self, fs, t0=0, t1=1, length=100):
+        
+        ts = np.linspace(t0, t1, length)
+        if hasattr(fs, '__len__'):
+            self.set_bezier([f(ts) for f in fs])
+        else:
+            self.set_bezier(fs(ts))
         
     # ===========================================================================
     # Some helpers

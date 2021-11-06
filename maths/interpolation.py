@@ -206,7 +206,9 @@ class Rect():
             Converted point.
         """
         
-        r = (np.array(P) - self.P0)/self.A
+        base = np.array(P) - self.P0
+        r = base/self.A
+        r[np.isnan(r)] = base[np.isnan(r)]
         if clip:
             return np.clip(r, 0, 1)
         else:
@@ -1421,9 +1423,6 @@ def norm_interpolate(v, x_min=0., x_max=1., y_min=0., y_max=1., interpolation='L
     new_nrms = interpolate(nrms, x_min, x_max, y_min, y_max, interpolation, extrapolation)
     nrms[nrms < 1e-8] = 1
     return v * np.expand_dims(new_nrms / nrms, axis=-1)
-
-
-
 
 def test_interpolate():
 

@@ -105,6 +105,12 @@ class WCurve(WID):
     def verts_dim(self):
         return self.wsplines.verts_dim
     
+    def set_beziers(self, points, lefts=None, rights=None):
+        self.wsplines.set_beziers(points, lefts, rights)
+            
+    def set_functions(self, fs, t0=0, t1=1, length=100):
+        self.wsplines.set_functions(fs, t0, t1, length)
+    
     # ===========================================================================
     # Shape keys
     
@@ -177,7 +183,7 @@ class WCurve(WID):
     
     @classmethod
     def exposed_methods(cls):
-        return ["new", "delete", "set_profile"]
+        return ["new", "delete", "set_profile", "set_beziers", "set_functions"]
 
     @classmethod
     def exposed_properties(cls):
