@@ -829,7 +829,7 @@ class Glyphe():
     def xwidth(self, char_format=None):
         
         if self.glyf_index is None:
-            xw = self.xMax - self.xMin
+            xw = self.xMax(char_format) - self.xMin(char_format)
         else:
             xw = self.ttf.hmtx[self.glyf_index][0]
             
