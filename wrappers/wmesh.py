@@ -15,10 +15,10 @@ from ..core.plural import getattrs, setattrs
 from .wmaterials import WMaterials
 from .wshapekeys import WShapeKeys
 from ..maths import geometry as geo
-from ..maths.symarray import SymArray
+#from ..maths.symarray import SymArray
+from ..maths.colors import rgb2hsv, hsv2rgb, float2rgb, rgb2float
 
 from ..core.commons import WError
-
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +625,155 @@ class WMesh(WID):
             source += s + "\n"
 
         return source
+    
+    # ---------------------------------------------------------------------------
+    # Colors
+    
+    @staticmethod
+    def rgb2hsv(cls, rgb):
+        return rgb2hsv(rgb)
+    
+    @staticmethod
+    def hsv2rgb(cls, hsv):
+        return hsv2rgb(hsv)
+    
+    # ---------------------------------------------------------------------------
+    # Get color layer
+    
+    def get_color_layer(self, name, create=False):
+        
+        layer = self.wrapped.vertex_colors.get(name)
+        if layer is None:
+            if create:
+                return self.wrapped.vertex_colors.new(name=name)
+            else:
+                return None
+        return layer
+    
+    # ---------------------------------------------------------------------------
+    # Vertices have one color per face they belong to
+    # set_colors and get_colors set and get all the colors in a linear shape
+    
+    def get_colors(self, name, hsv=False, alpha=True, create=True):
+        
+        layer = self.get_color_layer(name, create)
+        if layer is None:
+            return None
+        
+        count = len(layer.data)
+        rgb   = np.zeros(count*4, np.float)
+        
+        layer.data.foreach_get("color", rgb)
+        
+        if alpha:
+            rgb = np.reshape(rgb, (count, 4))
+        else:
+            rgb = np.reshape(rgb, (count, 4))[:, :3]
+            
+        if hsv:
+            return rgb2hsv(rgb)
+        else:
+            return rgb
+        
+    def set_colors(self, name, rgb=None, hsv=None):
+        
+        layer = self.get_color_layer(name, create=True)
+            
+        # ---------------------------------------------------------------------------
+        # hsv overrides rgb
+        
+        if hsv is not None:
+            rgb = hsv2rgb(hsv)
+            
+        if rgb is None:
+            raise WError("set_colors: one of the RGB or HSV array must be passed. Both are None.",
+                         Class="WMesh", Method="set_colors", name=name)
 
+        # ---------------------------------------------------------------------------
+        # Read alpha is no alpha is passed
+        
+        count = len(layer.data)
+
+        if np.shape(rgb)[-1] == 3:
+            a = np.empty(count*4, np.float)
+            layer.data.foreach_get("color", a)
+            a = np.reshape(a, (count, 4))
+            a[:, :3] = rgb
+        else:
+            a = np.empty((count, 4), float)
+            a[:] = rgb
+            
+        a = np.reshape(a, count*4)
+        layer.data.foreach_set("color", a)
+        
+    # ---------------------------------------------------------------------------
+    # If the vertices have the same color whatever their face
+    # use set_verts_colors et get_verts_colors
+    
+    def set_verts_colors(self, name, rgb=None, hsv=None):
+        
+        layer = self.get_color_layer(name, create=True)
+        count = len(layer.data)
+        
+        # ---------------------------------------------------------------------------
+        # hsv overrides rgb
+        
+        if hsv is not None:
+            rgb = hsv2rgb(hsv)
+            
+        if rgb is None:
+            raise WError("set_colors: one of the RGB or HSV array must be passed. Both are None.",
+                         Class="WMesh", Method="set_verts_colors", name=name)
+            
+        # ---------------------------------------------------------------------------
+        # The poly indices
+        
+        polygons = self.wrapped.polygons
+        vrgb = np.empty((count, np.shape(rgb)[-1]), float)
+        
+        index = 0
+        for poly in polygons:
+            new_index = index + len(poly.vertices)
+            vrgb[index:new_index] = rgb[poly.vertices]
+            index = new_index
+            
+        self.set_colors(name, vrgb)
+        
+    # ---------------------------------------------------------------------------
+    
+    def get_verts_colors(self, name, hsv=False, alpha=True, create=True):
+        
+        # ---------------------------------------------------------------------------
+        # Read the loop colors
+        
+        cols = self.get_colors(name, hsv, alpha, create)
+        if cols is None:
+            return None
+            
+        # ---------------------------------------------------------------------------
+        # The poly indices
+        
+        vcount = self.verts_count
+        vcols  = np.empty((vcount, np.shape(cols)[-1]), float)
+        
+        polygons = self.wrapped.polygons
+        index = 0
+        for poly in polygons:
+            new_index = index + len(poly.vertices)
+            vcols[poly.vertices] = cols[index:new_index]
+            new_index = index
+            
+        return vcols
+        
+    # ---------------------------------------------------------------------------
+    # rgba channel can be used to set a float
+    # Since rgb values are implemented on 8-bit channels
+    
+    def set_float_on_colors(self, name, v):
+        self.set_verts_colors(name, float2rgb(v))
+        
+    def get_float_on_colors(self, name):
+        return rgb2float(self.get_verts_colors(name))
 
     # ---------------------------------------------------------------------------
     # Layers
@@ -924,7 +1072,8 @@ class WMesh(WID):
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
              "detach_geometry", "copy_mesh", "python_source_code",
              "get_floats", "set_floats", "get_ints", "set_ints",
-             "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape"]
+             "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape",
+             "get_colors", "set_colors", "get_verts_colors", "set_verts_colors", "get_float_on_colors", "set_float_on_colors"]
 
     @classmethod
     def exposed_properties(cls):
