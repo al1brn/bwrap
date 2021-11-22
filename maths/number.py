@@ -10,9 +10,307 @@ Created on Wed Nov 17 09:35:16 2021
 import struct
 import math
 
+class Number_TEST():
+    
+    UNITS = {}
+    
+    def __init__(self, v, unit=None):
+        if issubclass(type(v), Number):
+            self.n = v.n
+            self.e = 0
+        else:
+            self.n = v
+            self.e = 0
+        
+    @property
+    def sgn(self):
+        return -1 if self.n < 0 else 1
+    
+    @sgn.setter
+    def sgn(self, s):
+        self.n = -abs(self.n) if s < 0 else abs(self.n)
+            
+    # ---------------------------------------------------------------------------
+    # Units management
+    
+    @property
+    def unit(self):
+        if hasattr(self, 'unit_'):
+            return self.unit_
+        else:
+            return None
+        
+    @unit.setter
+    def unit(self, name):
+        u = Number.UNITS.get(name)
+        if u is None:
+            Number.add_unit(name, self.precision)
+        self.unit_ = name
+        self.precision_to_unit()
+    
+    @classmethod
+    def add_unit(cls, name, precision, fmt_func=None, fmt_unit=None, disp_prec=None):
+        cls.UNITS[name] = {
+            'precision': precision, 
+            'f'        : fmt_func,
+            'unit'     : name if fmt_unit is None else fmt_unit,
+            'dprec'    : precision if disp_prec is None else disp_prec
+            }
+        
+    def precision_to_unit(self):
+        name = self.unit
+        if name is not None:
+            self.precision = Number.UNITS[name]['precision']
+
+        return self
+            
+    # ---------------------------------------------------------------------------
+    # Decimal representation
+    
+    def fmt(self, precision=None, f=None, unit=None):
+        return f"{self.n}"
+
+    # ---------------------------------------------------------------------------
+    # Units management
+            
+    def __repr__(self):
+        return f"{self.fmt()}"
+    
+    def copy(self, other):
+        self.n = Number(other).n
+        return self
+    
+    # ---------------------------------------------------------------------------
+    # Float value  of the number
+    
+    @property
+    def value(self):
+        return self.n
+    
+    # ---------------------------------------------------------------------------
+    # Highest bit
+    
+    @property
+    def highest_bit(self):
+        return 52
+    
+    # ---------------------------------------------------------------------------
+    # Floor, ceil, trunc 
+    
+    @property
+    def int_frac(self):
+        return int(self.n)
+        
+    @property
+    def is_int(self):
+        return False
+        
+    @property
+    def frac(self):
+        return self.n - math.trunc(self.n)
+
+    @property
+    def floor(self):
+        return math.floor(self.n)
+    
+    @property
+    def ceil(self):
+        return math.ceil(self.n)
+    
+    @property
+    def trunc(self):
+        return math.trunc(self.n)
+    
+    # ---------------------------------------------------------------------------
+    # Sign management
+    
+    @property
+    def is_null(self):
+        return self.n == 0
+    
+    def set_sgn(self, sgn):
+        self.sgn = sgn
+        return self
+    
+    
+    def abs(self):
+        return abs(self.n)
+        
+    def opposite(self):
+        return Number(-self.n)
+    
+    # ---------------------------------------------------------------------------
+    # Multiply by power of two
+    
+    def mul_pow2_eq(self, p2, increase_e=False):
+        
+        if p2 == 0:
+            return self
+        
+        elif p2 > 0:
+            self.n *= (1 << p2)
+            return self
+        
+        else:
+            self.n /= (1 << (-p2))
+            return self
+        
+    def mul_pow2(self, p2, increase_e=False):
+        return Number(self).mul_pow2_eq(p2, increase_e)
+    
+    # ---------------------------------------------------------------------------
+    # Align the exponent part
+    
+    def set_e(self, e):
+        return self
+    
+    # ---------------------------------------------------------------------------
+    # Precision
+
+    @property
+    def precision(self):
+        return 15
+    
+    @precision.setter
+    def precision(self, p):
+        pass
+    
+    # ---------------------------------------------------------------------------
+    # Return two copies with aligned exponents
+    
+    def align_e(self, other):
+        return Number(self), Number(other)
+
+        s = Number(self)
+        if s.n == 0:
+            s.sgn = 1
+
+        o = Number(other)
+        if o.n == 0:
+            o.sgn = 1
+
+        e = max(s.e, o.e)
+        return s.set_e(e), o.set_e(e)
+    
+    # ---------------------------------------------------------------------------
+    # Comparison
+    
+    def compare(self, other):
+        s, o = self.align_e(other)
+        if s.n == o.n:
+            return 0
+        
+        return -1 if s.n < o.n else 1
+
+    def greater(self, other):
+        return self.compare(other) > 0
+    
+    def less(self, other):
+        return self.compare(other) < 0
+    
+    def greater_equal(self, other):
+        return self.compare(other) >= 0
+    
+    def less_equal(self, other):
+        return self.compare(other) <= 0
+    
+    
+    # ---------------------------------------------------------------------------
+    # Addition 
+    
+    def add_eq(self, other):
+        self.n += Number(other).n
+        return self
+    
+    # ---------------------------------------------------------------------------
+    # Addition 
+    
+    def add(self, other):
+        return Number(self).add_eq(other)
+    
+    # ---------------------------------------------------------------------------
+    # Substraction
+    
+    def sub_eq(self, other):
+        return self.add_eq(Number(other).opposite())
+    
+    def sub(self, other):
+        return Number(self).add_eq(Number(other).opposite())
+        
+    # ---------------------------------------------------------------------------
+    # Multiplication
+    
+    def mul_eq(self, other):
+        self.n *= Number(other).n
+        return self
+        
+    def mul(self, other):
+        return Number(self).mul_eq(other)
+
+    # ---------------------------------------------------------------------------
+    # Division
+    
+    def div_eq(self, other):
+        self.n /= Number(other).n
+        return self
+
+    def div(self, other):
+        return Number(self).div_eq(other)
+    
+    # ---------------------------------------------------------------------------
+    # Square
+    
+    def square_eq(self):
+        self.n =self.n*self.n
+        return self
+    
+    def square(self):
+        return self.mul(self).set_e(self.e)
+    
+    # ---------------------------------------------------------------------------
+    # Squared root
+    
+    def sqrt_eq(self):
+        self.n = math.sqrt(self.n)
+        return self
+
+    def sqrt(self):
+        return Number(self).sqrt_eq()
+    
+    # ---------------------------------------------------------------------------
+    # Invert
+    
+    def inv(self):
+        self.n = 1/self.n
+        return self
+    
+    def inv_eq(self):
+        return self.copy(self.inv())
+    
+    # ---------------------------------------------------------------------------
+    # Power of an int
+    
+    def pow_int_eq(self, expn):
+        self.n = math.pow(self.n, expn)
+        return self
+
+    def pow_int(self, n):
+        return Number(self).pow_int_eq(n)
+    
+    # ---------------------------------------------------------------------------
+    # Any power
+    #
+    # Mulitply power by fractional power
+    
+    def pow(self, pw):
+        self.n = math.pow(self.n, pw)
+        return self
+    
+    def pow_eq(self, pw):
+        return self.copy(self.pow(pw))
+    
 # ---------------------------------------------------------------------------
 # Number class
-
 
 class Number():
     
@@ -93,26 +391,26 @@ class Number():
     # ---------------------------------------------------------------------------
     # Decimal representation
     
-    def fmt(self, precision=None, f=None, unit=None):
+    def fmt(self, precision=None, f=None, unit_name=None, unit=None):
         
-        name = self.unit
+        name = self.unit if unit is None else unit
         if name is None:
             fmt_prec  = self.precision
             fmt_f     = None
-            fmt_unit  = ""
+            fmt_uname = ""
         else:
             UNIT = Number.UNITS[name]
             
             fmt_prec  = UNIT['dprec']
             fmt_f     = UNIT['f']
-            fmt_unit  = UNIT['unit']
+            fmt_uname = UNIT['unit']
 
         if precision is not None:
             fmt_prec = precision
         if f is not None:
             fmt_f = f
-        if unit is not None:
-            fmt_unit = unit
+        if unit_name is not None:
+            fmt_uname = unit_name
             
         # ---------------------------------------------------------------------------
         # The intermediary number
@@ -134,8 +432,8 @@ class Number():
             #p10 = round(math.log10(1 << n.e))
             s += "." + format((i_frac*(10**fmt_prec)) // (1 << n.e), f"0{fmt_prec}d")
             
-        if fmt_unit != "":
-            s += " " + fmt_unit
+        if fmt_uname != "":
+            s += " " + fmt_uname
             
         return s
             
@@ -279,7 +577,7 @@ class Number():
         
         else:
             if increase_e:
-                self.e <<= -p2
+                self.e += -p2
             else:
                 self.n = (self.n >> -p2) + int((self.n & (1 << (-p2-1))) != 0)
             return self
@@ -470,7 +768,12 @@ class Number():
         if o.is_null:
             raise RuntimeError("Number: division by zero.")
             
-        e = max(self.e, o.e)
+        if True:
+            #e = max(self.e, (o.highest_bit-o.e) - (self.highest_bit-self.e)+ 2)
+            e = max(self.e, self.highest_bit + 2)
+        else:
+            e = max(self.e, o.e)
+            
         self.set_e(e)
         o.set_e(e)
 
@@ -728,6 +1031,9 @@ class Vector():
             self.x.unit = unit
             self.y.unit = unit
             
+    def fmt(self, **kwargs):
+        return f"[{self.x.fmt(**kwargs)} {self.y.fmt(**kwargs)}]"
+            
     def __repr__(self):
         return f"[{self.x}, {self.y}]"
         
@@ -869,5 +1175,19 @@ class Vector():
     def cross(self, other):
         s, o = self.align_e(other)
         return s.x.mul(o.y).sub(s.y.mul(o.x))
+    
+
+
+GMdt = Number(-16593982104374999040).set_e(0)
+r2   = Number(4874399525610000000000).set_e(27)
+r    = Number(69816900000).set_e(27)
+v    = Vector([0, 38860]).set_e(17)
+p    = Vector([69816900000, 0]).set_e(27)
+
+a = GMdt.div(r2).div(r)
+print(a, a.e)
+
+print(p)
+print(p.mul(a))
 
 
