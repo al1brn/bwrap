@@ -62,8 +62,8 @@ class WCurve(WID):
     # ---------------------------------------------------------------------------
     # Add a spline
 
-    def new(self, spline_type='BEZIER'):
-        return self.wsplines(spline_type)
+    def new(self, spline_type='BEZIER', length=None):
+        return self.wsplines.new(spline_type, length)
 
     # ---------------------------------------------------------------------------
     # Delete a spline
@@ -85,9 +85,9 @@ class WCurve(WID):
     def set_profile(self, types='BEZIER', lengths=2, count=None):
         self.wsplines.set_profile(types, lengths, count)
         
-    @property
-    def ext_verts(self):
-        return self.wsplines.ext_verts
+    #@property
+    #def ext_verts(self):
+    #    return self.wsplines.ext_verts
     
     @property
     def verts(self):
@@ -99,7 +99,7 @@ class WCurve(WID):
         
     @property
     def verts_count(self):
-        return self.wsplines.verts_count()
+        return self.wsplines.verts_count
 
     @property
     def verts_dim(self):
@@ -108,6 +108,9 @@ class WCurve(WID):
     def set_beziers(self, points, lefts=None, rights=None):
         self.wsplines.set_beziers(points, lefts, rights)
             
+    def set_function(self, f, t0=0, t1=1, length=100):
+        self.wsplines.set_function(f, t0, t1, length)
+    
     def set_functions(self, fs, t0=0, t1=1, length=100):
         self.wsplines.set_functions(fs, t0, t1, length)
     
@@ -183,7 +186,7 @@ class WCurve(WID):
     
     @classmethod
     def exposed_methods(cls):
-        return ["new", "delete", "set_profile", "set_beziers", "set_functions"]
+        return ["new", "delete", "set_profile", "set_beziers", "set_function", "set_functions"]
 
     @classmethod
     def exposed_properties(cls):

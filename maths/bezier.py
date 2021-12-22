@@ -123,7 +123,7 @@ class Beziers():
     they are computed.
     """
 
-    def __init__(self, points, lefts=None, rights=None):
+    def __init__(self, points, lefts=None, rights=None, t0=0., t1=1.):
         """
         Parameters
         ----------
@@ -138,6 +138,8 @@ class Beziers():
         """
 
         self.points = np.array(points)
+        self.t0 = t0
+        self.t1 = t1
         
         # Compute the derivatives if lefts and rights are not given
         
@@ -164,7 +166,7 @@ class Beziers():
             self.rights[..., :-1, :] += der[..., :-1,:]*dists/3
             self.rights[..., -1, :]  += der[..., -1, :]*dists[..., -1, :]/3
         else:
-            self.rights[:] = rights()
+            self.rights[:] = rights
             
         # ---------------------------------------------------------------------------
         # Compute the computation arrays
@@ -196,12 +198,25 @@ class Beziers():
         #
         # And for acceleration
         # P'' = 6t.B0 + 2.B1
+        #
+        # ------- With custom parameter x from x0 to x1
+        #
+        # Q(x) = P(t(x)) with t = (x-x0)/(x1-x0)
+        # dQ/dx = t'.P'(t)
+        # Q' = P'/(x1-x0)
+        
         
         self.B3 = self.points[..., :-1, :]
         
         self.B0 = self.points[..., 1:, :] - 3*self.lefts[..., 1:, :] + 3*self.rights[..., :-1, :] - self.B3
         self.B1 = 3*(self.B3 - 2*self.rights[..., :-1, :] + self.lefts[..., 1:, :])
         self.B2 = 3*(self.rights[..., :-1, :] - self.B3)
+        
+        
+    @classmethod
+    def FromFunction(cls, f, count, t0=0., t1=1., dt=None):
+        v, l, f = control_points(f, count, t0, t1, dt)
+        return cls(v, l, f, t0=t0, t1=t1)
         
             
     def __repr__(self):
@@ -308,7 +323,6 @@ class Beziers():
                 
             if self.shape == ():
                 return self(t, individuals=False)
-            
 
         # ---------------------------------------------------------------------------
         # Parameter is a single float
@@ -320,9 +334,13 @@ class Beziers():
         n = np.product(np.shape(t))
             
         # ---------------------------------------------------------------------------
-        # Ensure the parameter t is within interval [0, 1]
+        # Conversion from custom range to [0, 1]
         
-        ts = np.reshape(np.array(t, float), (n,))
+        DT = self.t1 - self.t0
+        ts = (np.reshape(np.array(t, float), (n,)) - self.t0)/DT
+        
+        # ---------------------------------------------------------------------------
+        # Ensure the parameter t is within interval [0, 1]
         
         ts[np.where(ts < 0)] = 0
         ts[np.where(ts > 1)] = 1
@@ -353,10 +371,10 @@ class Beziers():
             
             if der == 2:
                 # P'' = 6t.B0 + 2.B1
-                return 6*ps*self.B0.reshape(lsh)[inds] + 2*self.B1.reshape(lsh)[inds]
+                return (6*ps*self.B0.reshape(lsh)[inds] + 2*self.B1.reshape(lsh)[inds])*(DT*DT)
             elif der == 1:
                 # P' = t(3t.B0 + 2B1) + B2
-                return ps*(3*ps*self.B0.reshape(lsh)[inds] + 2*self.B1.reshape(lsh)[inds]) + self.B2.reshape(lsh)[inds]
+                return (ps*(3*ps*self.B0.reshape(lsh)[inds] + 2*self.B1.reshape(lsh)[inds]) + self.B2.reshape(lsh)[inds])*DT
             else:
                 # P = t(t(t.B0 + B1) + B2) + B3
                 return ps*(ps*(ps*self.B0.reshape(lsh)[inds] + self.B1.reshape(lsh)[inds]) + self.B2.reshape(lsh)[inds]) + self.B3.reshape(lsh)[inds]
@@ -364,113 +382,14 @@ class Beziers():
         else:
             if der == 2:
                 # P'' = 6t.B0 + 2.B1
-                return 6*ps*self.B0[..., inds, :] + 2*self.B1[..., inds, :]
+                return (6*ps*self.B0[..., inds, :] + 2*self.B1[..., inds, :])*(DT*DT)
             elif der == 1:
                 # P' = t(3t.B0 + 2B1) + B2
-                return ps*(3*ps*self.B0[..., inds, :] + 2*self.B1[..., inds, :]) + self.B2[...,inds, :]
+                return (ps*(3*ps*self.B0[..., inds, :] + 2*self.B1[..., inds, :]) + self.B2[...,inds, :])*DT
             else:
                 # P = t(t(t.B0 + B1) + B2) + B3
                 return ps*(ps*(ps*self.B0[..., inds, :] + self.B1[..., inds, :]) + self.B2[..., inds, :]) + self.B3[..., inds, :]
-        
 
-    # ====================================================================================================
-    # Compute the points on a value or array of values
-            
-    def call_OLD(self, t, individuals=False, der=0):
-        """Compute the interpolation.
-        
-        individuals indicates if there is one time per curve:
-            
-        - individuals = False (default)
-            - points shape: (shape, count, 3)
-            - t shape:      (n,)
-            - Result shape: (shape, n, 3)
-        
-        - individuals = True
-            - points shape: (shape, count, 3)
-            - t shape:      (shape)
-            - Result shape: (shape, 3)
-        
-        Parameters
-        ----------
-        t : float or array of floats
-            The values where to compute the interpolation
-        individuals : bool, default = False
-            True if there is one time per curve.
-        der : int. Default 0
-            Return the value (0), the tangent (1) or the acceleration (2)
-        
-        Returns
-        -------
-        vector or array of vectors
-        """
-        
-        # ---------------------------------------------------------------------------
-        # Check that individuals argument is correct
-        
-        if individuals:
-            if self.shape != np.shape(t):
-                s = "Beziers call error: individuals=True requires the argument t to have the same shape as the Beziers class.\n"
-                s += f"   Beziers.shape: {self.shape}\n"
-                s += f"   t.shape:       {np.shape(t)}\n"
-                s += f"Beziers: {self}"
-                raise RuntimeError(s)
-                
-            if self.shape == ():
-                return self(t, individuals=False)
-
-        # ---------------------------------------------------------------------------
-        # Parameter is a single float
-                
-        else:
-            if not hasattr(t, '__len__'):
-                return self([t])[..., 0, :]
-
-        n = np.product(np.shape(t))
-            
-        # ---------------------------------------------------------------------------
-        # Ensure the parameter t is within interval [0, 1]
-        
-        ts = np.reshape(np.array(t, float), (n,))
-        
-        ts[np.where(ts < 0)] = 0
-        ts[np.where(ts > 1)] = 1
-        
-        # ---------------------------------------------------------------------------
-        # Get the indices of the points intervals
-        
-        count = self.count 
-        
-        inds = (ts*(count-1)).astype(int)
-        inds[inds == count-1] = count-2   # Ensure inds+1 won't crash
-        
-        # Location within the interval
-        delta = 1/(count - 1)  
-
-        # ---------------------------------------------------------------------------
-        # Beziers coefficients
-        
-        ps = ((ts - inds*delta) / delta).reshape(n, 1) # 1 for inds == count-1 shifted to count-2 !
-
-        ps2  = ps*ps
-        ps3  = ps2*ps
-        _ps  = 1 - ps
-        _ps2 = _ps*_ps
-        _ps3 = _ps2*_ps
-        
-        # ---------------------------------------------------------------------------
-        # Bezier computation
-        
-        v  =   self.points[..., inds,   :]*_ps3
-        v += 3*self.rights[..., inds,   :]*_ps2*ps
-        v += 3*self.lefts [..., inds+1, :]*_ps *ps2
-        v +=   self.points[..., inds+1, :]*     ps3
-        
-        if individuals:
-            print("avant", v.shape, '-->', np.diagonal(v, axis1=-3, axis2=-2).shape)
-            return np.diagonal(v, axis1=-3, axis2=-2).T
-        else:
-            return v
     
     # ====================================================================================================
     # Derivative
@@ -489,6 +408,65 @@ class Beziers():
         
         return self.points, self.lefts, self.rights
     
+    # ====================================================================================================
+    # The function giving the bezier parameter from the distance on the curve
+    # Return the function and the length of the curve
+    
+    def distance_to_param(self, resolution=1000):
+
+        ts     = np.linspace(self.t0, self.t1, resolution)
+        pts    = self(ts)
+        
+        ds     = np.zeros(resolution, float)
+        ds[1:] = np.linalg.norm(pts[1:] - pts[:-1], axis=-1)
+        
+        return Polynoms(np.cumsum(ds), ts, linear=False), np.sum(ds)
+    
+    
+    # ====================================================================================================
+    # Write / read
+    
+    def to_text(self):
+        n = len(self.points)
+        s = f"{n}\n"
+        for i in range(n):
+            s += f"{self.points[i, 0]}; {self.points[i, 1]}; {self.points[i, 2]};"
+            s += f"{self.lefts [i, 0]}; {self.lefts [i, 1]}; {self.lefts [i, 2]};"
+            s += f"{self.rights[i, 0]}; {self.rights[i, 1]}; {self.rights[i, 2]}\n"
+        return s
+        
+    @classmethod
+    def FromText(cls, text):
+        
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            if line != "":
+                n = int(line)
+                
+                p = np.zeros((n, 3), float)
+                l = np.zeros((n, 3), float)
+                r = np.zeros((n, 3), float)
+                
+                i_start = i+1
+                break
+        
+        for i in range(n):
+            v = lines[i_start + i].split(";")
+            p[i, 0] = float(v[0])
+            p[i, 1] = float(v[1])
+            p[i, 2] = float(v[2])
+    
+            l[i, 0] = float(v[3])
+            l[i, 1] = float(v[4])
+            l[i, 2] = float(v[5])
+    
+            r[i, 0] = float(v[6])
+            r[i, 1] = float(v[7])
+            r[i, 2] = float(v[8])
+            
+        return cls(p, l, r)
+    
+
     # ====================================================================================================
     # To Blender curve vertices
     # A Blender curve can be initialized in one shot with the profile structure
@@ -512,7 +490,7 @@ class Beziers():
     # ====================================================================================================
     # DEBUG : plot the curves
     
-    def plot(self, count=100, points=True, controls=False, curves=True):
+    def plot(self, count=100, points=True, controls=False, curves=True, title=None):
         """Plot the interpolation"""
         
         import matplotlib.pyplot as plt
@@ -529,7 +507,7 @@ class Beziers():
                     ax.plot(lfs[i, :, 0], lfs[i, :, 1], 'o')
                     ax.plot(rgs[i, :, 0], rgs[i, :, 1], 'o')
         
-        t = np.linspace(0, 1, 100)
+        t = np.linspace(self.t0, self.t1, 100)
         p = self(t)
         
         p = p.reshape(self.size, len(t), self.vdim)
@@ -537,6 +515,9 @@ class Beziers():
         if curves:
             for i in range(self.size):
                 ax.plot(p[i, :, 0], p[i, :, 1], '-')
+                
+        if title is not None:
+            ax.set_title(title)
         
         plt.show()
         
@@ -674,7 +655,7 @@ class Polynoms():
     The call Polynoms(array(n) of t) retuens an array(shape, n) of floats
     """
     
-    def __init__(self, x, y, periodic=False):
+    def __init__(self, x, y, periodic=False, linear=False):
         """
         Parameters
         ----------
@@ -693,8 +674,9 @@ class Polynoms():
         self.x[:] = x
         
         self.periodic = periodic
+        self.linear   = linear
         
-        self.a, self.b, self.c, self.d = Polynoms.coefficients(self.x, self.y)
+        self.a, self.b, self.c, self.d = Polynoms.coefficients(self.x, self.y, linear=self.linear)
         
     def __repr__(self):
         return f"<Array{self.shape} of polynomial curves ({self.size}) made of {self.count} points>"
@@ -742,13 +724,13 @@ class Polynoms():
             Interpolations computed with y, x
         """
         
-        return Polynoms(self.y, self.x, self.periodic)
+        return Polynoms(self.y, self.x, periodic=self.periodic, linear=self.linear)
     
     # ====================================================================================================
     # Compute the polynomial coefficients
         
     @staticmethod
-    def coefficients(x, y):
+    def coefficients(x, y, linear=False):
         """Compute the coefficients of the polynoms from the values
         
         Parameters
@@ -765,124 +747,81 @@ class Polynoms():
             The a, b, c, d coefficients of the intervals
         """
         
-        if True:
-            
-            shape = np.shape(x)[:-1]
-            n = np.shape(x)[-1]
-            
-            # For each curve, there are:
-            # n-1 : polynoms from 0 to n-2
-            # n-3 : polynoms of degree 3 from 1 to n-3
-            # 1   : polynom of degree 2 at 0
-            # 1   : polynom of degree 2 at n-2
-            
-            # ----- The four polynoms coefficients
-            
-            a = np.zeros(shape + (n-1,), float)
-            b = np.zeros(shape + (n-1,), float)
-            c = np.zeros(shape + (n-1,), float)
-            d = np.zeros(shape + (n-1,), float)
-            
-            # ----- Compute the n-2 derivatives (excluding 0 and n-1 extremity points)
-            
-            ders = (y[..., 2:] - y[..., :-2])/(x[..., 2:] - x[..., :-2])
-            
-            # ----- Helpers
-    
-            d1 = ders[..., :-1]
-            d2 = ders[..., 1:]
-            
-            x_2 = x*x
-            
-            x1 = x[..., 1:-2]
-            x2 = x[..., 2:-1]
-            y1 = y[..., 1:-2]
-            y2 = y[..., 2:-1]
-            
-            x21 = x2 - x1
-            
-            # ----- n-3 polynoms of degree 3
-            
-            a[..., 1:-1] = (d1 + d2 - 2*(y2 - y1)/x21)  / x21**2
-            b[..., 1:-1] = -1.5*a[..., 1:-1]*(x2 + x1) + 0.5*(d2 - d1)/x21
-            c[..., 1:-1] = 3*a[..., 1:-1]*x1*x2 + (d1*x2 - d2*x1)/x21
-            
-            # ----- First polynom of degree 2 (a[0] is initialized to 0)
-            
-            dx = x[..., 1] - x[..., 0]
-            b[..., 0] = (ders[..., 0] - (y[..., 1] - y[..., 0])/dx)/dx
-            c[..., 0] = ders[..., 0] - 2*b[..., 0]*x[..., 1]
-            
-            dx = (x[..., -1] - x[..., -2])
-            b[..., -1] = - (ders[..., -1] - (y[..., -1] - y[..., -2])/dx)/dx
-            c[..., -1] = ders[..., -1] - 2*b[..., -1]*x[..., -2]
-            
-            # ----- Computation of d
-            
-            d = y[..., :-1] - a*x_2[..., :-1]*x[..., :-1] - b*x_2[..., :-1] - c*x[..., :-1]   
-            
-            # ----- We are good
-            
-            return a, b, c, d            
-            
-            
-        else:
-            n = len(x)                  
-            
-            # There are:
-            # n-1 : polynoms from 0 to n-2
-            # n-3 : polynoms of degree 3 from 1 to n-3
-            # 1   : polynom of degree 2 at 0
-            # 1   : polynom of degree 2 at n-2
-            
-            # ----- The four polynoms coefficients
-            
-            a = np.zeros(n-1, np.float)
-            b = np.zeros(n-1, np.float)
-            c = np.zeros(n-1, np.float)
-            d = np.zeros(n-1, np.float)
-            
-            # ----- Compute the n-2 derivatives (excluding 0 and n-1 extremity points)
-            
-            ders = (y[2:] - y[:-2])/(x[2:] - x[:-2])
-            
-            # ----- Helpers
-    
-            d1 = ders[:-1]
-            d2 = ders[1:]
-            
-            x_2 = x*x
-            
-            x1 = x[1:-2]
-            x2 = x[2:-1]
-            y1 = y[1:-2]
-            y2 = y[2:-1]
-            
-            x21 = x2 - x1
-            
-            # ----- n-3 polynoms of degree 3
-            
-            a[1:-1] = (d1 + d2 - 2*(y2 - y1)/x21)  / x21**2
-            b[1:-1] = -1.5*a[1:-1]*(x2 + x1) + 0.5*(d2 - d1)/x21
-            c[1:-1] = 3*a[1:-1]*x1*x2 + (d1*x2 - d2*x1)/x21
-            
-            # ----- First polynom of degree 2 (a[0] is initialized to 0)
-            
-            dx = x[1] - x[0]
-            b[0] = (ders[0] - (y[1] - y[0])/dx)/dx
-            c[0] = ders[0] - 2*b[0]*x[1]
-            
-            dx = (x[-1] - x[-2])
-            b[-1] = - (ders[-1] - (y[-1] - y[-2])/dx)/dx
-            c[-1] = ders[-1] - 2*b[-1]*x[-2]
-            
-            # ----- Computation of d
-            
-            d = y[:-1] - a*x_2[:-1]*x[:-1] - b*x_2[:-1] - c*x[:-1]   
-            
-            # ----- We are good
+        shape = np.shape(x)[:-1]
+        n = np.shape(x)[-1]
+        
+        # For each curve, there are:
+        # n-1 : polynoms from 0 to n-2
+        # n-3 : polynoms of degree 3 from 1 to n-3
+        # 1   : polynom of degree 2 at 0
+        # 1   : polynom of degree 2 at n-2
+        
+        # ----- The four polynoms coefficients
+        
+        a = np.zeros(shape + (n-1,), float)
+        b = np.zeros(shape + (n-1,), float)
+        c = np.zeros(shape + (n-1,), float)
+        d = np.zeros(shape + (n-1,), float)
+        
+        
+        # ===========================================================================
+        # Linear coefficients
+        # f(t) = y0 + (t-x0)/(x1-x0)*(y1-y0)
+        # c = (y1-y0)/(x1-x0)
+        # f(t) = t*c + y0 - x0*c
+        
+        if linear:
+            c = (y[..., 1:] - y[..., :-1])/(x[..., 1:] - x[..., :-1])
+            d = y[..., :-1] - x[...,:-1]*c
             
             return a, b, c, d
+        
+        # ===========================================================================
+        # Polynomial coefficients
+        
+        # ----- Compute the n-2 derivatives (excluding 0 and n-1 extremity points)
+        
+        ders = (y[..., 2:] - y[..., :-2])/(x[..., 2:] - x[..., :-2])
+        
+        # ----- Helpers
+
+        d1 = ders[..., :-1]
+        d2 = ders[..., 1:]
+        
+        x_2 = x*x
+        
+        x1 = x[..., 1:-2]
+        x2 = x[..., 2:-1]
+        y1 = y[..., 1:-2]
+        y2 = y[..., 2:-1]
+        
+        x21 = x2 - x1
+        
+        # ----- n-3 polynoms of degree 3
+        
+        a[..., 1:-1] = (d1 + d2 - 2*(y2 - y1)/x21)  / x21**2
+        b[..., 1:-1] = -1.5*a[..., 1:-1]*(x2 + x1) + 0.5*(d2 - d1)/x21
+        c[..., 1:-1] = 3*a[..., 1:-1]*x1*x2 + (d1*x2 - d2*x1)/x21
+        
+        # ----- First polynom of degree 2 (a[0] is initialized to 0)
+        
+        dx = x[..., 1] - x[..., 0]
+        b[..., 0] = (ders[..., 0] - (y[..., 1] - y[..., 0])/dx)/dx
+        c[..., 0] = ders[..., 0] - 2*b[..., 0]*x[..., 1]
+        
+        dx = (x[..., -1] - x[..., -2])
+        b[..., -1] = - (ders[..., -1] - (y[..., -1] - y[..., -2])/dx)/dx
+        c[..., -1] = ders[..., -1] - 2*b[..., -1]*x[..., -2]
+        
+        # ----- Computation of d
+        
+        d = y[..., :-1] - a*x_2[..., :-1]*x[..., :-1] - b*x_2[..., :-1] - c*x[..., :-1]   
+        
+        # ----- We are good
+        
+        return a, b, c, d            
+            
+
         
     # ====================================================================================================
     # Compute the values
@@ -907,6 +846,7 @@ class Polynoms():
         if not hasattr(t, "__len__"):
             return self([t])[..., 0]
         
+        t = np.array(t)
         n = len(t)
         
         # Modulo
@@ -932,7 +872,7 @@ class Polynoms():
             s_ind = k[..., :-1]
                 
             if len(k) > 0:
-                #ks = ks.reshape(len(ks))
+                
                 t_2 = t[t_ind] * t[t_ind]
                 
                 s = tuple(np.insert(s_ind, len(self.shape), i, axis=-1).transpose())
@@ -989,12 +929,13 @@ class Polynoms():
     # Debug: plot the functions
         
     @classmethod
-    def demo(cls):
-        x = np.linspace(0, 2*np.pi, 5)
+    def demo(cls, linear=False):
+        x = np.linspace(0, 2*np.pi,7)
         y = np.sin(x)
         
-        f = cls(x, y, True)
-        f.plot(7)
+        f = cls(x, y, linear=linear)
+        f.plot(np.linspace(-1, 7, 100))
         
         return f
+    
 

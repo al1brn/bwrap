@@ -1169,7 +1169,11 @@ class BCurve():
         """
         
         if not hasattr(t, '__len__'):
-            return self(np.array([t]))[0]
+            y = self(np.array([t]), xbounds, ybounds)
+            if len(y) == 1:
+                return y[0]
+            else:
+                return y
 
         # Make sure is an array        
         t = np.array(t, np.float)

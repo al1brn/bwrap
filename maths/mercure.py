@@ -188,6 +188,7 @@ class Instant():
             factor = 1 - beta*dot
             alpha  = math.sqrt(1 - beta*beta)
             
+            
             return da2.mul(factor*alpha)            
             
         
@@ -459,7 +460,7 @@ class Orbit():
 
         orbit = Orbit()
         
-        instant = Instant(merc_aphelion, merc_speed, edt=2)
+        instant = Instant(merc_aphelion, merc_speed, edt=3)
         
         orbit.leaps(instant, 90*86400)
         

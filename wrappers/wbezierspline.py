@@ -20,6 +20,9 @@ from ..core.commons import WError
 # Bezier Spline wrapper
     
 class WBezierSpline(WSpline):
+    pass
+
+class WBezierSpline_OLD(WSpline):
     """Wraps a Bezier spline.
     
     The points of the curve can be managed with the left and right handles or not:

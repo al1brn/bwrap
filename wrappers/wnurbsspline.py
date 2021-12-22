@@ -20,6 +20,9 @@ from ..core.commons import WError
 # Nurbs Spline wrapper
         
 class WNurbsSpline(WSpline):
+    pass
+
+class WNurbsSpline_OLD(WSpline):
     """Nurbs spline wrapper.
     
     Caution: verts are 3-vectors. To set and get the 4-verts, use verts4 property.

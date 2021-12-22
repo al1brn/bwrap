@@ -11,8 +11,12 @@ import numpy as np
 import bpy
 
 from .wstruct import WStruct
+from .wspline import WSpline
 from .wbezierspline import WBezierSpline
 from .wnurbsspline import WNurbsSpline
+
+from ..maths.bezier import Beziers
+
 
 from ..core.commons import WError
 
@@ -89,7 +93,7 @@ class WSplines(WStruct):
     # ---------------------------------------------------------------------------
     # Add a spline
 
-    def new(self, spline_type='BEZIER'):
+    def new(self, spline_type='BEZIER', verts_count=None):
         """Create a new spline of the given type.
 
         Parameters
@@ -105,7 +109,8 @@ class WSplines(WStruct):
         
         splines = self.wrapped
         spline  = WSplines.spline_wrapper(splines.new(spline_type))
-        self.blender_object.data.update_tag()
+        if verts_count is not None:
+            spline.verts_count = verts_count
         
         self.update_tag()
         
@@ -176,20 +181,11 @@ class WSplines(WStruct):
     
     @staticmethod
     def spline_type_index(type):
-        if type == 'BEZIER':
-            return 0
-        elif type == 'POLY':
-            return 1
-        elif type == 'BSPLINE':
-            return 2
-        elif type == 'CARDINAL':
-            return 3
-        else:
-            return 4
+        return WSpline.type_to_code(type)
         
     @staticmethod
-    def spline_type(index):
-        return ['BEZIER', 'POLY', 'BSPLINE', 'CARDINAL', 'NURBS'][index]
+    def spline_type(code):
+        return WSpline.code_to_type(code)
     
     @property
     def profile(self):
@@ -198,10 +194,7 @@ class WSplines(WStruct):
         
         profile = np.zeros((len(splines), 3), int)
         for i, spline in enumerate(splines):
-            if spline.type == 'BEZIER':
-                profile[i] = (3, len(spline.bezier_points), 0)
-            else:
-                profile[i] = (1, len(spline.points), WSplines.spline_type_index(spline.type))
+            profile[i] = self[i].profile
                 
         return profile
     
@@ -224,16 +217,12 @@ class WSplines(WStruct):
         index = 0
         for i_spline in range(min(len(splines), len(profile))):
             
-            spline = splines[i_spline]
+            spline = self[i_spline]
             
-            if spline.type != WSplines.spline_type(profile[i_spline, 2]):
+            if spline.type_code != profile[i_spline, 2]:
                 break
             
-            if spline.type == 'BEZIER':
-                points = spline.bezier_points
-            else:
-                points = spline.points
-                
+            points = spline.points
             n = len(points)
             if n < profile[i_spline, 1]:
                 points.add(n - len(points))
@@ -251,27 +240,16 @@ class WSplines(WStruct):
             splines.remove(splines[len(splines)-1])
             
         # ---------------------------------------------------------------------------
-        # We must then create the missing splines
+        # We must then create the missing splines with the right number of points
         
         for i in range(index, len(profile)):
-            
-            spline = splines.new(WSplines.spline_type(profile[i, 2]))
-
-            if profile[i, 0] == 3:
-                points = spline.bezier_points
-            else:
-                points = spline.points
-                
-            n = profile[i, 1]
-            if n > len(points):
-                points.add(n - len(points))
+            spline = self.new(WSpline.code_to_type(profile[i, 2]), profile[i, 1])
                 
         self.update_tag()
+        
                 
     # ===========================================================================
     # A user friendly version of the profile setting
-    #
-    # 
     #
     # set_profile('BEZIER', 3, 10) : Create 10 BEZIER splines of 3 points
     
@@ -304,10 +282,9 @@ class WSplines(WStruct):
         # Convert the types strings into int code
         
         if type(types) is str:
-            atypes = [WSplines.spline_type_index(types)]
+            atypes = [WSpline.type_to_code(types)]
         else:
-            atypes = [WSplines.spline_type_index(t) for t in types]
-        
+            atypes = [WSpline.type_to_code(t) for t in types]
         
         # The number of splines to create
         
@@ -325,13 +302,27 @@ class WSplines(WStruct):
         
         self.profile = profile
         
-        self.update_tag()
-        
     # ===========================================================================
     # Initialize with a set of points
     
     def set_beziers(self, points, lefts=None, rights=None):
-        if np.shape(points) == 2:
+        
+        bzs    = Beziers(points, lefts, rights)
+        count  = 1 if bzs.shape == () else bzs.shape[0]
+        length = bzs.count
+        
+        self.set_profile('BEZIER', length, count)
+        v, l, r = bzs.control_points()
+        
+        if bzs.shape == ():
+            self[0].set_vertices(np.array((v, l, r)))
+        else:
+            for i in range(count):
+                self[i].set_vertices(np.array((v[i], l[i], r[i])))
+                
+        return
+        
+        if len(np.shape(points)) == 2:
             points = np.reshape(points, (1,) + np.shape(points))
             if lefts is not None:
                 lefts = np.reshape(lefts, (1,) + np.shape(points))
@@ -355,18 +346,26 @@ class WSplines(WStruct):
             rs = rights
             
         self.set_profile('BEZIER', length, count)
-        for i in range(len(points)):
+        for i in range(count):
             ws = self[i]
-            ws.from_points(points[i], ls[i], rs[i])
+            ws.set_vertices(np.array((points[i], ls[i], rs[i])))
             
+    # ===========================================================================
+    # Initialize with a set of functions
+            
+    def set_function(self, f, t0=0, t1=1, length=100):
+        
+        self.set_profile('BEZIER', length, 1)
+        self[0].set_function(f, t0, t1)
+            
+    # ===========================================================================
+    # Initialize with a set of functions
             
     def set_functions(self, fs, t0=0, t1=1, length=100):
         
-        ts = np.linspace(t0, t1, length)
-        if hasattr(fs, '__len__'):
-            self.set_bezier([f(ts) for f in fs])
-        else:
-            self.set_bezier(fs(ts))
+        self.set_profile('BEZIER', length, len(fs))
+        for i, f in enumerate(fs):
+            self[i].set_function(f, t0, t1)
         
     # ===========================================================================
     # Some helpers
@@ -391,9 +390,9 @@ class WSplines(WStruct):
             profile = self.profile
         return np.min(profile[:, 0]) == 1
     
-    def verts_count(self, profile=None):
-        if profile is None:
-            profile = self.profile
+    @property
+    def verts_count(self):
+        profile = self.profile
         return np.sum(profile[:, 0] * profile[:, 1])
     
     @property
@@ -402,6 +401,157 @@ class WSplines(WStruct):
     
     def set_types(self, type='BEZIER', lengths=2):
         pass
+    
+    @property
+    def verts(self):
+        
+        profile = self.profile
+        total   = np.sum(profile[:, 0]*profile[:, 1])
+        verts   = np.empty((total, 3), float)
+        
+        index = 0
+        for i in range(len(profile)):
+            n = profile[i, 0] * profile[i, 1]
+            verts[index:index+n, :] = self[i].stack_verts
+            index += n
+            
+        return verts
+    
+    @verts.setter
+    def verts(self, value):
+
+        profile = self.profile
+        total   = np.sum(profile[:, 0]*profile[:, 1])
+        verts   = np.empty((total, 3), float)
+        
+        verts[:] = value
+        
+        index = 0
+        for i in range(len(profile)):
+            n = profile[i, 0] * profile[i, 1]
+            self[i].stack_verts = verts[index:index+n, :] 
+            index += n
+            
+    # ===========================================================================
+    # Attributes
+    
+    def get_points_attr(self, attr_name, profile=None):
+        
+        if profile is None:
+            profile = self.profile
+            
+        total = np.sum(profile[:, 0]*profile[:, 1])
+        vals  = np.empty(total, float)
+        
+        index = 0
+        for i in range(len(profile)):
+            n = profile[i, 0] * profile[i, 1]
+            vals[index:index+n] = self[i].get_points_attr(attr_name)
+            index += n
+            
+        return vals
+    
+    def set_points_attr(self, attr_name, value, profile=None):
+        
+        if profile is None:
+            profile = self.profile
+            
+        total = np.sum(profile[:, 0]*profile[:, 1])
+        vals  = np.empty(total, float)
+        vals[:] = value
+        
+        index = 0
+        for i in range(len(profile)):
+            n = profile[i, 0] * profile[i, 1]
+            self[i].set_points_attr(attr_name, vals[index:index+n])
+            index += n
+            
+    # ===========================================================================
+    
+    # ---------------------------------------------------------------------------
+    # Tilt
+    
+    @property
+    def tilts(self):
+        return self.get_points_attr('tilt')
+    
+    @tilts.setter
+    def tilts(self, value):
+        self.set_points_attr('tilt', value)
+        
+    # ---------------------------------------------------------------------------
+    # Radius
+    
+    @property
+    def radius(self):
+        return self.get_points_attr('radius')
+    
+    @radius.setter
+    def radius(self, value):
+        self.set_points_attr('radius', value)
+
+    # ---------------------------------------------------------------------------
+    # Weight soft body
+    
+    @property
+    def weight_softbodies(self):
+        return self.get_points_attr('weight_softbody')
+    
+    @weight_softbodies.setter
+    def weight_softbodies(self, value):
+        self.set_points_attr('weight_softbody', value)
+        
+    # ---------------------------------------------------------------------------
+    # Weight
+    
+    @property
+    def weights(self):
+        return self.get_points_attr('weight')
+    
+    @weights.setter
+    def weights(self, value):
+        self.set_points_attr('weight', value)
+        
+    # ---------------------------------------------------------------------------
+    # Tilt, radius, weight
+    
+    @property
+    def trws(self):
+        
+        profile = self.profile
+        total   = np.sum(profile[:, 0]*profile[:, 1])
+        vals    = np.zeros((total, 5), float)
+        
+        index = 0
+        for i in range(len(profile)):
+            n = profile[i, 0] * profile[i, 1]
+            if profile[i, 2] == 0:
+                vals[index:index+n, :3] = self[i].trws
+            else:
+                vals[index:index+n, :]  = self[i].trws
+            index += n
+            
+        return vals
+    
+    @trws.setter
+    def trws(self, value):
+        
+        profile = self.profile
+        total   = np.sum(profile[:, 0]*profile[:, 1])
+        vals    = np.zeros((total, 5), float)
+        vals[:] = value
+        
+        index = 0
+        for i in range(len(profile)):
+            n = profile[i, 0] * profile[i, 1]
+            if profile[i, 2] == 0:
+                self[i].trws = vals[index:index+n, :3] 
+            else:
+                self[i].trws = vals[index:index+n, :]
+            index += n
+            
+            
+class OLD():
     
     # ===========================================================================
     # Read the splines vertices
@@ -424,7 +574,7 @@ class WSplines(WStruct):
     # - 5   = W
     #
     # Hence, by using verts[..., :3], one can manipulate the vertices while keeping the extra info
-    
+
 
     @staticmethod
     def verts_slice(verts):
