@@ -30,9 +30,10 @@ class TextReader():
     PUNCT  = 0x10
     DECO   = 0x20
     EOF    = 0x40
+    MINUS  = 0x80
     
     IN_WORD   = LETTER ^ FIGURE
-    IN_FIGURE = FIGURE
+    IN_FIGURE = FIGURE ^ MINUS
     
     def __init__(self, text):
         self.text   = text

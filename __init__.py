@@ -20,10 +20,12 @@ bl_info = {
 import numpy as np
 import bpy
 
-from .wrappers.wrap_function import wrap
+from .wrappers.wrap_function import wrap, wcollection
 from .objects.crowd import Crowd
 from .text.chars import Chars
 from .objects.duplicator import Duplicator
 
 from .core.animation import Interval, Engine, Animator
+
+
 

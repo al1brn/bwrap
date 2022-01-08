@@ -10,7 +10,6 @@ import numpy as np
 
 from ..wrappers.wrap_function import wrap
 
-
 # ===========================================================================
 # Blender prop_collection wrapper
 #

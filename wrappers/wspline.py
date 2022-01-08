@@ -251,6 +251,8 @@ class WSpline(WStruct):
                 a[:] = verts
                 
             wrapped.points.foreach_set('co', np.reshape(a, n*4))    
+            
+        self.mark_update()
    
     # ---------------------------------------------------------------------------
     # Vertices

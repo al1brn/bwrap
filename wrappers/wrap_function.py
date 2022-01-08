@@ -130,6 +130,67 @@ def wrap(name, create=None, **kwargs):
                      name = name,
                      create = create,
                      **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Collection wrapper
+
+class WColl():
+    def __init__(self, name):
+        self.collection = WColl.get_collection(name)
+        
+    @staticmethod
+    def get_collection(name):
+        
+        # The name of an object is given rather than an object instance
+        if type(name) is str:
+            coll = bpy.data.collections.get(name)
+            if coll is None:
+                raise WError(f"Collection {name} doesn't exist !",
+                             Class = "WColl",
+                             Function = "get_collection",
+                             name = name)
+            return coll
+        
+        obj = name
+        if hasattr(obj, 'name'):
+            return WColl.get_collection(obj.name)
+        
+        raise WError(f"Object {obj} is not a collection !",
+                Class = "WColl",
+                Function = "get_collection",
+                name = name)
+        
+    @property
+    def name(self):
+        return self.collection.name
+    
+    @name.setter
+    def name(self, value):
+        self.collection.name = value
+        
+    def __repr__(self):
+        return f"Collection wrapper {self.collection.name}"
+    
+    def __len__(self):
+        return len(self.collection.objects)
+    
+    def __getitem__(self, index):
+        return wrap(self.collection.objects[index])
+    
+    def keys(self):
+        return self.collection.objects.keys()
+    
+    def values(self):
+        return [wrap(o) for o in self.collection.objects.values()]
+    
+    def items(self):
+        return [(k, wrap(o)) for k, o in self.collection.objects.items()]
+    
+
+def wcollection(name):
+    return WColl(name)
+
         
 # ---------------------------------------------------------------------------
 # Get the wrapped

@@ -9,9 +9,9 @@ Created on Tue Aug  3 09:05:57 2021
 import numpy as np
 import bpy
 
+from ..blender import blender
 from .wid import WID
 
-from ..blender import blender
 from ..blender import depsgraph 
 
 from ..maths.transformations import Transformations

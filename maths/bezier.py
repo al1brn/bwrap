@@ -389,7 +389,6 @@ class Beziers():
             else:
                 # P = t(t(t.B0 + B1) + B2) + B3
                 return ps*(ps*(ps*self.B0[..., inds, :] + self.B1[..., inds, :]) + self.B2[..., inds, :]) + self.B3[..., inds, :]
-
     
     # ====================================================================================================
     # Derivative
@@ -399,6 +398,14 @@ class Beziers():
     
     def curvature(self, t, individuals=False):
         return self(t, individuals=individuals, der=2)
+    
+    # ====================================================================================================
+    # Param of the closest point
+    
+    def closest_param(self, point, resolution=1000):
+        i = np.argmin(np.linalg.norm(self(np.linspace(self.t0, self.t1, resolution)) - point, axis=-1))
+        return self.t0 + i/(resolution-1)*(self.t1-self.t0)
+    
     
     # ====================================================================================================
     # The control points
