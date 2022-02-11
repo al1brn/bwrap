@@ -391,6 +391,58 @@ class WMesh(WID):
         # Update
         mesh.update()
         mesh.validate()
+        
+    # ---------------------------------------------------------------------------
+    # Deform a line to stick to the mesh surface
+    
+    def stick_to_surface(self, inds, xy, verts=None):
+        """Stick a line to the surface with a shape.
+        
+        IMPORTANT: The property shape must be defined and be a couple.
+        
+        If the surface is deformed, the curves is deformed to stay sticked
+        on the surface.
+
+        The line is defined by a series of points on the xy surface. Each point
+        of the series is defined by two couples:
+        - indices : the indices of low left corner where the point is
+        - xy      : the coordinates, in percentage, of the points within this square
+        
+
+        Parameters
+        ----------
+        inds : array of floats of shape (n, 2)
+            The indices of the low left corners of the square where the points are.
+        xy : array of ints of shape (n, 2)
+            The coordinates of the points within this square, in percentage.
+        verts : array of vertices. The default is None.
+            The vertices of the surface with a shape of (m, n, 3). Use the vertices
+            of the mesh if None.
+
+        Returns
+        -------
+        TYPE
+            Array of shape (n, 3) of vertices.
+        """
+        
+        if verts is None:
+            verts = self.verts
+            
+        if len(np.shape(verts)) != 3:
+            raise WError(f"The surface must be shaped in two dimensions with a shape (m, n, 3). Not {np.shape(verts)}",
+                    Class = "WMesh",
+                    Method = "stick_to_surface")
+        
+        points = verts[inds[:, 0], inds[:, 1]]
+    
+        i1 = np.clip(inds[:, 0]+1, 0, verts.shape[0]-1)
+        j1 = np.clip(inds[:, 1]+1, 0, verts.shape[1]-1)
+        
+        ex = verts[i1, inds[:, 1]] - points
+        ey = verts[inds[:, 0], j1] - points
+        
+        return points + ex*np.expand_dims(xy[:, 0], axis=-1) + ey*np.expand_dims(xy[:, 1], axis=-1)
+    
 
     # ---------------------------------------------------------------------------
     # Detach geometry to create a new mesh
@@ -571,6 +623,148 @@ class WMesh(WID):
     
     def init_torus(self, major_radius=1, minor_radius=0.1, count=(10, 10)):
         return self.init_surface((major_radius, minor_radius), count, topology='TORUS')
+    
+    # ---------------------------------------------------------------------------
+    # To uv sphere
+    
+    def to_uvsphere(self, radius=1., cylinder=False):
+        """Shape as an uv sphere.
+        
+        The mesh must have a (segms, rings) shape. The poles are made
+        of the the same segms vertices.
+        
+        The first meridian matches the last if cylinder is False.
+        
+        Parameters
+        ----------
+        radius : float, optional
+            The radius of the sphere.  The default is 1.
+        cylinder : bool, optional
+            The last meridian is not equal to the first. The default is False.
+
+        Returns
+        -------
+        None.
+        """
+        
+        shape = self.shape
+        if len(shape) != 2:
+            raise WError(f"The mesh must be shaped in two dimensions (segms, rings), not {shape}",
+                Class = "WMesh",
+                Method = "to_uvspshere",
+                radius = radius,
+                cylinder=cylinder)
+            
+        segms = shape[0]
+        rings = shape[1]
+        
+        theta = np.linspace(0, 2*np.pi, segms, endpoint=not cylinder)
+        cs    = np.cos(theta)
+        sn    = np.sin(theta)
+        
+        phi   = np.linspace(-np.pi/2, np.pi/2, rings)
+        rs    = radius*np.cos(phi)
+    
+        verts = np.empty((segms, rings, 3), float)
+        verts[:, np.arange(rings), 2] = radius*np.sin(phi)
+        for i in range(rings):
+            verts[:, i, 0] = rs[i]*cs
+            verts[:, i, 1] = rs[i]*sn
+            
+        self.verts = verts
+            
+    # ---------------------------------------------------------------------------
+    # Sphere flattened from the pole
+    
+    def flatten_uvsphere_at_pole(self, factor, radius=1., cylinder=False):
+        """Shape as a sphere being flattened at the North Pole.
+
+        Parameters
+        ----------
+        factor : float
+            Deformation progress.
+        radius : float, optional
+            The radius of the sphere.  The default is 1.
+        cylinder : bool, optional
+            The last meridian is not equal to the first. The default is False.
+
+        Returns
+        -------
+        None.
+        """
+        
+        shape = self.shape
+        if len(shape) != 2:
+            raise WError(f"The mesh must be shaped in two dimensions (segms, rings), not {shape}",
+                Class = "WMesh",
+                Method = "flatten_uvsphere_at_pole",
+                radius = radius,
+                cylinder=cylinder)
+            
+        segms = shape[0]
+        rings = shape[1]
+        
+        theta = np.linspace(0, 2*np.pi, segms)
+        cs    = np.cos(theta)
+        sn    = np.sin(theta)
+        
+        verts = np.empty((segms, rings, 3), float)
+        v = self.bend(x0=0, x1=radius, count=rings, angle=-np.pi*factor, translation=(0, radius))
+        
+        for i in range(rings):
+            verts[:, i, 0] = v[i, 0]*cs
+            verts[:, i, 1] = v[i, 0]*sn
+            verts[:, i, 2] = v[i, 1]
+            
+        self.verts = verts
+    
+    # ---------------------------------------------------------------------------
+    # Sphere flattened to cylinder
+    
+    def flatten_uvsphere_to_cylinder(self, factor, radius=1.):
+        """Shape as a sphere being flattened into a cylinder.
+        
+        Note that this required the 'cylinder' parameter to be True.
+
+        Parameters
+        ----------
+        factor : float
+            Deformation progress.
+        radius : float, optional
+            The radius of the sphere.  The default is 1.
+
+        Returns
+        -------
+        None.
+        """
+        
+        shape = self.shape
+        if len(shape) != 2:
+            raise WError(f"The mesh must be shaped in two dimensions (segms, rings), not {shape}",
+                Class = "WMesh",
+                Method = "flatten_uvsphere_to_cylinder",
+                radius = radius)
+            
+        segms = shape[0]
+        rings = shape[1]
+        
+        mer_length = np.pi*radius
+        
+        bb = self.bend(x0=-radius, x1=radius, count=rings, angle=np.pi*factor,
+            scale=factor*np.pi/2 + 1-factor)
+        scales = np.cos(np.linspace(-np.pi/2, np.pi/2, rings))
+    
+        verts = np.empty((segms, rings, 3), float)
+        for i in range(rings):
+            
+            v = self.bend(x0=-mer_length, x1=mer_length, count=segms, angle=2*np.pi*factor, 
+                scale = scales[i]*factor + (1-factor)/2,
+                translation=(0, bb[i, 1]))
+        
+            verts[:, i, :2] = v
+            verts[:, i, 2] = bb[i, 0]
+            
+        self.verts = verts
 
     # ---------------------------------------------------------------------------
     # Materials indices
@@ -1070,6 +1264,7 @@ class WMesh(WID):
     def exposed_methods(cls):
         return ["get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
+             "stick_to_surface",
              "detach_geometry", "copy_mesh", "python_source_code",
              "get_floats", "set_floats", "get_ints", "set_ints",
              "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape",

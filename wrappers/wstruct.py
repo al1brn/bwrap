@@ -941,4 +941,169 @@ class WStruct():
             self.set_kfs("hide_viewport", frame, False)
             if hide_before:
                 self.set_kfs("hide_viewport", frame-1, True)
+                
+                
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # Some static geometric utility methods        
+        
+    # ---------------------------------------------------------------------------
+    # Bend a straigth line in two dimensions
+    
+    @staticmethod
+    def bend(x0=0., x1=1., count=10, angle=np.pi, scale=1., translation=(0, 0)):
+        """Bend a straigth line in two dimensions
+
+        Parameters
+        ----------
+        x0 : float, float
+            Line start. The default is 0..
+        x1 : float, optional
+            Line end. The default is 1..
+        count : int, optional
+            Number of points. The default is 10.
+        angle : float, optional
+            Bend angle. The default is np.pi.
+        scale : float, optional
+            Scale to apply to the horizontal line. The default is 1..
+        translation : couple of float, optional
+            The translatio to apply to the pivot point located at (0, 0). The default is (0, 0).
+
+        Returns
+        -------
+        array of couples of floats
+            The series of points shaping a bent line.
+        """
+        
+        if abs(angle) < 0.0001:
+    
+            pts = np.zeros((count, 2), float)
+            pts[:, 0] = np.linspace(x0, x1, count)*scale
+            pts += translation
+            
+            return pts
+        
+        length = scale*(x1 - x0)
+        radius = length/angle
+        center = (translation[0], radius + translation[1])
+        
+        ags = np.linspace(scale*x0/radius, scale*x1/radius, count)
+        
+        pts = np.empty((count, 2), float)
+        pts[:, 0] = np.sin(ags)
+        pts[:, 1] = -np.cos(ags)
+        pts *= radius
+        
+        return pts + center       
+
+    # ---------------------------------------------------------------------------
+    # A curve is sticked to a surface by computing its relative coordinates.
+    # The relative coordinates consist in locating an array of points on the surface
+    
+    @staticmethod
+    def xy_sticking_line(points, p0=(-1, -1), p1=(1, 1), resolution=(10, 10)):
+        """Compute the sticking arrays of a 2D line drawn on a plane.
+
+        Parameters
+        ----------
+        points : array (n, 2) of floats
+            The line drawn on the plane.
+        p0 : couple of floats, optional
+            The low left corner of the plane. The default is (-1, -1).
+        p1 : couple of floats, optional
+            The up right corner of the plane. The default is (1, 1).
+        resolution : couple of ints, optional
+            The number of points in each dimension. The default is (10, 10).
+
+        Returns
+        -------
+        inds : array (n, 2) of ints
+            The couples of indices of the low left corner of the sqaures where the points are located.
+        xy : array (n, 2) of floats
+            The couples of coordinates, in percentage, of the points within their square.
+        """
+        
+        count = len(points)
+        inds = np.zeros((count, 2), int)
+        xy   = np.zeros((count, 2), float)
+        
+        dx = (p1[0] - p0[0])/(resolution[0] - 1)
+        dy = (p1[1] - p0[1])/(resolution[1] - 1)
+        
+        pts = np.array(points) - p0
+        
+        inds[:, 0] = np.clip(np.trunc(pts[:, 0]/dx), 0, resolution[0]-1)
+        inds[:, 1] = np.clip(np.trunc(pts[:, 1]/dy), 0, resolution[1]-1)
+        xy[:, 0] = (pts[:, 0] - inds[:, 0]*dx)/dx
+        xy[:, 1] = (pts[:, 1] - inds[:, 1]*dy)/dy
+        
+        return inds, xy
+    
+    # ---------------------------------------------------------------------------
+    # A curve is sticked to a surface by computing its relative coordinates.
+    # The relative coordinates consist in locating an array of points on the surface
+    
+    @staticmethod
+    def disk_sticking_line(points, radius=1., resolution=(10, 10)):
+        """Compute the sticking arrays of a 2D line drawn on a disk in polar coordinates.
+
+        Parameters
+        ----------
+        points : array (n, 2) of floats
+            The line drawn on the plane.
+        radius : float, optional
+            Radius of the disk. The default is 1..
+        resolution : couple of ints, optional
+            The number of points in each dimension. The default is (10, 10).
+
+        Returns
+        -------
+        inds : array (n, 2) of ints
+            The couples of indices of the low left corner of the sqaures where the points are located.
+        xy : array (n, 2) of floats
+            The couples of coordinates, in percentage, of the points within their square.
+        """
+        
+        pol = np.zeros((len(points), 2), float)
+        
+        pol[:, 1] = np.linalg.norm(points, axis=-1)
+        pol[:, 0] = np.arctan2(points[:, 1], points[:, 0])
+        
+        #return points_to_xy(pol, p0=(0, -np.pi), p1=(radius, np.pi), resolution=resolution)
+        return WStruct.xy_sticking_line(pol, p0=(-np.pi, 0), p1=(np.pi, radius), resolution=resolution)
+    
+    # ---------------------------------------------------------------------------
+    # Points on a sphere
+    
+    @staticmethod
+    def sphere_sticking_line(points, resolution=(10, 10)):
+        """Compute the sticking arrays of a 2D line drawn on a sphere in spheric coordinates.
+
+        Parameters
+        ----------
+        points : array (n, 2) of floats
+            The line drawn on the plane.
+        resolution : couple of ints, optional
+            The number of points in each dimension. The default is (10, 10).
+
+        Returns
+        -------
+        inds : array (n, 2) of ints
+            The couples of indices of the low left corner of the sqaures where the points are located.
+        xy : array (n, 2) of floats
+            The couples of coordinates, in percentage, of the points within their square.
+        """        
+        
+        sph = np.empty((len(points), 2), float)
+        rs = np.linalg.norm(points[:, 2], axis=-1)
+        sph[:, 0] = np.arctan2(points[:, 1], points[:, 0])
+        sph[:, 1] = np.arctan2(points[:, 2], rs)
+        
+        return WStruct.xy_sticking_line(sph, p0=(-np.pi, -np.pi/2), p1=(np.pi, np.pi/2), resolution=resolution)
+    
+    
+            
+     
+         
+                
 

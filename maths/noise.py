@@ -65,6 +65,54 @@ class Perlin():
                 self.vects = np.append(self.vects, vs, axis=0)
                 
     # ===========================================================================
+    # Noisy curve
+    
+    @classmethod
+    def Curve(self, amp=1000, scale=1., contrast=1., seed=None):
+        perlin = Perlin(1, amp=amp, scale=scale, contrast=contrast, seed=seed)
+        return lambda x: perlin.noise(x)
+                
+    # ===========================================================================
+    # Noisy 2D map
+    
+    @classmethod
+    def Map2D(self, amp=1000, scale=1., contrast=1., seed=None):
+
+        perlin = Perlin(2, amp=amp, scale=scale, contrast=contrast, seed=seed)
+
+        def map2d(x0=0., y0=0., x1=10., y1=10., shape=(100, 100)):
+            return perlin.noise_map(P0=(x0, y0), P1=(x1, y1), shape=shape)
+
+        return map2d
+    
+    # ===========================================================================
+    # Noisy 3D map
+    
+    @classmethod
+    def Map3D(self, amp=1000, scale=1., contrast=1., seed=None):
+
+        perlin = Perlin(3, amp=amp, scale=scale, contrast=contrast, seed=seed)
+
+        def map3d(x0=0., y0=0., x1=10., y1=10., z=0., shape=(100, 100)):
+            return perlin.noise_map(P0=(x0, y0, z), P1=(x1, y1, z), shape=shape + (1,)).reshape(shape)
+
+        return map3d
+    
+    # ===========================================================================
+    # Noisy 4D map
+    
+    @classmethod
+    def Map4D(self, amp=1000, scale=1., contrast=1., seed=None):
+
+        perlin = Perlin(4, amp=amp, scale=scale, contrast=contrast, seed=seed)
+
+        def map3d(x0=0., y0=0., x1=10., y1=10., z=0., w=0., shape=(100, 100)):
+            return perlin.noise_map(P0=(x0, y0, z, w), P1=(x1, y1, z, w), shape=shape + (1, 1)).reshape(shape)
+
+        return map3d
+    
+                
+    # ===========================================================================
     # The grid vectors
     
     def grid_vectors(self, boxes):
@@ -188,16 +236,7 @@ class Perlin():
         #
         # The vectors shape is (count, nc, ndim) as for boxes
         
-        if True:
-            vectors = self.grid_vectors(boxes)
-        else:
-        
-            indices = np.sum((79000177*np.sin(boxes*[1093, 1097, 1103, 1109][:self.ndim])).astype(int)*[7, 11, 13, 17][:self.ndim], axis=-1) % self.amp
-            
-            vectors = self.vects[indices]
-            del indices
-            
-            
+        vectors = self.grid_vectors(boxes)
         
         # ---------------------------------------------------------------------------
         # The dots are computed using numpy function.
@@ -310,7 +349,6 @@ class Perlin():
     def noise_map(self, P0=0, P1=0, shape=(100, 100, 10, 10)):
         return self.noise(self.grid(P0, P1, shape))
     
-    
     # ===========================================================================
     # Plot
     
@@ -325,6 +363,8 @@ class Perlin():
         if self.ndim == 1:
             img[:] = np.reshape(noise, (n, 1))
             
+            ax.plot(np.linspace(0, n, n), img[0, :, 0])
+            
         elif self.ndim == 2:
             img[:] = np.reshape(noise, (n, n, 1))
             
@@ -337,7 +377,8 @@ class Perlin():
                 img[..., i] = noise[..., z, min(w+i, np.shape(noise)[3]-1)]
 
 
-        ax.imshow(img)
+        if self.ndim > 1:
+            ax.imshow(img)
         if title is None: title = f"dim {self.ndim} shape {np.shape(noise)}"
         plt.title(title)
         plt.show()  
@@ -363,19 +404,159 @@ class Perlin():
         t0 = time.time()
         noise = self.noise_map(0, 1, shape)
         t = time.time() - t0
+        
         self.plot(noise, title=f"dim: {self.ndim}, shape: {shape}, time: {t:.2f}")
         
     @staticmethod
-    def Demos(scale=6):
-        Perlin(1).demo(scale=scale)
-        Perlin(2).demo(scale=scale)
-        Perlin(3).demo(scale=scale)
-        Perlin(4).demo(scale=scale)
+    def Demos(scale=1, contrast=1):
+        
+        import matplotlib.pyplot as plt
+        
+        # ----- Curve 1D
+        
+        x = np.linspace(0, 10, 2000)
+        noise = Perlin.Curve(scale=scale, contrast=contrast)
+        y = noise(x)
+        
+        fig, ax = plt.subplots()
+        ax.plot(x, y)
+        plt.title("Curve")
+        plt.show()
+        
+        # ----- Map 2D
+        
+        map2 = Perlin.Map2D(scale=scale, contrast=contrast)
+        uv = map2()
+        
+        fig, ax = plt.subplots()
+        ax.imshow(uv)
+        plt.title("Map 2D")
+        plt.show()
+        
+        # ----- Map 3D
+        
+        map3 = Perlin.Map3D(scale=scale, contrast=contrast)
+        for z in range(10):
+            fig, ax = plt.subplots()
+            ax.imshow(map3(z=z/10))
+            plt.title(f"Map 3D - Image {z}")
+            plt.show()
+        
+        # ----- Map 4D
+        
+        map4 = Perlin.Map4D(scale=scale, contrast=contrast)
+        for z in range(10):
+            fig, ax = plt.subplots()
+            ax.imshow(map4(z=z/10))
+            plt.title(f"Map 4D - Image {z} z")
+            plt.show()
+        
+        for z in range(10):
+            fig, ax = plt.subplots()
+            ax.imshow(map4(w=z/10))
+            plt.title(f"Map 4D - Image {z} w")
+            plt.show()
+            
+# ===========================================================================
+# Voronoi class
 
+class Voronoi():
+    def __init__(self, scale=1., seed=None):
+        
+        if seed is not None:
+            np.random.seed(seed)
+            
+        self.scale = scale
+        count = 10
 
-Perlin.Demos()            
+        self.xs = np.random.uniform(0., 1., count)
+        self.ys = np.random.uniform(0., 1., count)
+        
+        self.segments =[]
+        
+        # ---------------------------------------------------------------------------
+        # Parabola between a focal and a leading line
+        # The line is vertical at x = l
+        # The distance to a point left to the line is : (l-x)
+        # The point is at coordinate (x0, y0)
+        # Distance to the point is sqrt((x-x0)^2 + (y-y0)^2)
+        # A point M is equidistant when:
+        # (x-x0)^2 + (y-y0)^2 = (l-x)^2
+        # y^2 - 2(x0 - l)x - 2y0y + x0^2 + y0^2 - l^2 = 0 
+        # x = (y^2 - 2y0y + K)/2/(x0-l)
+        # with K = x0^2 + y0^2 - l^2)
+        
+        # ---------------------------------------------------------------------------
+        # Parabola coefficients
+ 
+        def p_abc(pt, ln):
+            a = 1/(pt[0] - ln)
+            b = -pt[1]*a
+            a /= 2
+            c = (pt[0]**2 + pt[1]**2 - ln**2)*a
+            return (a, b, c)
+        
+        # ---------------------------------------------------------------------------
+        # parabola value
 
+        def parabola(abc, x):
+            return x**2*abc[0] + x*abc[1] + abc[2]
+        
+        # ---------------------------------------------------------------------------
+        # Intersection of two parabolas
+
+        def intersect(abc0, abc1):
+            
+            k = 2/(abc1[1] - abc0[1]) # 1/b'
+
+            a = (abc1[0] - abc0[0])*k
+            c = (abc1[2] - abc0[2])*k
+            
+            D = 1 - a*c
+            d = np.sqrt(D)
+            
+            y0 = (-1 - d)/a
+            y1 = (-1 + d)/a
+            
+            return (parabola(abc0, y0), y0), (parabola(abc0, y1), y1)
 
         
+        pt0 = (-1., 0)
+        pt1 = (-3., -2)
+        ln = 0.
+        
+        y = np.linspace(-5, 5, 100)
+        
+        abc0 = p_abc(pt0, ln)
+        abc1 = p_abc(pt1, ln)
+        abc0 = p_abc(pt0, ln)
+        x0 = parabola(abc0, y)
+        x1 = parabola(abc1, y)
+        
+        ip0, ip1 =  intersect(abc0, abc1)
+        
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        
+        ax.plot([ln, ln], [-5, 5])
+        ax.plot([pt0[0], pt1[0]], [pt0[1], pt1[1]], 'o')
+        ax.plot(x0, y)
+        ax.plot(x1, y)
+        ax.plot([ip0[0], ip1[0]], [ip0[1], ip1[1]], 'o')
+        
+        plt.show()
+        
+    def distance(self, points):
+        
+        shape = np.shape(points)
+        pts   = np.array(points, float)*self.scale
+        
+        count = len(self.xs)
 
+
+Voronoi()    
+            
+
+
+#Perlin.Demos()
 

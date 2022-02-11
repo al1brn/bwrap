@@ -1428,6 +1428,51 @@ def norm_interpolate(v, x_min=0., x_max=1., y_min=0., y_max=1., interpolation='L
     nrms[nrms < 1e-8] = 1
     return v * np.expand_dims(new_nrms / nrms, axis=-1)
 
+# =============================================================================================================================
+# Noise fonction
+
+def noise_function(scale=1., amplitude=1., seed=0):
+    
+    # ---------------------------------------------------------------------------
+    # The returned function
+    
+    def f(t, omegas, amps, phases):
+        y = np.zeros(np.shape(t), float)
+        for i in range(count):
+            y += np.sin(omegas[i]*t - phases[i])*amps[i]
+            
+        return y
+    
+    # ---------------------------------------------------------------------------
+    # Compute the arguments
+    
+    if seed is not None:
+        np.random.seed(seed)
+    
+    count  = 20
+    omega  = 2*np.pi/scale
+    if True:
+        omegas = omega*np.linspace(1, count, count)*np.random.uniform(1, .3, count)
+        amps   = amplitude/np.linspace(1, count, count)*np.random.uniform(1, .3, count)
+    else:
+        omegas = np.random.normal(omega, 0.7*omega, count)
+        amps   = np.random.normal(1., 0.7, count)
+    phases = np.random.uniform(0., 2*np.pi, count)
+    
+    
+    u = np.linspace(3.689*scale, 98793)
+    v = f(u, omegas, amps, phases)
+    amp = max(np.max(v), -np.min(v))
+    amps *= amplitude/amp
+
+    
+    return lambda t: f(t, omegas, amps, phases)
+    
+
+
+# =============================================================================================================================
+# Test
+
 def test_interpolate():
 
     import matplotlib.pyplot as plt
