@@ -231,6 +231,25 @@ class WMesh(WID):
         polygons = self.wrapped.polygons
         return [tuple(p.vertices) for p in polygons]
 
+    # polygons or faces
+    
+    @property
+    def faces_count(self):
+        return len(self.wrapped.polygons)
+
+    @property
+    def faces(self):
+        """The indices of the polygons
+
+        Returns
+        -------
+        python array of array of ints
+            Shape (d1, ?) where d1 is the number of polygons and ? is the number of vertices
+            of the polygon.
+        """
+        
+        return self.poly_indices
+
     # polygons as vectors
 
     @property
@@ -302,7 +321,7 @@ class WMesh(WID):
             self.wrapped.uv_layers.new(name=name)
             return self.wrapped.uv_layers[name]
         
-        raise RuntimeError(f"WMesh error: uvmap '{name}' doesn't existe for object '{self.name}'")
+        raise RuntimeError(f"WMesh error: uvmap '{name}' doesn't exist for object '{self.name}'")
     
     def create_uvmap(self, name):
         return self.get_uvmap(name, create=True)
@@ -765,6 +784,60 @@ class WMesh(WID):
             verts[:, i, 2] = bb[i, 0]
             
         self.verts = verts
+
+    # ---------------------------------------------------------------------------
+    # Duplicate the content
+    
+    def duplicate(self, count=1):
+        if count <= 1:
+            return
+        
+        # ----- Vertices
+        
+        vs = self.verts
+        verts_count = len(vs)
+        
+        verts = np.empty((count, verts_count, 3), float)
+        verts[:] = self.verts
+        verts = np.reshape(verts, (count*verts_count, 3))
+        
+        # ----- Faces
+        
+        fs = self.faces
+        faces_count = len(fs)
+        faces = []
+        offset = 0
+        for i in range(count):
+            faces.extend([[offset + f for f in face] for face in fs])
+            offset += verts_count
+        
+        # ----- uv maps
+        
+        maps = self.uvmaps
+        uvmaps = {}
+        for name in maps:
+            uvs = self.get_uvs(name)
+            uvmap = np.empty((count, len(uvs), 2), float)
+            uvmap[:] = uvs
+            uvmaps[name] = np.reshape(uvmap, (count*len(uvs), 2))
+            
+        # ----- Material indices
+        
+        mats = np.zeros((count, faces_count), int)
+        mats[:] = self.material_indices
+        mats = np.reshape(mats, count*faces_count)
+        
+        # ----- rebuild the object
+        
+        self.new_geometry(verts, faces)
+        self.material_indices = mats
+        for name, uvs in uvmaps.items():
+            self.get_uvmap(name, create=True)
+            self.set_uvs(name, uvs)
+
+        
+    # ===========================================================================
+    # Materials
 
     # ---------------------------------------------------------------------------
     # Materials indices
@@ -1264,7 +1337,7 @@ class WMesh(WID):
     def exposed_methods(cls):
         return ["get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
-             "stick_to_surface",
+             "stick_to_surface", "duplicate",
              "detach_geometry", "copy_mesh", "python_source_code",
              "get_floats", "set_floats", "get_ints", "set_ints",
              "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape",
