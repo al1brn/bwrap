@@ -113,6 +113,15 @@ class WCurve(WID):
     
     def set_functions(self, fs, t0=0, t1=1, length=100):
         self.wsplines.set_functions(fs, t0, t1, length)
+        
+    @property
+    def splines_properties(self):
+        return self.wsplines.splines_properties
+    
+    @splines_properties.setter
+    def splines_properties(self, value):
+        self.wsplines.splines_properties = value
+    
     
     # ===========================================================================
     # Shape keys
@@ -172,13 +181,78 @@ class WCurve(WID):
         self.wrapped.use_auto_texspace      = other.use_auto_texspace 
         self.wrapped.use_deform_bounds      = other.use_deform_bounds 
         self.wrapped.use_fill_caps          = other.use_fill_caps 
-        self.wrapped.use_fill_deform        = other.use_fill_deform 
         self.wrapped.use_map_taper          = other.use_map_taper 
         self.wrapped.use_path               = other.use_path 
         self.wrapped.use_path_clamp         = other.use_path_clamp 
         self.wrapped.use_path_follow        = other.use_path_follow 
         self.wrapped.use_radius             = other.use_radius 
-        self.wrapped.use_stretch            = other.use_stretch         
+        self.wrapped.use_stretch            = other.use_stretch   
+        
+    def copy_to(self, other):
+
+        other.bevel_depth            = self.wrapped.bevel_depth 
+        other.bevel_factor_end       = self.wrapped.bevel_factor_end 
+        other.bevel_factor_mapping_end = self.wrapped.bevel_factor_mapping_end 
+        other.bevel_factor_mapping_start = self.wrapped.bevel_factor_mapping_start 
+        other.bevel_factor_start     = self.wrapped.bevel_factor_start 
+        other.bevel_mode             = self.wrapped.bevel_mode 
+        other.bevel_object           = self.wrapped.bevel_object 
+        other.bevel_resolution       = self.wrapped.bevel_resolution 
+        other.dimensions             = self.wrapped.dimensions 
+        other.extrude                = self.wrapped.extrude 
+        other.fill_mode              = self.wrapped.fill_mode 
+        other.offset                 = self.wrapped.offset 
+        other.path_duration          = self.wrapped.path_duration 
+        other.render_resolution_u    = self.wrapped.render_resolution_u 
+        other.render_resolution_v    = self.wrapped.render_resolution_v 
+        other.resolution_u           = self.wrapped.resolution_u 
+        other.resolution_v           = self.wrapped.resolution_v 
+        other.taper_object           = self.wrapped.taper_object 
+        other.taper_radius_mode      = self.wrapped.taper_radius_mode 
+        other.twist_mode             = self.wrapped.twist_mode 
+        other.twist_smooth           = self.wrapped.twist_smooth 
+        other.use_auto_texspace      = self.wrapped.use_auto_texspace 
+        other.use_deform_bounds      = self.wrapped.use_deform_bounds 
+        other.use_fill_caps          = self.wrapped.use_fill_caps 
+        other.use_map_taper          = self.wrapped.use_map_taper 
+        other.use_path               = self.wrapped.use_path 
+        other.use_path_clamp         = self.wrapped.use_path_clamp 
+        other.use_path_follow        = self.wrapped.use_path_follow 
+        other.use_radius             = self.wrapped.use_radius 
+        other.use_stretch            = self.wrapped.use_stretch   
+        
+        return other
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+        
+    
+    @property
+    def curve_properties(self):
+        class Props():
+            pass
+        
+        return self.copy_to(Props())
+        
+    @curve_properties.setter
+    def curve_properties(self, value):
+        self.copy_from(value)
     
     
     # ===========================================================================
@@ -191,7 +265,8 @@ class WCurve(WID):
     @classmethod
     def exposed_properties(cls):
         return {"materials": 'RO', "wsplines": 'RO', "wshape_keys": 'RO', "profile": 'RW', "ext_verts": 'RO', "verts": 'RW',
-                "wmaterials": 'RO', "material_indices": 'RW', "verts_count": 'RO', "verts_dim": 'RO'}
+                "wmaterials": 'RO', "material_indices": 'RW', "verts_count": 'RO', "verts_dim": 'RO',
+                "curve_properties": 'RW', "splines_properties": 'RW'}
     
     # ===========================================================================
     # Generated source code for WCurve class

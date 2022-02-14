@@ -14,6 +14,7 @@ from .wid import WID
 from ..core.plural import getattrs, setattrs
 from .wmaterials import WMaterials
 from .wshapekeys import WShapeKeys
+from .wvertexgroups import WVertexGroups
 from ..maths import geometry as geo
 #from ..maths.symarray import SymArray
 from ..maths.colors import rgb2hsv, hsv2rgb, float2rgb, rgb2float
@@ -789,6 +790,7 @@ class WMesh(WID):
     # Duplicate the content
     
     def duplicate(self, count=1):
+        
         if count <= 1:
             return
         
@@ -1172,6 +1174,20 @@ class WMesh(WID):
                     break
 
         return np.arange(len(verts))[idx]
+    
+    # ---------------------------------------------------------------------------
+    # Each vertex has an array of couples (group index, weight)
+    # These values are planned into an array of triplets:
+    # - group index
+    # - vertex index
+    # - 100000 * weight
+    
+    @property
+    def groups_triplets(self):
+        return WVertexGroups.read_triplets(self.wrapped)
+    
+    # ---------------------------------------------------------------------------
+    # Shape keys
     
     @property
     def wshape_keys(self):

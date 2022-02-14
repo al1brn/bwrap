@@ -296,7 +296,7 @@ class WSpline(WStruct):
     def stack_verts(self):
         verts = self.get_vertices(with_handles=True, with_w=False)
         if self.use_bezier:
-            return np.reshape(verts, (len(self), 3))
+            return np.reshape(verts, (len(self)*3, 3))
         else:
             return verts
         
@@ -455,7 +455,45 @@ class WSpline(WStruct):
         self.use_bezier_u         = other.use_bezier_u
         self.use_bezier_v         = other.use_bezier_v
         self.use_smooth           = other.use_smooth
-        self.material_index       = other.material_index
+        #self.material_index       = other.material_index
+
+    # ---------------------------------------------------------------------------
+    # Copy from another spline
+    
+    def copy_to(self, other):
+        
+        other.tilt_interpolation   = self.tilt_interpolation
+        other.radius_interpolation = self.radius_interpolation
+        other.type                 = self.type
+        other.order_u              = self.order_u
+        other.order_v              = self.order_v
+        other.resolution_u         = self.resolution_u
+        other.resolution_v         = self.resolution_v
+        other.use_cyclic_u         = self.use_cyclic_u
+        other.use_cyclic_v         = self.use_cyclic_v
+        other.use_endpoint_u       = self.use_endpoint_u
+        other.use_endpoint_v       = self.use_endpoint_v
+        other.use_bezier_u         = self.use_bezier_u
+        other.use_bezier_v         = self.use_bezier_v
+        other.use_smooth           = self.use_smooth
+        #other.material_index       = self.material_index
+        
+        return other
+        
+    # ---------------------------------------------------------------------------
+    # Parameters
+    
+    @property
+    def spline_properties(self):
+        class Props():
+            pass
+        
+        return self.copy_to(Props())
+    
+    @spline_properties.setter
+    def spline_properties(self, value):
+        self.copy_from(value)
+        
         
     # ---------------------------------------------------------------------------
     # Set a function

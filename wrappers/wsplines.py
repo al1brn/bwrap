@@ -550,159 +550,17 @@ class WSplines(WStruct):
                 self[i].trws = vals[index:index+n, :]
             index += n
             
-            
-class OLD():
-    
-    # ===========================================================================
-    # Read the splines vertices
-    # 
-    # The verts are organized in a single array which is meaning full only with a profile
-    # - Bezier     : 3 arrays of 3-vectors
-    # - Non Bezier : 1 array of 3-vectors 
-    # 
-    # The profile is passed as a parameter to avoid to read it if available by the caller
-    #
-    # Extended add additional dimensions to the vertices for non bezier
-    # - Radius
-    # - Tilt
-    # - W
-    #
-    # The extended vertices for non bezier splines are:
-    # - 0:3 = the vertices
-    # - 3   = radius
-    # - 4   = tilt
-    # - 5   = W
-    #
-    # Hence, by using verts[..., :3], one can manipulate the vertices while keeping the extra info
-
-
-    @staticmethod
-    def verts_slice(verts):
-        return verts[..., :3]
-    
-    @staticmethod
-    def radius_slice(verts):
-        return verts[..., 3]
-
-    @staticmethod
-    def tilt_slice(verts):
-        return verts[..., 4]
-    
-    @staticmethod
-    def w_slice(verts):
-        return verts[..., 5]
-    
-    def get_vertices(self, profile=None, extended=True):
-        
-        splines = self.wrapped
-        
-        if profile is None:
-            profile = self.profile
-            
-        nverts = np.sum(profile[:, 0] * profile[:, 1])
-        only_bezier = np.min(profile[:, 0]) == 3
-                
-        if only_bezier or (not extended):
-            verts = np.zeros((nverts, 3), np.float)
-        else:
-            verts = np.zeros((nverts, 6), np.float)
-        
-        index = 0
-        for spline in splines:
-            
-            if spline.type == 'BEZIER':
-            
-                n = len(spline.bezier_points)
-                
-                a = np.zeros(n*3, np.float)
-                for attr in ['co', 'handle_left', 'handle_right']:
-                    spline.bezier_points.foreach_get(attr, a)
-                    verts[index:index+n, :3] = a.reshape(n, 3)
-                    index += n
-                    
-            else:
-                
-                n = len(spline.points)
-                
-                a = np.zeros(n*4, np.float)
-                spline.points.foreach_get('co', a)
-                a = a.reshape(n, 4)
-                verts[index:index+n, :3] = a[:, :3]
-                
-                if extended:
-                    
-                    verts[index:index+n, 5]  = a[:, 3]
-                    
-                    a = np.zeros(n, np.float)
-                    
-                    spline.points.foreach_get('radius', a)
-                    verts[index:index+n, 3] = a
-                    spline.points.foreach_get('tilt', a)
-                    verts[index:index+n, 4] = a
-                
-                index += n
-                
-        return verts
-    
-    # ===========================================================================
-    # Default access to the vertices
+    # ---------------------------------------------------------------------------
+    # Spline parameters
     
     @property
-    def ext_verts(self):
-        return self.get_vertices(extended=True)
-
-    @property
-    def verts(self):
-        return self.get_vertices(extended=False)
-
-    @verts.setter
-    def verts(self, verts):
-        
-        splines = self.wrapped
-        
-        extended = verts.shape[-1] >= 5
-        
-        index = 0
-        for spline in splines:
-            
-            if spline.type == 'BEZIER':
-                n = len(spline.bezier_points)
-                for attr in ['co', 'handle_left', 'handle_right']:
-                    a = verts[index:index+n, :3]
-                    index += n
-                    spline.bezier_points.foreach_set(attr, a.reshape(n*3))
-                    
-            else:
-                n = len(spline.points)
-                a = np.zeros((n, 4), np.float)
-                
-                # ----- Get or read the w component
-                
-                if verts.shape[-1] >= 6:
-                    a[:, 3] = verts[index:index+n, 5]
-                else:
-                    spline.points.foreach_get('co', a.reshape(n*4))
-
-                # ----- The 3-vertices
-                    
-                a[:, :3] = verts[index:index+n, :3]
-                spline.points.foreach_set('co', a.reshape(n*4))
-
-                # ----- Radius and tilt
-                
-                if extended:
-                    rt = np.array(verts[index:index+n, 3])
-                    spline.points.foreach_set('radius', rt)
-                    
-                    rt = np.array(verts[index:index+n, 4])
-                    spline.points.foreach_set('tilt',   rt)
-                    
-                # -----  Next segment
-
-                index += n
+    def splines_properties(self):
+        return [self[i].spline_properties for i in range(len(self))]
     
-        self.update_tag()
-        
-        
+    @splines_properties.setter
+    def splines_properties(self, value):
+        for i, props in enumerate(value):
+            self[i].spline_properties = props
+   
     
     

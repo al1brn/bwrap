@@ -62,3 +62,9 @@ class WMaterials(WStruct):
         for mat in wmat.wrapped:
             if append or (mat.name not in mat_names):
                 self.wrapped.append(mat)
+                
+    def replace(self, names):
+        self.clear()
+        for name in names:
+            self.wrapped.append(bpy.data.materials[name])
+            

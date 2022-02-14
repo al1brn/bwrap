@@ -31,7 +31,7 @@ else:
 # A class which implement location, rotation and scale can be transformed: oriented, scaled, translated, rotated...
 # Such a class is named a Frame. 
 
-class Transformations():
+class TransformationsInterface():
     """Manages an array of transformations matrices.
     
     This class can be used as is to manage transformation matrices.
@@ -50,9 +50,34 @@ class Transformations():
     the lock_apply method calls apply method only when the transformation is unlocked.
     """
     
-    def __init__(self, location=0., matrix=np.identity(3, np.float), scale=1, count=None):
+    def __init__(self):
         self.locked = 0
-        self.tmat_ = tmatrix(location, matrix, scale, count)
+        
+    # ===========================================================================
+    # MUST BE OVERRIDDEN
+    
+    @property
+    def tmat(self):
+        pass
+    
+    @tmat.setter
+    def tmat(self, value):
+        pass
+        
+    #def set_tmat(self, tmat):
+    #    pass
+    
+    def reshape(self, new_shape):
+        raise WError(f"Impossible to reshape {self}",
+                    Class = "TransformationInterface",
+                    Method = "reshape",
+                    new_shape = new_shape)
+    
+    def resize(self, shape):
+        raise WError(f"Impossible to resize {self}",
+                    Class = "TransformationInterface",
+                    Method = "resize",
+                    shape = shape)
         
     # ---------------------------------------------------------------------------
     # Basics
@@ -65,12 +90,6 @@ class Transformations():
     
     # ===========================================================================
     # From transformation matrix
-    
-    @staticmethod
-    def FromTMat(tmat):
-        transfo = Transformations(count=get_main_shape(np.shape(tmat), (4, 4)))
-        transfo.tmat_ = np.array(tmat)
-        return transfo
     
     def compose(self, other, center=0.):
         return Transformations.FromTMat(tmat_compose(self.tmat, other.tmat, center=center))
@@ -106,22 +125,6 @@ class Transformations():
     def up_axis(self):
         return 'Y'
     
-    # ---------------------------------------------------------------------------
-    # Transformation matrices
-    
-    @property
-    def tmat(self):
-        return self.tmat_
-    
-    @tmat.setter
-    def tmat(self, value):
-        self.tmat_[:] = value
-        self.lock_apply()
-        
-    def set_tmat(self, tmat):
-        self.tmat_ = np.array(tmat)
-        self.lock_apply()
-
     # -----------------------------------------------------------------------------------------------------------------------------
     # Override if transformation matrices has to be applied to real objects
     
@@ -177,20 +180,7 @@ class Transformations():
     
     @property
     def shape(self):
-        return get_main_shape(self.tmat.shape, (4, 4))
-
-    # ---------------------------------------------------------------------------
-    # Change the oganization of the matrices
-    
-    def reshape(self, new_shape):
-        if np.product(new_shape) != np.product(self.shape):
-            raise WError("Impossible to reshape the transformations matrices:",
-                    Class = "RootTransformations",
-                    Method = "reshape",
-                    new_shape = new_shape,
-                    current_shape = self.shape)
-            
-        self.tmat_ = self.tmat_.reshape(get_full_shape(new_shape, (4, 4)))
+        return self.tmat.shape[:-2]
         
     # ---------------------------------------------------------------------------
     # Total number of matrices        
@@ -198,11 +188,6 @@ class Transformations():
     @property
     def size(self):
         return int(np.product(self.shape))
-    
-    def resize(self, shape):
-        if type(shape) is int:
-            shape = (shape,)
-        self.tmat_ = np.resize(self.tmat_, shape + (4, 4))
     
     # ---------------------------------------------------------------------------
     # Number of dimensions       
@@ -692,6 +677,150 @@ class Transformations():
         
         self.unlock()
         
+        
+# =============================================================================================================================
+# A class which implement location, rotation and scale can be transformed: oriented, scaled, translated, rotated...
+# Such a class is named a Frame. 
+
+class Transformations(TransformationsInterface):
+    """Manages an array of transformations matrices.
+    
+    Base on the Transformations Interface, it implements the array of matrices with a tamtrix array
+    This class can be used as is to manage transformation matrices.
+    
+    It can be overriden to managed 3D-objects for each of them a transformation
+    matrix is required. When overriden, the apply method is used to apply the transforamtions
+    to the target.
+    
+    A lock / unlock mechanism is implemented to lock transformations while updating
+    the matrices. Typical use is:
+        trans.lock()
+        # Operations on matrices
+        ...
+        trans.unlock()
+        
+    the lock_apply method calls apply method only when the transformation is unlocked.
+    """
+    
+    def __init__(self, location=0., matrix=np.identity(3, np.float), scale=1, count=None):
+        super().__init__()
+        self.tmat_    = tmatrix(location, matrix, scale, count)
+        self.slice_of = None
+        
+    # ===========================================================================
+    # Implements tmat as an attribute
+    
+    @property
+    def tmat(self):
+        if self.slice_of is None:
+            return self.tmat_
+        else:
+            return self.slice_of.tmat[self.slice_]
+    
+    @tmat.setter
+    def tmat(self, value):
+        if self.slice_of is None:
+            self.tmat_[:] = value
+            self.lock_apply()
+        else:
+            self.slice_of.tmat[self.slice_] = value
+            self.slice_of.lock_apply()
+            
+    # ===========================================================================
+    # Set as a slice of
+    
+    @classmethod
+    def SliceOf(cls, other, slice):
+        trf = cls()
+        trf.set_slice_of(other, slice)
+        return trf
+    
+    def set_slice_of(self, other, slice):
+        self.slice_of = other
+        self.slice_   = slice
+        self.tmat_    = None
+        
+    def set_slice(self, slice):
+        self.slice_ = slice
+        
+    def reshape(self, new_shape):
+        if self.slice_of is not None:
+            raise WError("Impossible to reshape a slice of transformations matrices:",
+                    Class = "Transformations",
+                    Method = "reshape",
+                    new_shape = new_shape,
+                    current_shape = self.shape)
+            
+        if np.product(new_shape) != np.product(self.shape):
+            raise WError("Impossible to reshape the transformations matrices:",
+                    Class = "Transformations",
+                    Method = "reshape",
+                    new_shape = new_shape,
+                    current_shape = self.shape)
+            
+        if type(new_shape) is int:
+            new_shape = (new_shape,)
+            
+        self.tmat_ = self.tmat_.reshape(new_shape + (4, 4))
+        
+    def resize(self, shape):
+        if self.slice_of is not None:
+            raise WError("Impossible to resize a slice of transformations matrices:",
+                    Class = "Transformations",
+                    Method = "resize",
+                    new_shape = shape,
+                    current_shape = self.shape)
+
+        if type(shape) is int:
+            shape = (shape,)
+        self.tmat_ = np.resize(self.tmat_, shape + (4, 4))
+        
+    # ---------------------------------------------------------------------------
+    # Basics
+        
+    def __repr__(self):
+        np.set_printoptions(precision=3)
+        s = f"<{self.__class__.__name__}: size={self.size} shape={self.shape}>"
+        np.set_printoptions(suppress=True)
+        return s
+    
+    # ===========================================================================
+    # From transformation matrix
+    
+    @staticmethod
+    def FromTMat(tmat):
+        transfo = Transformations(count=get_main_shape(np.shape(tmat), (4, 4)))
+        transfo.tmat_ = np.array(tmat)
+        return transfo
+
+    # ===========================================================================
+    # Lock unlock
+    
+    def apply(self):
+        if self.slice_of is None:
+            super().apply()
+        else:
+            self.slice_of.lock_apply()
+    
+    def lock_apply(self):
+        if self.slice_of is None:
+            super().lock_apply()
+        else:
+            self.slice_of.lock_apply()
+    
+    def lock(self):
+        if self.slice_of is None:
+            super().lock()
+        else:
+            self.slice_of.lock()
+        
+    def unlock(self):
+        if self.slice_of is None:
+            super().unlock()
+        else:
+            self.slice_of.unlock()
+        
+
 # =============================================================================================================================
 # A slave Transformations (apply )
 
@@ -720,10 +849,10 @@ class SlaveTransformations(Transformations):
 # =============================================================================================================================
 # A slicer on to a Transformations
 
-class TransformationsSlicer(Transformations):
+class TransformationsSlicer(TransformationsInterface):
     
     def __init__(self, transformations, index):
-        super(TransformationsSlicer, self).__init__()
+        super().__init__()
         self.mother = transformations
         self.slice  = index
         
@@ -750,6 +879,7 @@ class TransformationsSlicer(Transformations):
         
     def unlock(self):
         self.mother.unlock()
+        
         
 # =============================================================================================================================
 # A single transformation matrix to be used in a multiple inheritance with Object Wrapper

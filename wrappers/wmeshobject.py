@@ -10,6 +10,8 @@ import numpy as np
 
 from .wmesh import WMesh
 from .wobject import WObject
+from .wvertexgroups import WVertexGroups
+
 from ..core.class_enhance import expose
 
 from ..core.commons import WError
@@ -53,6 +55,22 @@ class WMeshObject(WObject):
         
     def groups(self):
         return [group.name for group in self.wrapped.vertex_groups]
+    
+    # -----------------------------------------------------------------------------------------------------------------------------
+    # Groups triplets
+    # Each vertex has an array of couples (group index, weight)
+    # These values are planned into an array of triplets:
+    # - group index
+    # - vertex index
+    # - 100000 * weight
+    
+    @property
+    def wvertex_groups(self):
+        return WVertexGroups(self.wrapped)
+
+    @wvertex_groups.setter
+    def wvertex_groups(self, value):
+        value.set_to(self.wrapped)
         
     # -----------------------------------------------------------------------------------------------------------------------------
     # Vertex group index
