@@ -8,7 +8,13 @@ Created on Tue Oct 12 19:13:12 2021
 
 import numpy as np
 
-from ..core.commons import WError
+if True:
+
+    from ..core.commons import WError
+    
+else:
+    
+    WError = Exception
 
 
 # =============================================================================================================================

@@ -37,23 +37,21 @@ class GroupTransformations():
             
         self.crowd    = crowd
         self.indices  = crowd.geometry.groups.vertices(group_name)
-        self.transfos = Transformations(count=crowd.shape)
+        self.transfo  = Transformations(count=crowd.shape)
         
-        self.pivot = np.zeros(4, np.float) # No one at the end !
         if pivot is None or type(pivot) is str:
             if pivot is None:
-                verts = crowd.geometry.verts[self.indices]
+                verts = crowd.geometry.verts[:, 0, self.indices]
             else:
-                verts = crowd.geometry.verts[crowd.geometry.groups.vertices(pivot)]
+                verts = crowd.geometry.verts[:, 0, crowd.geometry.groups.vertices(pivot)]
                 
-            n = len(verts)
-            if n != 0:
-                self.pivot[:3] = np.sum(verts, axis=0)/n
+            self.pivot = np.insert(np.average(verts, axis=1), 3, 0, axis=-1)
         else:
-            self.pivot[:3] = pivot
+            self.pivot = np.zeros((crowd.geometry.parts_count, 4), np.float) # No one at the end !
+            self.pivot[:, :3] = pivot
             
     def __repr__(self):
-        return f"<GroupTransfo: pivot: {self.pivot[:3]}, indices: {len(self.indices)}>"
+        return f"<GroupTransfo: pivot: {self.pivot[:, :3]}, indices: {len(self.indices)}>"
 
 
 # ====================================================================================================
@@ -74,43 +72,60 @@ class GroupTransformations():
 
 
 # ====================================================================================================
-# A simple crowd simple duplicates a single geometry
+# A simple crowd duplicates a single geometry
+#
+# The number of indivual geometries can be obtained by two means:
+# - The base geometry has already parts
+# - The crowd instance has a shape different from (1,)
+# These two can be combined
+#
+# Arrayed geometries store faces, uvmap ans mat indices for the whole size
+# For big crowds, this can be avoided by managing the base geometry an using
+# a bigger shape for the crowd
+# The faces, uvmaps... are computed once when build the target object
 
 class Crowd(Transformations):
     
-    def __init__(self, geometry, shape=(1,)):
+    def __init__(self, geometry, shape=None, name=None):
         
-        super().__init__(count=shape)
+        # ----- Initialize the matrices
+        
+        super().__init__(count=Crowd.acceptable_shape(shape, geometry.parts_count))
+        self.wobject = None
         
         self.geometry = geometry
         
-        # ----- Shape keys animation
+        # ----- Shape animation
         
-        self.shape_keys     = None
-        self.animation_     = np.zeros(self.shape, float) 
-        self.back_animation = False
+        self.animation_              = None
+        self.animation_relative      = False 
+        self.animation_extrapolation = 'CLIP'  # 'CLIP', 'LOOP', 'BACK'
         
         # ----- Transformations
         
-        self.pre_transformations  = []
-        self.post_transformations = []
+        self.deformation_time  = 0.
+        self.pre_deformations  = []
+        self.post_deformations = []
         
         # ----- Groups transformatios
         
         self.group_transformations = {}
         
+        # ----- Build the object
+        
+        self.rebuild = True
+        
+        if name is not None:
+            self.build_object(name)
+        
+        
     # ---------------------------------------------------------------------------
     # Content
     
     def __repr__(self):
-        s  = f"<{type(self).__name__} of shape {self.shape} = {self.size} instance(s)\n"
-        s += f"   geometry:   {self.geometry.verts_count} vertices, total: {self.size * self.geometry.verts_count} vertices\n"
-        s +=  "   shape keys: "
-        if self.shape_keys is None:
-            s += "None\n"
-        else:
-            s += f"{len(self.shape_keys)}\n"
-        s += f"   animations: pre= {len(self.pre_transformations)}, post={len(self.post_transformations)}\n"
+        s  = f"<{type(self).__name__} of shape {self.shape} = {self.size} instance(s) of geometry\n"
+        s += f"{self.geometry}\n\n"
+        s += f"   animations: pre= {len(self.pre_deformations)}, post={len(self.post_deformations)}\n"
         s += f"   group transformations: {len(self.group_transformations)}\n"
         for group_name, trf in self.group_transformations.items():
             s += f"       {group_name:10s}: {trf}\n"
@@ -121,44 +136,119 @@ class Crowd(Transformations):
     # Initialize from an object
     
     @classmethod
-    def FromObject(cls, object, shape=(1,), crowd_name=None):
-        sc = cls(Geometry.FromObject(object), shape=shape)
-        wobj = wrap(object)
-        sc.shape_keys = wobj.wdata.wshape_keys.verts()
+    def FromObject(cls, object, shape=(1,), name=None):
         
-        if crowd_name is not None:
-            sc.build_object(crowd_name)
-            
-        return sc
+        return cls(Geometry.FromObject(object), shape=shape, name=name)
     
+    # ---------------------------------------------------------------------------
+    # Make sure that the shape is compatible with the number of geometry parts
+    
+    @staticmethod
+    def acceptable_shape(shape, parts_count):
+        
+        #print("Crowd.acceptable_shape", shape, parts_count)
+        
+        if shape is None:
+            return (parts_count,)
+        
+        if hasattr(shape, '__len__'):
+            shape = tuple(shape)
+        else:
+            shape = (shape,)
+        
+        size = int(np.product(shape))
+        if size % parts_count == 0:
+            return shape
+        else:
+            raise WError(f"Crowd shape {shape} can't be used with a geometry of {parts_count} parts. " + 
+                         f"The size {size} of the shape should be a multiple of the number of parts.",
+                         Class = "Crowd"
+                         )
+        
+    # ---------------------------------------------------------------------------
+    # Resize the crowd
+    
+    def resize(self, shape):        
+        super().resize(self.acceptable_shape(shape, self.geometry.parts_count))
+        self.size_changed()
+        
+    # ---------------------------------------------------------------------------
+    # Build the full geometry
+        
+    @property
+    def full_geometry(self):
+        if self.geometry.parts_count == 0:
+            return Geometry()
+        
+        return Geometry.Array(self.geometry, count=self.size // self.geometry.parts_count)
+        
     # ---------------------------------------------------------------------------
     # Build the object
     
-    def build_object(self, crowd_name):
-        self.crowd_name = crowd_name
-        return self.full_geometry.set_to(crowd_name)
+    def build_object(self, object=None):
+        if object is None:
+            wobj = self.wobject
+        else:
+            wobj = wrap(object, create=self.geometry.type)
+            
+        if wobj is None:
+            return
+        
+        self.wobject = wobj
+        
+        if self.geometry.parts_count == 0:
+            return
+        
+        self.rebuild = False
+        
+        return self.full_geometry.set_to(wobj, verts=self.transform())
 
     # ---------------------------------------------------------------------------
     # Update the object
     
     def update(self, object=None):
-        if object is None:
-            if hasattr(self, "crowd_name"):
-                wobj = wrap(self.crowd_name)
-            else:
-                return
-        else:
-            wobj = wrap(object)
+        
+        if self.rebuild:
             
-        wobj.verts = self.transform()
+            self.build_object(object)
+            
+        else:
+            if object is None:
+                wobj = self.wobject
+            else:
+                wobj = wrap(object)
+                
+            if wobj is None:
+                return
+                
+            wobj.verts = self.transform()    
+        
+    # ---------------------------------------------------------------------------
+    # Apply
+    
+    def apply(self):
+        super().apply()
+        self.update()
     
     # ---------------------------------------------------------------------------
     # Size has chnaged
     
     def size_changed(self):
-        self.animation_ = np.resize(self.animation_, self.shape)
+        
+        # ----- Animation
+        if self.geometry.shapes_count == 1:
+            self.animation_ = None
+            
+        elif self.animation_ is not None:
+            if self.animation_relative:
+                self.animation_ = np.resize(self.animation_, self.shape + (self.geometry.shapes_count,))
+            else:
+                self.animation_ = np.resize(self.animation_, self.shape)
+                
+        # ----- Group transformations
+                
         for gt in self.group_transformations.values():
-            gt.transfos.resize(self.shape)
+            gt.transfo.resize(self.shape)
     
     # ---------------------------------------------------------------------------
     # Total verts count
@@ -168,7 +258,47 @@ class Crowd(Transformations):
         return self.geometry.verts_count * self.size
     
     # ---------------------------------------------------------------------------
+    # Parts management
+    
+    def add_geometry(self, geometry):
+        self.geometry.join(geometry, as_part=True)
+        self.resize((self.geometry.parts_count,))
+        
+    # ---------------------------------------------------------------------------
+    # Locate the parts to their geometrical center
+    
+    def origin_to_geometry(self):
+        
+        centers = self.geometry.centers()
+        self.geometry.translate(-centers)
+        self.location += centers
+        
+    # ---------------------------------------------------------------------------
+    # Direct access to geometry attributes
+    
+    def faces_indices(self, part_index):
+        
+        if hasattr(part_index, '__len__'):
+            faces = []
+            for p_i in part_index:
+                faces.extend(self.faces_indices(p_i))
+            return faces
+        
+        return self.geometry.get_part_info(part_index)["faces_indices"]
+    
+    # ---------------------------------------------------------------------------
     # Animation
+    
+    @property
+    def is_animatable(self):
+        return self.geometry.shapes_count > 1
+    
+    @property
+    def is_animated(self):
+        return self.animation_ is not None
+    
+    def init_animation(self):
+        self.animation = 0.
     
     @property
     def animation(self):
@@ -176,81 +306,71 @@ class Crowd(Transformations):
     
     @animation.setter
     def animation(self, value):
-        self.animation_[:] = value
+        
+        if self.geometry.shapes_count == 1:
+            return
+        
+        if value is None:
+            self.animation_ = None
+        else:
+            if self.animation_ is None:
+                if self.animation_relative:
+                    self.animation_ = np.zeros(self.shape + (self.geometry.shapes_count-1,), float)
+                else:
+                    self.animation_ = np.zeros(self.shape, float)
+                
+            self.animation_[:] = value
     
     # ---------------------------------------------------------------------------
     # Add a transformation
     
-    def add_transformation(self, transfo, pre=True):
+    def add_deformation(self, deform, pre=True):
         if pre:
-            self.pre_transformations.append(transfo)
+            self.pre_deformations.append(deform)
         else:
-            self.post_transformations.append(transfo)
+            self.post_deformations.append(deform)
             
     # ---------------------------------------------------------------------------
     # Add a group transformatin
     
     def add_group_transformation(self, group_name, pivot=None):
-        self.group_transformations[group_name] = GroupTransformations(self, group_name, pivot)
+        gt = GroupTransformations(self, group_name, pivot)
+        self.group_transformations[group_name] = gt
+        return gt
         
     # ---------------------------------------------------------------------------
     # group transformation
     
     def group_transform(self, group_name):
-        return self.group_transformations[group_name].transfos
-        
-    # ---------------------------------------------------------------------------
-    # Build the full geometry
-        
-    @property
-    def full_geometry(self):
-        return Geometry.Array(self.geometry, count=self.size)
-    
-    # ---------------------------------------------------------------------------
-    # Set shape keys
-    
-    def set_shape_keys(self, shape_keys):
-        self.shape_keys = shape_keys
+        return self.group_transformations[group_name].transfo
     
     # ---------------------------------------------------------------------------
     # Transform the vertices
     
     def transform(self):
         
-        # ----- Empty array of 4-vertices
-
-        verts4 = np.ones(self.shape + (self.geometry.verts_count, 4), float)
+        if self.geometry.parts_count == 0:
+            return None
         
-        # ----- Initialize with geometry vertices or with an interpolation of shape keys
+        # ----- The shaped vertices
         
-        if self.shape_keys is None:
-            
-            verts4[..., :3] = self.geometry.verts
-            
-        else:
-            sk_count = len(self.shape_keys)
-            
-            if self.back_animation:
-                fs = self.animation_ % (2*sk_count)
-                after = fs > sk_count
-                fs[after] = 2*sk_count - fs[after] 
-            else:
-                fs = self.animation_ % sk_count
-                
-            i0 = np.clip(np.floor(fs).astype(int), 0, sk_count-2)
-            fs = np.reshape(fs - i0, self.shape + (1, 1))
-
-            verts4[..., :3] = (1-fs)*self.shape_keys[i0] + fs*self.shape_keys[i0+1]
+        verts4 = np.insert(
+            self.geometry.shaped_verts(
+                shape         = self.shape,
+                relative      = self.animation_relative,
+                shapes        = self.animation,
+                extrapolation = self.animation_extrapolation
+            ), 3, 1, axis=-1)
 
         # ----- Group transformations
         
         for group_name, g_trf in self.group_transformations.items():
-            verts4[..., g_trf.indices, :] = g_trf.pivot + g_trf.transfos.transform_verts4(verts4[..., g_trf.indices, :] - g_trf.pivot)
+            verts4[..., g_trf.indices, :] = g_trf.pivot + g_trf.transfo.transform_verts4(verts4[..., g_trf.indices, :] - g_trf.pivot)
         
         # ----- Pre transformations
         
-        for trf in self.pre_transformations:
-            trf(verts4[..., :3])
+        for deform in self.pre_deformations:
+            deform(self.deformation_time, verts4[..., :3])
             
         # ----- Transformation
         
@@ -259,12 +379,12 @@ class Crowd(Transformations):
             
         # ----- Post transformations
         
-        for trf in self.post_transformations:
-            trf(verts)
+        for deform in self.post_deformations:
+            deform(self.deformation_time, verts)
             
         # ----- Return the result
         
-        return verts.reshape(self.size*self.geometry.verts_count, 3)
+        return self.geometry.true_verts(verts)
     
     
 # ====================================================================================================
@@ -286,6 +406,8 @@ class Crowds(Transformations):
         
         self.shape_      = ()
         
+        self.crowd_name = None
+        
     # ---------------------------------------------------------------------------
     # Representation
     
@@ -296,50 +418,36 @@ class Crowds(Transformations):
         s += f" total: {self.verts_total} vertices\n"
         return s + ">"
         
+    
     # ---------------------------------------------------------------------------
     # Build the object
     
-    def build_object(self, crowd_name):
-        self.crowd_name = crowd_name
-        return self.full_geometry.set_to(crowd_name)
+    def build_object(self, crowd_name=None):
+        
+        if crowd_name is not None:
+            self.crowd_name = crowd_name
+        
+        return self.full_geometry.set_to(self.crowd_name, verts=self.transform())
 
     # ---------------------------------------------------------------------------
     # Update the object
     
-    def update(self, object=None):
+    def update(self, crowd_name=None):
         
         if self.empty:
             return
         
-        if object is None:
-            if hasattr(self, "crowd_name"):
-                wobj = wrap(self.crowd_name)
-            else:
-                return
-        else:
-            wobj = wrap(object)
+        if crowd_name is not None:
+            self.crowd_name = crowd_name
+            
+        if self.crowd_name is None:
+            return
+            
+        wobj = wrap(self.crowd_name)
+        if wobj is None:
+            return
             
         wobj.verts = self.transform()
-        
-    # ----------------------------------------------------------------------------------------------------
-    # Ovverides
-        
-    @property
-    def size(self):
-        return sum(self.counts)
-    
-    @property
-    def shape(self):
-        return self.shape_
-        
-    def reshape(self, new_shape):
-        if int(np.product(new_shape)) == self.size:
-            self.shape_ = new_shape
-            super().reshape(new_shape)
-        else:
-            raise WError(f"Impossible de to reshape to {new_shape} transformation of size {self.size}",
-                        Class = "Crowds",
-                        Method = "reshape")
             
     # ----------------------------------------------------------------------------------------------------
     # Crowd name to index
@@ -397,10 +505,9 @@ class Crowds(Transformations):
         
         self.geo_names.append(name)
 
-        # ----- Shape
+        # ----- Resize
         
-        self.shape_ = (self.size,)
-        self.resize(self.shape)
+        self.resize((sum(self.counts),))
 
         # ----- Return the index
         
@@ -431,8 +538,7 @@ class Crowds(Transformations):
         
         # ----- Shape and resize
 
-        self.shape_ = (self.size,)
-        self.resize(self.shape)
+        self.resize((sum(self.counts),))
         
         # ----- Append the index
         
@@ -443,7 +549,6 @@ class Crowds(Transformations):
         crowd = self.crowds[geo_index] 
         crowd.set_slice(self.geo_indices(geo_index))
         crowd.size_changed()
-        
         
     # ----------------------------------------------------------------------------------------------------
     # full geometry

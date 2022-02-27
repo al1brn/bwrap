@@ -37,9 +37,9 @@ class WObject(WID, ObjectTransformations):
         
         
         # ----- WID initialization
+        
+        WID.__init__(self, wrapped, is_evaluated)
 
-        super().__init__(wrapped, is_evaluated)
-            
         # ----- ObjectTransformations initialization
         
         ObjectTransformations.__init__(self, world=False)
@@ -64,7 +64,7 @@ class WObject(WID, ObjectTransformations):
     
     def set_evaluated(self, value):
         self.is_evaluated = value
-            
+        
     # ---------------------------------------------------------------------------
     # Data
     

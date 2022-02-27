@@ -20,31 +20,41 @@ import numpy as np
 if True:
     
     from ..core.breader import DataType, Struct, BFileReader, Flags
+    from ..core.vertparts import VertParts
     from ..maths.closed_faces import closed_faces
     from .textformat import CharFormat, TextFormat
     from .glyphe import Glyphe
     
 else:
     
-    path = "/Users/alain/Documents/blender/scripts/modules/bwrap/"
     import importlib
     
-    breader_spec = importlib.util.spec_from_file_location("breader", path + "core/breader.py")
-    breader  = importlib.util.module_from_spec(breader_spec)
-    breader_spec.loader.exec_module(breader)
+    def import_bwrap_module(file_name, module_name):
+        
+        bw_path = __file__[:__file__.find("bwrap")+5] + "/"
+        
+        spec   = importlib.util.spec_from_file_location(module_name, bw_path + file_name)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        
+        return module
     
+    breader     = import_bwrap_module("core/breader.py", "breader")
     DataType    = breader.DataType
     Struct      = breader.Struct
     BFileReader = breader.BFileReader
     Flags       = breader.Flags
     
-    closed_spec = importlib.util.spec_from_file_location("breader", path + "maths/closed_faces.py")
-    closed  = importlib.util.module_from_spec(closed_spec)
-    closed_spec.loader.exec_module(closed)
+    VertsParts  = import_bwrap_module("core/vertparts.py", "vertparts").VertParts
     
-    closed_faces = closed.closed_faces
+    closed_faces = import_bwrap_module("maths/closed_faces.py", "closed_faces").closed_faces
     
-    from glyphe import CharFormat, Glyphe
+    textformat   = import_bwrap_module("text/textformat.py", "textformat")
+    CharFormat   = textformat.CharFormat
+    TextFormat   = textformat.TextFormat
+    
+    Glyphe = import_bwrap_module("text/Glyphe.py", "glyphe").Glyphe
+    
 
 
 INT8    =  DataType.INT8
@@ -1176,7 +1186,7 @@ class Ttf(Struct):
         m.height   = m.ascent - m.descent
         
         m.line_height = self.line_height(text_format)
-            
+        
         return m
     
     # ===========================================================================
@@ -1187,12 +1197,14 @@ class Ttf(Struct):
         cf = self.adapt_char_format(char_format, text_format)
         
         return self.get_glyphe(ord(c)).raster(
-            delta=self.raster_delta, lowest_geometry=self.raster_low,
-            char_format=cf, plane=self.display_plane, return_faces=return_faces)
+            delta           = self.raster_delta, 
+            lowest_geometry = self.raster_low,
+            char_format     = cf, 
+            plane           = self.display_plane, 
+            return_faces    = return_faces)
     
     # ---------------------------------------------------------------------------
     # Curve : return the array of beziers points
-    # Stack must be built together with 
     
     def beziers_char(self, c, char_format=None, text_format=None):
 
@@ -1217,6 +1229,29 @@ class Ttf(Struct):
             profile[i] = (3, len(bz), 0)
             
         return verts, profile
+    
+    # ---------------------------------------------------------------------------
+    # Build a VertParts geometry
+    
+    def geometry(self, c, char_format=None, text_format=None, type='mesh'):
+        
+        if type=='Mesh':
+            verts, faces, uvs = self.mesh_char(c, char_format, text_format, return_faces=True)
+            geo = VertParts.MeshFromData(verts, faces, uvs)
+        else:
+            verts, profile = self.curve_char(c, char_format, text_format)
+            geo = VertParts.CurveFromData(verts, profile)
+            
+        return geo
+    
+    # ---------------------------------------------------------------------------
+    # Update the geometry to take formatting in account
+    
+    def update_geometry(self, geometry, part, c, char_format=None, text_format=None):
+        if geometry.type == 'Mesh':
+            geometry.set_verts(self.mesh_char(c, char_format, text_format, return_faces=False), part=part)
+        else:
+            geometry.set_verts(self.curve_char(c, char_format, text_format)[0], part=part)
     
 
 # =============================================================================================================================
@@ -1429,5 +1464,28 @@ class Font():
     def char_metrics(self, c, char_format=None, text_format=None):
         index = 0 if char_format is None else char_format.font
         return self[index].char_metrics(c, char_format, text_format)
+    
+    
+
+folder = "/System/Library/Fonts/Supplemental/"
+file_name = "Arial.ttf"    
+file_name = "Georgia.ttf"    
+file_name = "Herculanum.ttf"
+file_name = "Krungthep.ttf"
+file_name = "Zapfino.ttf"
+file_name = "Tahoma.ttf"
+file_name = "Apple Chancery.ttf"
+
+font = Font(folder + file_name)
+
+ttf = font.currrent_font
+
+#ttf = Ttf(BFileReader(folder + file_name))
+
+gl = ttf.get_glyphe(ord("é"))
+#gl.plot_raster()
+
+
+
 
 

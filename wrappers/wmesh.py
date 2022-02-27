@@ -14,9 +14,9 @@ from .wid import WID
 from ..core.plural import getattrs, setattrs
 from .wmaterials import WMaterials
 from .wshapekeys import WShapeKeys
-from .wvertexgroups import WVertexGroups
+from ..core.faces import Faces
+from ..core.vertgroups import VertGroups
 from ..maths import geometry as geo
-#from ..maths.symarray import SymArray
 from ..maths.colors import rgb2hsv, hsv2rgb, float2rgb, rgb2float
 
 from ..core.commons import WError
@@ -72,6 +72,10 @@ class WMesh(WID):
         return len(self.wrapped.vertices)
     
     @property
+    def verts_dim(self):
+        return 3
+    
+    @property
     def shape(self):
         if self.shape_ is None:
             return (self.verts_count,)
@@ -95,7 +99,7 @@ class WMesh(WID):
     @property
     def linear_verts(self):
         verts = self.wrapped.vertices
-        a    = np.empty(len(verts)*3, np.float)
+        a    = np.empty(len(verts)*3, float)
         verts.foreach_get("co", a)
         return np.reshape(a, (self.verts_count, 3))
 
@@ -110,21 +114,17 @@ class WMesh(WID):
         """
         
         verts = self.wrapped.vertices
-        a    = np.empty(len(verts)*3, np.float)
+        a    = np.empty(len(verts)*3, float)
         verts.foreach_get("co", a)
         return np.reshape(a, self.verts_shape)
 
     @verts.setter
     def verts(self, vectors):
-        verts = np.empty(self.verts_shape, np.float)
+        verts = np.empty(self.verts_shape, float)
         verts[:] = vectors
         
         self.wrapped.vertices.foreach_set("co", verts.reshape(self.verts_count*3))
         self.mark_update()
-        
-    @property
-    def verts_dim(self):
-        return 3
         
     # x, y, z vertices access
 
@@ -174,16 +174,21 @@ class WMesh(WID):
         """bevel weights of the vertices
         """
         
-        return getattrs(self.wrapped.vertices, "bevel_weight", 1, np.float).reshape(self.shape)
+        return getattrs(self.wrapped.vertices, "bevel_weight", 1, float).reshape(self.shape)
 
     @bevel_weights.setter
     def bevel_weights(self, values):
         setattrs(self.wrapped.vertices, "bevel_weight", np.resize(values, self.verts_count), 1)
+        
+        
+    @property
+    def edges_count(self):
+        return len(self.wrapped.edges)
 
     # edges as indices
 
     @property
-    def edge_indices(self):
+    def wedges(self):
         """A python array with the edges indices.
         
         Indices can be used in th 
@@ -195,49 +200,14 @@ class WMesh(WID):
         """
         
         edges = self.wrapped.edges
-        return [e.key for e in edges]
+        a = np.empty(len(edges)*2, int)
+        edges.foreach_get("vertices", a)
+        return np.reshape(a, (len(edges), 2))
 
-    # edges as vectors
-
-    @property
-    def edge_vertices(self):
-        """The couple of vertices of the edges.
-
-        Returns
-        -------
-        numpy array of couple of vertices (n, 2, 3)
-            The deges vertices.
-
-        """
-        
-        return self.linear_verts[np.array(self.edge_indices)]
-    
-    # polygons as indices
-    
-    @property
-    def poly_count(self):
-        return len(self.wrapped.polygons)
-
-    @property
-    def poly_indices(self):
-        """The indices of the polygons
-
-        Returns
-        -------
-        python array of array of ints
-            Shape (d1, ?) where d1 is the number of polygons and ? is the number of vertices
-            of the polygon.
-        """
-
-        polygons = self.wrapped.polygons
-        return [tuple(p.vertices) for p in polygons]
-
-    # polygons or faces
-    
     @property
     def faces_count(self):
         return len(self.wrapped.polygons)
-
+    
     @property
     def faces(self):
         """The indices of the polygons
@@ -249,25 +219,14 @@ class WMesh(WID):
             of the polygon.
         """
         
-        return self.poly_indices
-
-    # polygons as vectors
-
-    @property
-    def poly_vertices(self):
-        """The vertices of the polygons.
-
-        Returns
-        -------
-        python array of array of triplets.
-            Shape is (d1, ?, 3) where d1 is the number of polygons and ? is the number of vertices
-            of the polygon.
-        """
-        
-        polys = self.poly_indices
-        verts = self.linear_verts
-        return [ [list(verts[i]) for i in poly] for poly in polys]
+        polys = self.wrapped.polygons
+        faces = Faces(len(polys))
+        for i, p in enumerate(polys):
+            faces.append(p.vertices, i)
+            
+        return faces
     
+    # polygons as indices
     
     # Group of faces
     def get_group_indices(self, group):
@@ -282,12 +241,12 @@ class WMesh(WID):
     # Polygons centers and normals
 
     @property
-    def poly_centers(self):
+    def centers(self):
         """Polygons centers.
         """
 
         polygons = self.wrapped.polygons
-        a = np.empty(len(polygons)*3, np.float)
+        a = np.empty(len(polygons)*3, float)
         polygons.foreach_get("center", a)
         return np.reshape(a, (len(polygons), 3))
 
@@ -297,7 +256,7 @@ class WMesh(WID):
         """
         
         polygons = self.wrapped.polygons
-        a = np.empty(len(polygons)*3, np.float)
+        a = np.empty(len(polygons)*3, float)
         polygons.foreach_get("normal", a)
         return np.reshape(a, (len(polygons), 3))
         
@@ -306,7 +265,7 @@ class WMesh(WID):
     
     @property
     def uvs_size(self):
-        return np.sum([len(face) for face in self.poly_indices])
+        return len(self.faces)
     
     @property
     def uvmaps(self):
@@ -331,7 +290,7 @@ class WMesh(WID):
         uvmap = self.get_uvmap(name)
         
         count = len(uvmap.data)
-        uvs = np.empty(2*count, np.float)
+        uvs = np.empty(2*count, float)
         uvmap.data.foreach_get("uv", uvs)
         
         return uvs.reshape((count, 2))
@@ -375,11 +334,12 @@ class WMesh(WID):
         for name, uvs in value.items():
             self.get_uvmap(name, create=True)
             self.set_uvs(name, uvs)
+            
 
     # ---------------------------------------------------------------------------
     # Set new points
 
-    def new_geometry(self, verts, polygons=[], edges=[]):
+    def new_geometry(self, verts, faces=None, edges=[]):
         """Replace the existing geometry by a new one: vertices and polygons.
         
         Parameters
@@ -405,7 +365,12 @@ class WMesh(WID):
 
         # Set
         shape = np.shape(np.atleast_2d(verts))[:-1]
-        mesh.from_pydata(np.reshape(verts, (np.product(shape),) + (3,)), edges, polygons)
+        
+        if faces is None:
+            mesh.from_pydata(np.reshape(verts, (np.product(shape),) + (3,)), edges, [])
+        else:
+            mesh.from_pydata(np.reshape(verts, (np.product(shape),) + (3,)), edges, faces.tolist())
+            
         self.reshape(shape)
 
         # Update
@@ -468,7 +433,7 @@ class WMesh(WID):
     # Detach geometry to create a new mesh
     # polygons: an array of arrays of valid vertex indices
 
-    def detach_geometry(self, polygons, independant=False):
+    def detach_geometry_OLD(self, polygons, independant=False):
         """Detach geometry to create a new mesh.
         
         The polygons is an array of array of indices within the array of vertices.
@@ -515,7 +480,7 @@ class WMesh(WID):
     # ---------------------------------------------------------------------------
     # Copy
 
-    def copy_mesh(self, mesh, replace=False):
+    def copy_mesh_OLD(self, mesh, replace=False):
         """Copy the geometry of another mesh.
 
         Parameters
@@ -559,7 +524,7 @@ class WMesh(WID):
 
             offset = len(x_verts)
 
-            x_edges.extennd([(e[0] + offset, e[1] + offset) for e in edges])
+            x_edges.extend([(e[0] + offset, e[1] + offset) for e in edges])
             edges = x_edges
 
             x_polys.extend([ [p + offset for p in poly] for poly in polys])
@@ -577,7 +542,7 @@ class WMesh(WID):
         
         nx = count[0]
         ny = count[1]
-        verts = np.zeros((nx, ny, 3), np.float)
+        verts = np.zeros((nx, ny, 3), float)
         
         verts[..., 1], verts[..., 0] = np.meshgrid(
             np.linspace(-size[1]/2, size[1]/2, ny),
@@ -586,7 +551,7 @@ class WMesh(WID):
         dx = 0 if loop_x else 1
         dy = 0 if loop_y else 1
         
-        faces = [(i*ny + j, i*ny + (j+1)%ny, ((i+1)%nx)*ny + (j+1)%ny, ((i+1)%nx)*ny + j) for i in range(nx-dx) for j in range(ny-dy)]
+        faces = Faces.FromList([(i*ny + j, i*ny + (j+1)%ny, ((i+1)%nx)*ny + (j+1)%ny, ((i+1)%nx)*ny + j) for i in range(nx-dx) for j in range(ny-dy)])
         
         self.new_geometry(verts.reshape(nx, ny, 3), faces)
         
@@ -595,7 +560,7 @@ class WMesh(WID):
         nuvx = nx - dx
         nuvy = ny - dy
         
-        uvs = np.zeros((nuvx, nuvy, 4, 2), np.float)
+        uvs = np.zeros((nuvx, nuvy, 4, 2), float)
         x, y = np.meshgrid(np.linspace(0, 1, nuvy+1), np.linspace(0, 1, nuvx+1))
         
         uvs[..., 0, 0] = x[:-1, :-1]
@@ -805,13 +770,16 @@ class WMesh(WID):
         
         # ----- Faces
         
-        fs = self.faces
-        faces_count = len(fs)
-        faces = []
-        offset = 0
-        for i in range(count):
-            faces.extend([[offset + f for f in face] for face in fs])
-            offset += verts_count
+        if True:
+            faces = self.faces.array(count, verts_count)
+        else:
+            fs = self.faces
+            faces_count = len(fs)
+            faces = []
+            offset = 0
+            for i in range(count):
+                faces.extend([[offset + f for f in face] for face in fs])
+                offset += verts_count
         
         # ----- uv maps
         
@@ -853,13 +821,13 @@ class WMesh(WID):
         """Material indices from the faces.
         """
         
-        inds = np.zeros(self.poly_count, int)
+        inds = np.zeros(self.faces_count, int)
         self.wrapped.polygons.foreach_get("material_index", inds)
         return inds
     
     @material_indices.setter
     def material_indices(self, value):
-        inds = np.zeros(self.poly_count, int)
+        inds = np.zeros(self.faces_count, int)
         inds[:] = value
         self.wrapped.polygons.foreach_set("material_index", inds)            
 
@@ -886,8 +854,8 @@ class WMesh(WID):
                     s = "\t"
 
             yield s + "]"
-            polys = self.poly_indices
-            yield f"polys = {polys}"
+            faces = self.faces
+            yield f"polys = Faces.FromList({faces.tolist()})"
 
         source = ""
         for s in gen():
@@ -930,7 +898,7 @@ class WMesh(WID):
             return None
         
         count = len(layer.data)
-        rgb   = np.zeros(count*4, np.float)
+        rgb   = np.zeros(count*4, float)
         
         layer.data.foreach_get("color", rgb)
         
@@ -964,7 +932,7 @@ class WMesh(WID):
         count = len(layer.data)
 
         if np.shape(rgb)[-1] == 3:
-            a = np.empty(count*4, np.float)
+            a = np.empty(count*4, float)
             layer.data.foreach_get("color", a)
             a = np.reshape(a, (count, 4))
             a[:, :3] = rgb
@@ -1070,7 +1038,7 @@ class WMesh(WID):
             else:
                 return None
         count = len(layer.data)
-        vals  = np.zeros(count, np.float)
+        vals  = np.zeros(count, float)
         layer.data.foreach_get("value", vals)
 
         return vals
@@ -1184,7 +1152,7 @@ class WMesh(WID):
     
     @property
     def groups_triplets(self):
-        return WVertexGroups.read_triplets(self.wrapped)
+        return VertGroups.read_triplets(self.wrapped)
     
     # ---------------------------------------------------------------------------
     # Shape keys
@@ -1199,11 +1167,11 @@ class WMesh(WID):
     def edges_faces_array(self):
         
         # Array (edge_count, 2) of edges
-        edges = np.array(self.edge_indices)
+        edges = self.wedges
         
         # Number of edges and faces
         e_count = len(edges)
-        f_count = self.poly_count
+        f_count = self.faces_count
         
         # Array linking edges width faces
         # A line is an edge
@@ -1226,9 +1194,9 @@ class WMesh(WID):
         
         # Note : Numpy matmult too slow for big dims
         #cf = np.matmul(ef.transpose(), ef)
-        #cf[np.diag_indices(self.poly_count)] = False
+        #cf[np.diag_indices(self.faces_count)] = False
         
-        f_count = self.poly_count
+        f_count = self.faces_count
         cf = np.zeros((f_count, f_count), bool)
         for i_edge in range(len(ef)):
             edge = np.argwhere(ef[i_edge, :]).reshape(2)
@@ -1242,7 +1210,7 @@ class WMesh(WID):
         if seed is not None:
             np.random.seed(seed)
             
-        faces_count = self.poly_count
+        faces_count = self.faces_count
         
         if count is None:
             count = int(round(faces_count / size))
@@ -1316,11 +1284,11 @@ class WMesh(WID):
     def explode(self, groups=None):
         
         if groups is None:
-            groups = [[i] for i in range(self.poly_count)]
+            groups = [[i] for i in range(self.faces_count)]
             
         verts = self.verts
             
-        new_faces = [None] * self.poly_count
+        new_faces = [None] * self.faces_count
         new_verts = []
         
         v_index = 0
@@ -1354,7 +1322,7 @@ class WMesh(WID):
         return ["get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
              "stick_to_surface", "duplicate",
-             "detach_geometry", "copy_mesh", "python_source_code",
+             "detach_geometry_OLD", "copy_mesh_OLD", "python_source_code",
              "get_floats", "set_floats", "get_ints", "set_ints",
              "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape",
              "get_colors", "set_colors", "get_verts_colors", "set_verts_colors", "get_float_on_colors", "set_float_on_colors"]
@@ -1362,8 +1330,8 @@ class WMesh(WID):
     @classmethod
     def exposed_properties(cls):
         return {"verts_count": 'RO', "verts_dim": 'RO', "shape": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
-             "bevel_weights": 'RW',"edge_indices": 'RO', "edge_indices": 'RO', "poly_count": 'RO',
-             "poly_indices": 'RO', "poly_vertices": 'RO', "poly_centers": 'RO', "normals": 'RO', "wmaterials" : 'RO',
+             "bevel_weights": 'RW',"wedges": 'RO', "faces_count": 'RO',
+             "faces": 'RO', "centers": 'RO', "normals": 'RO', "wmaterials" : 'RO',
              "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO', "wshape_keys": 'RO', "all_uvs": 'RW', "uvs_size": 'RO'}
         
     # ===========================================================================

@@ -51,7 +51,18 @@ def expose(target_class, source_class, prop_name, methods=[], properties={}):
     
     for meth in methods:
         
-        args = signature(getattr(source_class, meth, ''))
+        
+        
+        try:
+            args = signature(getattr(source_class, meth, ''))
+        except:
+            print('-'*80)
+            print(f"class_enhance.expose Error, impossible to get the signature of the method '{meth}' for the class '{source_class}'")
+            print('-'*80)
+            print()
+            
+            raise RuntimeError()
+            
 
         s_args = ""
         s_prms = ""

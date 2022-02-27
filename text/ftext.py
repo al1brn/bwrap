@@ -663,7 +663,12 @@ class FText():
         s += "\n"
         for i_word in range(len(self.words)):
             word = self.words[i_word]
-            s += f"Word {i_word:3d}: {word}\n"
+            s += f"Word {i_word:3d}: {word} -> [{word.x} {word.y} {word.width}]\n"
+        s += "\n"
+        s += "Chars: "
+        for i_char in range(len(self.chars)):
+            char = self.chars[i_char]
+            s += f"[{char.text}: {char.x} {char.y} {char.width}] "
         s += "\n"
         s += f"Text format: {self.text_format}"
         return s + ">"

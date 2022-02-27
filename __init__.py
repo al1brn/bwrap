@@ -21,7 +21,7 @@ import numpy as np
 import bpy
 
 from .wrappers.wrap_function import wrap, wcollection
-from .objects.crowd import Crowd
+from .objects.crowd import Crowd, Crowds
 from .text.chars import Chars
 from .objects.duplicator import Duplicator
 

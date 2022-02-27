@@ -52,6 +52,8 @@ class TransformationsInterface():
     
     def __init__(self):
         self.locked = 0
+        self.track_axis_ = 'Z'
+        self.up_axis_    = 'Y'
         
     # ===========================================================================
     # MUST BE OVERRIDDEN
@@ -119,11 +121,20 @@ class TransformationsInterface():
     
     @property
     def track_axis(self):
-        return 'Z'
+        return self.track_axis_
+    
+    @track_axis.setter
+    def track_axis(self, value):
+        self.track_axis_ = value
     
     @property
     def up_axis(self):
-        return 'Y'
+        return self.up_axis_
+    
+    @up_axis.setter
+    def up_axis(self, value):
+        self.track_axis_ = value
+    
     
     # -----------------------------------------------------------------------------------------------------------------------------
     # Override if transformation matrices has to be applied to real objects
@@ -163,7 +174,7 @@ class TransformationsInterface():
         self.locked -= 1
         if self.locked < 0:
             raise WError("Algorithm error: lock / unlock unbalanced. Ensure to call 'lock' before calling 'unlock'.")
-            
+
         if self.locked == 0:
             self.apply()
             
@@ -703,6 +714,7 @@ class Transformations(TransformationsInterface):
     """
     
     def __init__(self, location=0., matrix=np.identity(3, np.float), scale=1, count=None):
+        
         super().__init__()
         self.tmat_    = tmatrix(location, matrix, scale, count)
         self.slice_of = None
@@ -714,6 +726,8 @@ class Transformations(TransformationsInterface):
     def tmat(self):
         if self.slice_of is None:
             return self.tmat_
+        elif self.slice_unravel:
+            return self.slice_of.tmat[np.unravel_index(self.slice_, self.slice_of.shape)]
         else:
             return self.slice_of.tmat[self.slice_]
     
@@ -722,6 +736,9 @@ class Transformations(TransformationsInterface):
         if self.slice_of is None:
             self.tmat_[:] = value
             self.lock_apply()
+        elif self.slice_unravel:
+            self.slice_of.tmat[np.unravel_index(self.slice_, self.slice_of.shape)] = value
+            self.slice_of.lock_apply()
         else:
             self.slice_of.tmat[self.slice_] = value
             self.slice_of.lock_apply()
@@ -735,10 +752,12 @@ class Transformations(TransformationsInterface):
         trf.set_slice_of(other, slice)
         return trf
     
-    def set_slice_of(self, other, slice):
-        self.slice_of = other
-        self.slice_   = slice
-        self.tmat_    = None
+    def set_slice_of(self, other, slice, unravel=True):
+        self.slice_of      = other
+        self.slice_        = slice
+        self.slice_unravel = unravel
+        self.tmat_         = None
+        
         
     def set_slice(self, slice):
         self.slice_ = slice
@@ -773,7 +792,11 @@ class Transformations(TransformationsInterface):
 
         if type(shape) is int:
             shape = (shape,)
-        self.tmat_ = np.resize(self.tmat_, shape + (4, 4))
+        
+        if len(self.tmat_) == 0:
+            self.tmat_ = tmatrix(count=shape)
+        else:
+            self.tmat_ = np.resize(self.tmat_, shape + (4, 4))
         
     # ---------------------------------------------------------------------------
     # Basics
@@ -888,7 +911,7 @@ class ObjectTransformations(Transformations):
     
     def __init__(self, world=False):
         
-        Transformations.__init__(self, count=())
+        super().__init__(count=())
         self.world_ = world
 
         if self.world:
@@ -941,6 +964,8 @@ class ObjectTransformations(Transformations):
     @property
     def up_axis(self):
         return self.wrapped.up_axis
+    
+    
     
 # =============================================================================================================================
 # Multiple transformation matrices to be used with the objects of a collection

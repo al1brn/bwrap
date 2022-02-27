@@ -147,6 +147,8 @@ def create_object(name, what='CUBE', collection=None, parent=None, **kwargs):
               'BEZIERCIRCLE', 'BEZIERCURVE', 'NURBSCIRCLE', 'NURBSCURVE', 'NURBSPATH']
 
 
+    what = what.upper()
+
     if what in generics:
 
         bpy.ops.object.add(type=what, **kwargs)

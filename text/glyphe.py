@@ -11,19 +11,29 @@ import numpy as np
 if True:
     
     from ..maths.closed_faces import closed_faces
+    from ..core.faces import Faces
     from .textformat import CharFormat
     
-    
 else:
-    
-    path = "/Users/alain/Documents/blender/scripts/modules/bwrap/"
     import importlib
     
-    closed_spec = importlib.util.spec_from_file_location("breader", path + "maths/closed_faces.py")
-    closed  = importlib.util.module_from_spec(closed_spec)
-    closed_spec.loader.exec_module(closed)
+    def import_bwrap_module(file_name, module_name):
+        
+        bw_path = __file__[:__file__.find("bwrap")+5] + "/"
+        
+        spec   = importlib.util.spec_from_file_location(module_name, bw_path + file_name)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        
+        return module
     
-    closed_faces = closed.closed_faces
+    closed_faces_mod = import_bwrap_module("maths/closed_faces.py", "closed_faces")
+    textformat_mod   = import_bwrap_module("text/textformat.py", "textformat")
+    
+    closed_faces = closed_faces_mod.closed_faces
+    CharFormat   = textformat_mod.CharFormat
+    
+    Geometry = import_bwrap_module("wrappers/geometry.py", "geometry").Geometry
 
 
 # ====================================================================================================
@@ -616,7 +626,9 @@ class Glyphe():
             glyf.flags = [1, 23, 6, 6, 35, 34, 0, 17, 16, 0, 51, 50, 0, 17, 20, 7, 33, 22, 22, 51, 50, 54, 1, 33, 38, 39, 38, 35, 34, 6]
             glyf.xCoordinates = [862, 186, -44, -238, -185, -233, -273, 0, 0, 276, 220, 213, 270, 0, 0, -1, -792, 10, 178, 133, 99, 140, -550, 593, -12, -56, -86, -137, -124, -169]
             glyf.yCoordinates = [342, -23, -163, -180, 0, 0, 287, 259, 268, 296, 0, 0, -290, -263, -16, -32, 0, -175, -186, 0, 0, 104, 405, 0, 134, 67, 104, 0, 0, -166]
-            glyf.endPtsOfContours = [21, 29]                
+            glyf.endPtsOfContours = [21, 29]
+            
+        glyf.code = 123
         
         return Glyphe(None, glyf)
 
@@ -989,7 +1001,7 @@ class Glyphe():
             
             n = len(pts)
             
-            bz = np.zeros((n, 3, 2), np.float)
+            bz = np.zeros((n, 3, 2), float)
 
             bz[:,   0] = pts[:, 0]
             
@@ -1005,7 +1017,7 @@ class Glyphe():
             
             # In the 3D right plane
             
-            bz3 = np.zeros((n, 3, 3), np.float)
+            bz3 = np.zeros((n, 3, 3), float)
             if plane == 'XZ':
                 bz3[..., 0] = bz[..., 0]
                 bz3[..., 2] = bz[..., 1]
@@ -1028,7 +1040,7 @@ class Glyphe():
         if self.is_empty:
             verts = np.zeros((0, 3), float)
             if return_faces:
-                return verts, [], np.zeros((0, 2), float)
+                return verts, Faces(), np.zeros((0, 2), float)
             else:
                 return verts
         
@@ -1132,23 +1144,17 @@ class Glyphe():
         # ---------------------------------------------------------------------------
         # Compute the faces
         
-        faces = closed_faces(verts, closed_curves)
+        faces = Faces.FromList(closed_faces(verts, closed_curves))
         
         # ---------------------------------------------------------------------------
         # Compute uv map
         
         ratio  = 1 / 2048
         center = (1024 - self.width()/2, 256)
-
-        nuvs = 0
-        for face in faces:
-            nuvs += len(face)
-        uvs = np.zeros((nuvs, 2), np.float)
-
-        index = 0        
-        for face in faces:
-            uvs[index:index+len(face)] = (verts[face, :2] + center)*ratio 
-            index += len(face)
+        
+        uvs = faces.uvmap()
+        for index, face in enumerate(faces):
+            uvs[faces.slice(index)] = (verts[face, :2] + center)*ratio 
         
         # ---------------------------------------------------------------------------
         # Faces were computed with the raw contours
@@ -1248,13 +1254,18 @@ class Glyphe():
         ax.set_aspect(1.)
         ax.plot((0, 1000, 1000, 0), (0, 0, 1000, 1000), '.')
         
-        verts, faces = self.raster(delta)
+        verts, faces, uvs = self.raster(delta, return_faces=True)
         
         line = '.-k' if show_points else '-k'
         
-        for face in faces:
-            x = verts[[edge[0] for edge in face], 0]
-            y = verts[[edge[0] for edge in face], 1]
+        for _, face in faces.faces_iter():
+            if False:
+                x = verts[[edge[0] for edge in face], 0]
+                y = verts[[edge[0] for edge in face], 1]
+            else:
+                x = verts[[v for v in face], 0]
+                y = verts[[v for v in face], 1]
+                
             ax.plot(x, y, line)
         
         plt.show()        
@@ -1275,7 +1286,7 @@ class Glyphe():
         ax.set(**kwargs)
         ax.set_aspect(1.)
         
-        beziers = self.beziers
+        beziers = self.beziers()
         
         for bz in beziers:
             
@@ -1298,8 +1309,6 @@ class Glyphe():
                         
                 if points is not None:
                     ax.plot(points[:, 0], points[:, 1], '-k')
-                    
-                
             
             else:
                 ax.plot(verts[:, 0], verts[:, 1],  'ok')
@@ -1318,7 +1327,7 @@ class Glyphe():
         ax.set_aspect(1.)
         
         if curve:
-            base = self.plot_points()
+            base = self.plot_raster()
             for points in base:
                 ax.plot(points[:, 0], points[:, 1], '-k')
                 
@@ -1344,3 +1353,13 @@ class Glyphe():
             
             
 #Glyphe.test()
+
+#g = Glyphe.Char("S")
+#g.compute_contours()
+#print(g)
+#g.plot_raster()
+
+
+
+
+

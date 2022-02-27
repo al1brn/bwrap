@@ -207,7 +207,13 @@ class Rect():
         """
         
         base = np.array(P) - self.P0
-        r = base/self.A
+        
+        try:
+            r = base/self.A
+        except:
+            raise WError(f"Interpolation error in Rect {self}. Amplitude A is zero.",
+                    Class = "Rect", Method = "normalize", P=P, clip=clip)
+            
         r[np.isnan(r)] = base[np.isnan(r)]
         if clip:
             return np.clip(r, 0, 1)
@@ -726,12 +732,15 @@ class Easing():
         self.name = kf0.interpolation
         
         rect = Rect(kf0.co, kf1.co)
+        if rect.y_amp == 0:
+            self.name = 'CONSTANT'
+            
         if self.name == 'BEZIER':
             
             self.P1 = rect.normalize(kf0.handle_right, clip=False)
             self.P2 = rect.normalize(kf1.handle_left, clip=False)
             
-        else:
+        elif self.name != 'CONSTANT':
             #self.factor    = 10
             self.back      = kf0.back
             #self.bounces   = 3

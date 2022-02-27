@@ -10,7 +10,7 @@ import numpy as np
 
 from .wmesh import WMesh
 from .wobject import WObject
-from .wvertexgroups import WVertexGroups
+from ..core.vertgroups import VertGroups
 
 from ..core.class_enhance import expose
 
@@ -19,6 +19,7 @@ from ..core.commons import WError
 class WMeshObject(WObject):
     
     def __init__(self, wrapped, is_evaluated=None):
+        
         super().__init__(wrapped, is_evaluated)
         self.wmesh = WMesh(self.name, self.is_evaluated)
     
@@ -65,11 +66,11 @@ class WMeshObject(WObject):
     # - 100000 * weight
     
     @property
-    def wvertex_groups(self):
-        return WVertexGroups(self.wrapped)
+    def vert_groups(self):
+        return VertGroups(self.wrapped)
 
-    @wvertex_groups.setter
-    def wvertex_groups(self, value):
+    @vert_groups.setter
+    def vert_groups(self, value):
         value.set_to(self.wrapped)
         
     # -----------------------------------------------------------------------------------------------------------------------------

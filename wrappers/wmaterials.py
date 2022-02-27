@@ -66,5 +66,10 @@ class WMaterials(WStruct):
     def replace(self, names):
         self.clear()
         for name in names:
-            self.wrapped.append(bpy.data.materials[name])
+            mat = bpy.data.materials.get(name)
+            if mat is None:
+                mat = bpy.data.materials.new(name)
+            
+            self.wrapped.append(mat)
+            
             
