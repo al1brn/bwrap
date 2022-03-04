@@ -13,7 +13,7 @@ from .wmesh import WMesh
 from .wcurve import WCurve
 from .wtext import WText
 
-from ..maths.transformations import ObjectTransformations
+from ..core.maths.transformations import ObjectTransformations
 
 from ..core.commons import WError
 

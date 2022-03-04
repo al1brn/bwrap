@@ -10,7 +10,7 @@ import numpy as np
 
 from .wspline import WSpline
 
-from ..maths.bezier import  control_points, Beziers
+from ..core.maths.bezier import  control_points, Beziers
 
 
 from ..core.commons import WError

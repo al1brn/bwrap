@@ -15,7 +15,7 @@ from .wspline import WSpline
 from .wbezierspline import WBezierSpline
 from .wnurbsspline import WNurbsSpline
 
-from ..maths.bezier import Beziers
+from ..core.maths.bezier import Beziers
 
 
 from ..core.commons import WError

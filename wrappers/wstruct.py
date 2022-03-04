@@ -9,7 +9,7 @@ Created on Mon Jul 26 08:46:04 2021
 import numpy as np
 import bpy
 
-from ..maths.interpolation import BCurve
+from ..core.maths.interpolation import BCurve
 from ..blender.frames import get_frame
 
 from ..core.commons import WError, get_chained_attr, set_chained_attr

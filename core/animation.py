@@ -13,7 +13,7 @@ from ..blender import depsgraph
 
 from ..blender.frames import get_frame
 from ..wrappers.wrap_function import wrap
-from ..maths.interpolation import BCurve, Easing
+from .maths.interpolation import BCurve, Easing
 
 from ..core.commons import WError
 

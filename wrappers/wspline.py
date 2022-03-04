@@ -11,7 +11,7 @@ import numpy as np
 from .wstruct import WStruct
 
 from ..core.commons import WError
-from ..maths.bezier import Beziers
+from ..core.maths.bezier import Beziers
 
 # ---------------------------------------------------------------------------
 # Spline wrapper

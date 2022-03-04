@@ -9,7 +9,7 @@ Created on Tue Jul 13 14:03:31 2021
 import numpy as np
 import bpy
 
-from ..maths.transformations import Transformations, SlaveTransformations
+from ..core.maths.transformations import Transformations, SlaveTransformations
 
 from ..wrappers.wrap_function import wrap
 from ..wrappers.geometry import Geometry

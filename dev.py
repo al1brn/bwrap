@@ -13,10 +13,10 @@ from core.wroot import WRoot
 from core.vertparts import VertParts
 from core.faces import Faces
 
+def f(t):
+    v = np.zeros((len(t), 3), float)
+    v[:, 2] = t
+    return v
 
-cube = VertParts.Default('CUBE', parts=2)
-cube.join(VertParts.Default('TETRA'))
-print(cube.faces_centers(0))
-
-
-              
+geo = VertParts.CurveToMesh(f)
+print(geo)

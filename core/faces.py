@@ -361,7 +361,7 @@ class Faces(VArrays):
     # Quads grid
     
     @classmethod
-    def Grid(cls, x=10, y=10, x_close=False, y_close=False, offset=0):
+    def Grid(cls, x=10, y=10, x_close=False, y_close=False, offset=0, x_flip=False):
         
         if x_close:
             x_count = x
@@ -372,8 +372,12 @@ class Faces(VArrays):
             y_count = y
         else:
             y_count = y-1
+            
+        xrg = np.arange(x)
+        if x_flip:
+            xrg = np.flip(xrg)
         
-        faces = Faces.Stripe(np.arange(x), close=x_close)
+        faces = Faces.Stripe(xrg, close=x_close)
         
         quads = np.reshape(faces.values + offset, (1, x_count, 4)) + (np.arange(y_count)*x).reshape(y_count, 1, 1)
         
@@ -531,8 +535,186 @@ class Faces(VArrays):
         
         return uvs
     
+    # ====================================================================================================
+    # Some geometry with the surfaces
+    
     # ---------------------------------------------------------------------------
-    # Some geometries with vertices
+    # Surface is computed by cross products of triangle. This also gives
+    # the normal to the face. The vector normal the length of which is the surface
+    # is called the "surface vector".
+    
+    def surface_vectors(self, verts):
+        
+        # --------------------------------------------------
+        # The compute for faces with the same number of vertices
+        
+        def surf_vect(vs, size):
+            
+            if size == 3:
+                return np.cross(
+                        vs[...,1,:] - vs[..., 0,:],
+                        vs[...,2,:] - vs[..., 0,:])
+            
+            elif size == 4:
+                return (np.cross(
+                            vs[...,1,:] - vs[..., 0, :],
+                            vs[...,3,:] - vs[..., 0, :]
+                        ) +
+                        np.cross(
+                            vs[...,3,:] - vs[..., 2, :],
+                            vs[...,1,:] - vs[..., 2, :]
+                        ))
+            
+            else:
+                sv = np.zeros((len(vs), 3), float)
+                for i in range(size-2):
+                    sv += surf_vect(vs[..., [0, i+1, i+2], :], 3)
+                return sv
+            
+        # --------------------------------------------------
+        # No face
+        
+        if len(self) == 0:
+            return np.empty((0, 3), float)
+        
+        # --------------------------------------------------
+        # The faces have the same size
+        
+        if self.same_sizes:
+            return surf_vect(verts[np.reshape(self.values, (len(self.sizes), self.sizes[0]))], self.sizes[0])
+
+        # --------------------------------------------------
+        # Loop on the sizes
+        
+        svects = np.empty((len(self.sizes), 3), float)
+        
+        for size in np.unique(self.sizes):
+            arrays, indices = self.arrays_of_size(size)
+            svects[arrays] = surf_vect(verts[self.values[indices]], size)
+            
+        return svects
+    
+    # ---------------------------------------------------------------------------
+    # Surfaces : norm of the perpendicular vectors
+    
+    def surfaces(self, verts):
+        return np.linalg.norm(self.surface_vectors(verts), axis=-1)/2
+    
+    # ---------------------------------------------------------------------------
+    # Normals : normalized surface vectors
+    
+    def normals(self, verts):
+        sv = self.surface_vectors(verts)
+        return sv / np.expand_dims(np.linalg.norm(self.surface_vectors(verts), axis=-1), axis=-1)
+        
+
+    # ---------------------------------------------------------------------------
+    # Surfaces of triangular faces
+    
+    @staticmethod
+    def tri_surface(verts, return_orientation=False):
+        
+        if return_orientation:
+            
+            s = np.cross(
+                    verts[...,1,:] - verts[..., 0,:],
+                    verts[...,2,:] - verts[..., 0,:])
+            return np.linalg.norm(s, axis=-1)/2, s
+        
+        else:
+            return np.linalg.norm(
+                    np.cross(
+                        verts[...,1,:] - verts[..., 0,:],
+                        verts[...,2,:] - verts[..., 0,:]
+                    ), axis=-1)/2
+    
+    # ---------------------------------------------------------------------------
+    # Surfaces of quad faces
+    
+    @staticmethod
+    def quad_surface(verts, check_concave=True):
+
+        if check_concave:
+            
+            s1, o1 = Faces.tri_surface(verts[..., :3,        :], return_orientation=True)
+            s2, o2 = Faces.tri_surface(verts[..., [2, 3, 0], :], return_orientation=True)
+            
+            return np.abs(s1 + np.sign(np.einsum('...j,...j', o1, o2))*s2)
+        
+        else:
+            return (np.linalg.norm(
+                        np.cross(
+                            verts[...,1,:] - verts[..., 0, :],
+                            verts[...,3,:] - verts[..., 0, :]
+                        ), axis=-1) +
+        
+                   np.linalg.norm(
+                        np.cross(
+                            verts[...,3,:] - verts[..., 2, :],
+                            verts[...,1,:] - verts[..., 2, :]
+                        ), axis=-1))/2
+        
+    # ---------------------------------------------------------------------------
+    # Surfaces of n-gons
+    
+    @staticmethod
+    def ngon_surface(verts):
+        
+        # Verts shape is (count, n, 3) where n in the number of points of the faces
+        
+        n = np.shape(verts)[1]
+        
+        for i in range(n-2):
+            
+            s, o = Faces.tri_surface(verts[..., [0, i+1, i+2], :], return_orientation=True)
+            
+            if i == 0:
+                surfaces = s
+                orient   = o
+            else:
+                surfaces += np.sign(np.einsum('...j,...j', orient, o))*s
+                
+        return abs(surfaces)
+    
+    # ---------------------------------------------------------------------------
+    # Faces surfaces
+    
+    def surfaces_OLD(self, verts):
+        
+        if len(self) == 0:
+            return None
+        
+        surfaces = np.empty(len(self.sizes), float)
+        
+        for size in np.unique(self.sizes):
+            
+            arrays, indices = self.arrays_of_size(size)
+            
+            # Indices is shaped (count, size) where:
+            # - count is the number of faces
+            # - size the number of vertices per face
+            #
+            # verts is shape (n, 3) where n is the number of available vertices
+            #
+            # self.values[indices] is shaped (count, size)
+            #
+            # verts[self.values[indices]] is shape (count, size, 3)
+            #
+            # The average is computed on axis 1 (size) to obtain shape (count, 3)
+            
+            if size == 3:
+                surfaces[arrays] = Faces.tri_surface(verts[self.values[indices]])
+                
+            elif size == 4:
+                surfaces[arrays] = Faces.quad_surface(verts[self.values[indices]])
+                
+            else:
+                surfaces[arrays] = Faces.ngon_surface(verts[self.values[indices]])
+        
+        return surfaces        
+    
+    # ---------------------------------------------------------------------------
+    # Centers of the faces
     
     def centers(self, verts):
         
@@ -564,7 +746,6 @@ class Faces(VArrays):
             centers[arrays] = np.average(verts[self.values[indices]], axis=1)
         
         return centers
-    
     
     # ---------------------------------------------------------------------------
     # Demo

@@ -14,9 +14,9 @@ from .wid import WID
 
 from ..blender import depsgraph 
 
-from ..maths.transformations import Transformations
+from ..core.maths.transformations import Transformations
+from ..core.maths.shapes import get_full_shape
 from ..objects.wpropcollection import WPropCollection
-from ..maths.shapes import get_full_shape
 from ..wrappers.wrap_function import wrap, unwrap
 
 

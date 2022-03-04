@@ -16,8 +16,8 @@ from .wmaterials import WMaterials
 from .wshapekeys import WShapeKeys
 from ..core.faces import Faces
 from ..core.vertgroups import VertGroups
-from ..maths import geometry as geo
-from ..maths.colors import rgb2hsv, hsv2rgb, float2rgb, rgb2float
+from ..core.maths import geometry as geo
+from ..core.maths.colors import rgb2hsv, hsv2rgb, float2rgb, rgb2float
 
 from ..core.commons import WError
 
@@ -807,7 +807,31 @@ class WMesh(WID):
 
         
     # ===========================================================================
+    # Shading
+    
+    def shade_smooth(self):
+        a = np.ones(self.verts_count, int)
+        self.wrapped.polygons.foreach_set('use_smooth', a)
+        
+    def shade_flat(self):
+        a = np.zeros(self.verts_count, int)
+        self.wrapped.polygons.foreach_set('use_smooth', a)
+
+    # ===========================================================================
     # Materials
+
+    # ---------------------------------------------------------------------------
+    # Materials names
+    
+    @property
+    def mat_names(self):
+        return [mat.name for mat in self.wrapped.materials]
+    
+    @mat_names.setter
+    def mat_names(self, value):
+        self.wrapped.materials.clear()
+        for name in value:
+            self.wrapped.materials.append(bpy.data.materials[name])
 
     # ---------------------------------------------------------------------------
     # Materials indices
@@ -1321,7 +1345,7 @@ class WMesh(WID):
     def exposed_methods(cls):
         return ["get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
-             "stick_to_surface", "duplicate",
+             "stick_to_surface", "duplicate", "shade_smooth", "shade_flat",
              "detach_geometry_OLD", "copy_mesh_OLD", "python_source_code",
              "get_floats", "set_floats", "get_ints", "set_ints",
              "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape",
@@ -1330,7 +1354,7 @@ class WMesh(WID):
     @classmethod
     def exposed_properties(cls):
         return {"verts_count": 'RO', "verts_dim": 'RO', "shape": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
-             "bevel_weights": 'RW',"wedges": 'RO', "faces_count": 'RO',
+             "bevel_weights": 'RW',"wedges": 'RO', "faces_count": 'RO', "mat_names": 'RW',
              "faces": 'RO', "centers": 'RO', "normals": 'RO', "wmaterials" : 'RO',
              "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO', "wshape_keys": 'RO', "all_uvs": 'RW', "uvs_size": 'RO'}
         

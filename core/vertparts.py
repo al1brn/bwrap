@@ -14,6 +14,9 @@ from .varrays import VArrays
 from .faces import Faces
 from .commons import WError
 
+from .maths.bezier import Polynoms
+from .maths.transformations import Transformations
+
 # ----------------------------------------------------------------------------------------------------
 # A utility to clone a simple structure
 
@@ -96,8 +99,11 @@ class VertParts(WRoot):
     # Basic shapes
     
     @staticmethod
-    def polygon(count=16, radius=1.):
-        ags = np.linspace(0, 2*np.pi, count, endpoint=False)
+    def polygon(count=16, radius=1., start_angle=0, inverse=False):
+        if inverse:
+            ags = np.linspace(start_angle, start_angle - 2*np.pi, count, endpoint=False)
+        else:
+            ags = np.linspace(start_angle, start_angle + 2*np.pi, count, endpoint=False)
         return radius*np.cos(ags), radius*np.sin(ags)
     
     @staticmethod
@@ -117,15 +123,19 @@ class VertParts(WRoot):
         uvs   = None
         
         if shape == 'CUBE':
-            verts = ((-1, -1, -1), (-1, 1, -1), (1, 1, -1), (1, -1, -1), (-1, -1, 1), (-1, 1, 1), (1, 1, 1), (1, -1, 1))
+            verts = ((-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1), (-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1))
             faces = Faces.FromList([[3, 0, 4, 7], [2, 3, 7, 6], [1, 2, 6, 5], [0, 1, 5, 4], [1, 0, 3, 2], [6, 7, 4, 5]])
             
             uvs = np.reshape(Faces.uvgrid(4, 4, rect=(1/8, 0, 1+1/8, 1)), (16, 4, 2))
             Faces.permute_uvs(uvs, 1)
-            uvs = uvs[[13, 9, 5, 1, 8, 10]]
+
+            Faces.permute_uvs(uvs[8],  1)
+            Faces.permute_uvs(uvs[10], 3)
+            
+            uvs = uvs[[1, 5, 9, 13, 8, 10]]
         
         elif shape == 'PLANE':            
-            verts = ((-1, -1, 0), (-1, 1, 0), (1, 1, 0), (1, -1, 0))
+            verts = ((-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0))
             faces = Faces.FromList([[0, 1, 2, 3]])
             uvs   = Faces.uvsquare()
             
@@ -134,8 +144,14 @@ class VertParts(WRoot):
             segms  = 32 if kwargs.get("segms")  is None else kwargs["segms"]
             radius = 1. if kwargs.get("radius") is None else kwargs["radius"]
             fans   = True if kwargs.get("fans") is None else kwargs["fans"]
+
+            x_radius = radius if kwargs.get("x_radius") is None else kwargs["x_radius"]
+            y_radius = radius if kwargs.get("y_radius") is None else kwargs["y_radius"]
             
-            hx, hy = cls.polygon(segms, radius=radius)
+            hx, hy = cls.polygon(segms, radius=1.)
+            hx *= x_radius
+            hy *= y_radius
+            
             verts = np.zeros((segms, 3), float)
 
             verts[:, 0] = hx
@@ -171,7 +187,7 @@ class VertParts(WRoot):
             uvs   = Faces.uvgrid(res[0]-1, res[1]-1)
         
         elif shape == 'PYRAMID':
-            verts = ((-1, -1, 0), (-1, 1, 0), (1, 1, 0), (1, -1, 0), (0, 0, 1))
+            verts = ((-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0), (0, 0, 1))
             faces = Faces.FromList([[3, 2, 1, 0], [0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]])
             
             a = .25
@@ -237,13 +253,15 @@ class VertParts(WRoot):
             verts = np.append(np.reshape(verts, (n, 3)), ((0, 0, -radius), (0, 0, radius)), axis=0)
             
             faces = Faces.Grid(segms, rings-2, x_close=True, y_close=False)
-            faces.extend(Faces.Triangles(n,   np.arange(segms),                 close=True))
+            faces.extend(Faces.Triangles(n,   np.flip(np.arange(segms)),        close=True))
             faces.extend(Faces.Triangles(n+1, np.arange(segms)+(rings-3)*segms, close=True))
             
-            uvs = Faces.uvgrid(segms, rings-3, (0, .1, 1, .9))
+            h_uv = 1/(rings-1)
             
-            uvs0 = Faces.uvtriangles(segms, (0, .1, 1, 0))
-            uvs1 = Faces.uvtriangles(segms, (0, .9, 1, 1))
+            uvs = Faces.uvgrid(segms, rings-3, (0, h_uv, 1, 1-h_uv))
+            
+            uvs0 = Faces.uvtriangles(segms, (1, h_uv,   0, 0))
+            uvs1 = Faces.uvtriangles(segms, (0, 1-h_uv, 1, 1))
             
             uvs = np.append(uvs, uvs0, axis=0)
             uvs = np.append(uvs, uvs1, axis=0)
@@ -258,7 +276,7 @@ class VertParts(WRoot):
             
             h = height/2
             
-            hx, hy = cls.polygon(segms, radius=1.)
+            hx, hy = cls.polygon(segms, radius=1., start_angle=np.pi/2)
             
             verts = np.empty((rings, segms, 3), float)
             verts[..., 0] = hx
@@ -273,16 +291,16 @@ class VertParts(WRoot):
                 n = len(verts)
                 verts = np.append(verts, np.resize(((0, 0, -h), (0, 0, h)), (2, 3)), axis=0)
                 
-                faces.extend(Faces.Triangles(n,   np.arange(segms),                 close=True))
+                faces.extend(Faces.Triangles(n,   np.flip(np.arange(segms)),        close=True))
                 faces.extend(Faces.Triangles(n+1, np.arange(segms)+(rings-1)*segms, close=True))
                 
                 uvs0 = Faces.uvfans(segms, rect=(.01, .01, .49, .49))
                 uvs1 = Faces.uvfans(segms, rect=(.51, .01, .99, .49))
-                uvs = np.append(uvs, uvs1, axis=0)
-                uvs = np.append(uvs, uvs0, axis=0)
+                uvs  = np.append(uvs, uvs1, axis=0)
+                uvs  = np.append(uvs, uvs0, axis=0)
                 
             else:
-                faces.append(np.arange(segms))
+                faces.append(np.flip(np.arange(segms)))
                 faces.append(np.arange(segms)+(rings-1)*segms)
                 
                 uvs0 = Faces.uvpolygon(segms, rect=(.01, .01, .49, .49))
@@ -305,9 +323,34 @@ class VertParts(WRoot):
             faces = disk.faces
             faces.append(np.arange(segms))
             
-            uvs = Faces.uvfans(segms, rect=(.01, .01, .49, .49))
+            uvs  = Faces.uvfans(segms, rect=(.01, .01, .49, .49))
             uvs0 = Faces.uvpolygon(count=segms, rect=(.51, .01, .99, .49))
             uvs  = np.append(uvs, uvs0, axis=0)
+
+        elif shape == 'TORUS':
+            
+            maj_segms   = 48  if kwargs.get("major_segments")  is None else kwargs["major_segments"]
+            min_segms   = 12  if kwargs.get("minor_segments")  is None else kwargs["minor_segments"]
+            maj_radius  = 1.  if kwargs.get("major_radius")    is None else kwargs["major_radius"]
+            min_radius  = .25 if kwargs.get("minor_radius")    is None else kwargs["minor_radius"]
+            
+            
+            base = np.zeros((min_segms, 3), float)
+            base[:, 0], base[:, 2] = cls.polygon(min_segms, radius=min_radius, start_angle=0, inverse=True)
+            base[:, 0] -= maj_radius
+             
+            
+            cs, sn = cls.polygon(maj_segms, radius=maj_radius, start_angle=0)
+            M = maj_radius*np.resize(np.identity(3, float), (maj_segms, 3, 3))
+            
+            M[:, 0, 0] = cs
+            M[:, 0, 1] = -sn
+            M[:, 1, 0] = sn
+            M[:, 1, 1] = cs
+            
+            verts = np.matmul(M, base.T).transpose((2, 0, 1))
+            faces = Faces.Grid(maj_segms, min_segms, x_close=True, y_close=True)
+            uvs   = Faces.uvgrid(maj_segms, min_segms)
             
             
         else:
@@ -316,10 +359,12 @@ class VertParts(WRoot):
         # ----------------------------------------------------------------------------------------------------
         # Create the geometry
         
+        verts = np.reshape(verts, (np.size(verts)//3, 3))
+        
         geo = cls.MeshFromData(verts, faces)
         if uvs is not None:
             geo.uvmaps["UVMap"] = uvs
-        geo.check()
+        #geo.check()
         
         # ----- Create the shapes
         
@@ -356,6 +401,96 @@ class VertParts(WRoot):
                 geo.mat_i[i] = i % 5
         
         # ----- return the Geometry
+        
+        return geo
+    
+    # ---------------------------------------------------------------------------
+    # A cylindric shape around a backbone
+    
+    @classmethod
+    def CurveToMesh(cls, f, profile=.1, t0=0, t1=1, count=100, uv_start=0, uv_end=1, scale=1, twist=None):
+        
+        # ----- The call arguments for the points
+        
+        ts = np.linspace(t0, t1, count, endpoint=True)
+        
+        # ---------------------------------------------------------------------------
+        # Scale
+        
+        check_scales = False
+        if hasattr(scale, '__call__'):
+            scales = scale(ts)
+            check_scales = True
+            
+        elif hasattr(scale, '__len__'):
+            scales = Polynoms(np.linspace(t0, t1, len(scale), endpoint=True), scale)(ts)
+            check_scales = True
+            
+        else:
+            scales = scale
+            
+        if check_scales:
+            if len(np.shape(scale)) == 1:
+                scales = np.expand_dims(scales, axis=-1)
+                
+        # ---------------------------------------------------------------------------
+        # Profile to use
+        # - either the points to use
+        # - or the radius of a circular profile
+        
+        if hasattr(profile, '__len__'):
+            prof = np.zeros((len(profile), 3), float)
+            prof[:, 0] = np.array(profile)[:, 0]
+            prof[:, 1] = np.array(profile)[:, 1]
+        else:
+            n = 12
+            ags = np.linspace(0, 2*np.pi, n, endpoint=False)
+            prof = np.zeros((n, 3), float)
+            prof[:, 0] = profile*np.cos(ags)
+            prof[:, 1] = profile*np.sin(ags)
+            
+        # ---------------------------------------------------------------------------
+        # The tangents
+        
+        try:
+            ders = f(ts, der=1)
+        except:
+            dt = (t1-t0)/(10*count)
+            ders = (f(ts+dt) - f(ts-dt))/2/dt
+            
+        # ---------------------------------------------------------------------------
+        # Transformations matrices
+        
+        tm = Transformations(location=f(ts), scale=scales, count=count)
+        
+        # ----- Orientation
+        
+        tm.orient(ders, axis='Z', no_up=False)
+        
+        # ---------------------------------------------------------------------------
+        # Twist
+        
+        if twist is not None:
+            
+            if hasattr(twist, '__call__'):
+                twist_func = twist
+            elif hasattr(twist, '__len__'):
+                twist_func = Polynoms(np.linspace(t0, t1, len(twist), endpoint=True), twist)
+            else:
+                twist_func = twist
+
+            tm.rotate(ders, twist_func(ts), center=f(ts))
+            
+        # ---------------------------------------------------------------------------
+        # Let's create the geometry
+        
+        verts = np.reshape(tm.transform(prof), (count*len(profile), 3))
+        faces = Faces.Grid(len(prof), count, x_close=True, y_close=False)
+        uvs   = Faces.uvgrid(len(prof), count, (0, uv_start, 1, uv_end))
+        
+        geo = cls.MeshFromData(verts, faces)
+        geo.uvmaps["UVMap"] = uvs
+        geo.ensure_mat_i()
         
         return geo
     
@@ -1097,11 +1232,22 @@ class VertParts(WRoot):
         return geo
     
     # ----------------------------------------------------------------------------------------------------
-    # faces centers
+    # Faces centers
     
     def faces_centers(self, shape=0):
         return self.faces.centers(self.verts[:, shape].reshape(self.parts_count*self.part_size, 3))
+
+    # ----------------------------------------------------------------------------------------------------
+    # Faces surfaces
     
+    def faces_surfaces(self, shape=0):
+        return self.faces.surfaces(self.verts[:, shape].reshape(self.parts_count*self.part_size, 3))
+
+    # ----------------------------------------------------------------------------------------------------
+    # Faces surfaces
+    
+    def faces_normals(self, shape=0):
+        return self.faces.normals(self.verts[:, shape].reshape(self.parts_count*self.part_size, 3))
 
     # ----------------------------------------------------------------------------------------------------
     # Compute vertices based on shape transformation values
