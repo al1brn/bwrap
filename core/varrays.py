@@ -46,6 +46,7 @@ class VArrays(WRoot):
         
     def append(self, values, index=None):
         if index is None:
+            index = len(self.sizes)
             self.sizes = np.append(self.sizes, len(values))
         else:
             self.sizes[index] = len(values)
@@ -55,6 +56,8 @@ class VArrays(WRoot):
                 self.values = np.array(values)
             else:
                 self.values = np.append(self.values, values, axis=0)
+                
+        return index
                 
     # ---------------------------------------------------------------------------
     # Extend with another varrays

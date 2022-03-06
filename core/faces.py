@@ -406,6 +406,11 @@ class Faces(VArrays):
     # example
     # - x = 10        --> 11 points from 0 to 1
     # - x = [2, 3, 7] -->  4 points proportionnaly set into the interval 0 to 1
+    
+    @staticmethod
+    def loc_to_delta(x):
+        xs = np.array(x)
+        return xs[1:] - xs[:-1]
         
     @staticmethod
     def uvgrid(x=10, y=10, rect=(0, 0, 1, 1)):
@@ -425,8 +430,14 @@ class Faces(VArrays):
         xs = np.insert(np.cumsum(dx), 0, 0)
         ys = np.insert(np.cumsum(dy), 0, 0)
         
-        xs = rect[0] + xs/np.sum(dx)*(rect[2] - rect[0])
-        ys = rect[1] + ys/np.sum(dy)*(rect[3] - rect[1])
+        sum_dx = np.sum(dx)
+        sum_dy = np.sum(dy)
+        if sum_dx == 0: sum_dx = 1
+        if sum_dy == 0: sum_dy = 1
+            
+        
+        xs = rect[0] + xs/sum_dx*(rect[2] - rect[0])
+        ys = rect[1] + ys/sum_dx*(rect[3] - rect[1])
         
         uvs = np.empty((len(dy), len(dx), 4, 2), float)
         

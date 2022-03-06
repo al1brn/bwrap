@@ -49,7 +49,8 @@ class Geometry(VertParts):
         # ---------------------------------------------------------------------------
         # Materials
         
-        geo.mat_i = wmesh.material_indices
+        geo.mat_names = wmesh.wmaterials.mat_names
+        geo.mat_i     = wmesh.material_indices
         
         # ---------------------------------------------------------------------------
         # Import from a Mesh
@@ -81,7 +82,7 @@ class Geometry(VertParts):
         
         vcount = wobj.wdata.verts_count
         
-        verts = wobj.wdata.wshape_keys.verts()
+        verts = wobj.wdata.wshape_keys.get_verts()
         if verts is None:
             geo.verts = wobj.wdata.verts.reshape(1, 1, vcount, 3)
         else:
@@ -92,8 +93,8 @@ class Geometry(VertParts):
         # ---------------------------------------------------------------------------
         # Materials
         
-        geo.materials = wobj.wmaterials.mat_names
-        geo.mat_i = wobj.wdata.material_indices
+        geo.mat_names = wobj.wmaterials.mat_names
+        geo.mat_i     = wobj.wdata.material_indices
         
         # ---------------------------------------------------------------------------
         # Import from a Mesh
@@ -134,19 +135,24 @@ class Geometry(VertParts):
     # ----------------------------------------------------------------------------------------------------
     # Set to an object
     
-    def set_to(self, object, verts=None):
+    def set_to(self, object, verts=None, replace_materials=False, shape_keys=True):
         
         wobj = wrap(object, create=self.type.upper())
         
         # ----- Materials
         
-        wobj.wmaterials.replace(self.materials)
+        if replace_materials:
+            wobj.wmaterials.mat_names = self.mat_names
+        else:
+            n = np.max(self.mat_i)
+            if (n > 0) and (len(wobj.wmaterials) < n+1):
+                wobj.wmaterials.append(self.mat_names[len(wobj.wmaterials):])
         
         # ----- Verts
         
         if verts is None:
             verts = self.true_verts(self.shaped_verts())
-        
+            
         # ----- Mesh
         
         if self.type == 'Mesh':
@@ -175,6 +181,16 @@ class Geometry(VertParts):
                 
             if hasattr(self, 'splines_properties'):
                 wobj.wdata.splines_properties = self.splines_properties
+                
+        # ----- Shape keys
+        
+        if shape_keys and (self.shapes_count > 1):
+            verts = np.reshape(np.transpose(self.verts, (1, 0, 2, 3)), (self.shapes_count, self.parts_count*self.part_size, 3))
+            if self.true_indices is None:
+                wobj.wshape_keys.set_verts(verts)
+            else:
+                wobj.wshape_keys.set_verts(verts[:, self.true_indices])
+                
                 
         return wobj
 
@@ -384,7 +400,11 @@ class OLD():
         s += f"   parts count:  {self.parts_count:4d} part(s)\n"
         s += f"   shapes count: {self.shapes_count:4d} shape(s)\n"
         s += f"   part size:    {self.part_size:4d} vertices; {self.sizes[:10]}{'...' if len(self.sizes) > 10 else ''}\n"
-        s += f"   vertices:     {self.true_verts_count:4d} true on {self.verts_count} stored, ratio = {self.true_verts_count/self.verts_count*100:.1f}%\n"
+        if self.verts_count > 0:
+            sratio = f", ratio = {self.true_verts_count/self.verts_count*100:1f}%"
+        else:
+            sratio = ""
+        s += f"   vertices:     {self.true_verts_count:4d} true on {self.verts_count} stored{sratio}\n"
         s +=  "   true indices: "
         if self.true_indices is None:
             s += "None\n"

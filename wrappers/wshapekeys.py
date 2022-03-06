@@ -10,7 +10,7 @@ import numpy as np
 
 import bpy
 
-from .wstruct import WStruct
+#from .wstruct import WStruct
 from .wsplines import WSplines
 from ..core.commons import WError
 
@@ -26,124 +26,175 @@ from ..core.commons import WError
 #                     ShapeKeyCurvePoint
 #       
 # cube.data.shape_keys.key_blocks[].data[].co
+#
+# A key is either a string (name of the shape) or an int (index in the array)
+# Series are managed through a key name and a number of steps
 
-
-
-
-# ---------------------------------------------------------------------------
+# ====================================================================================================
 # WShapeKeys
-# Initializer is a data wrapper
 
-class WShapeKeys(WStruct):
+class WShapeKeys():
     
-    def __init__(self, data):
-        super().__init__(name=data.name)
-        self.object_type = type(data).__name__
+    def __init__(self, name):
         
-    @property
-    def wrapped(self):
-        if self.object_type == 'Mesh':
-            return bpy.data.meshes[self.name]
+        if type(name) is str:
+            self.name = name
         else:
-            return bpy.data.curves[self.name]
-        
-    # ----------------------------------------------------------------------------------------------------
-    # Blender object
-    
-    @property
-    def blender_object(self):
-        for obj in bpy.data.objects:
-            if obj.data.name == self.name:
-                return obj
+            self.name = name.name
             
-    # ----------------------------------------------------------------------------------------------------
-    # Mesh or curve
+    def __repr__(self):
+        s = f"<WShapeKeys of '{self.name}': {len(self)} shapes"
+        return s + ">"
+    
+    # ---------------------------------------------------------------------------
+    # Access to the object
+
+    @property
+    def object(self):
+        return bpy.data.objects[self.name]
+
+
+    @property
+    def object_type(self):
+        return type(self.data).__name__
+    
+    # ---------------------------------------------------------------------------
+    # Access to the data structure
     
     @property
-    def is_mesh(self):
-        return self.object_type == 'Mesh'
+    def data(self):
+        return self.object.data
+    
+    # ----------------------------------------------------------------------------------------------------
+    # Access to the shape_keys prperty
+    # Create it if it doesn't exist.
+    # Call data.shape_key to check it without create it
+    
+    def shape_keys(self, first_name="Basis"):
         
-    # ----------------------------------------------------------------------------------------------------
-    # Do we have shape keys at least
+        obj = self.object
+        shape_keys = obj.data.shape_keys
+
+        if shape_keys is None:
+            if first_name is None:
+                return None
+            obj.shape_key_add(name=first_name)
+            shape_keys = obj.data.shape_keys
+            
+        return shape_keys
     
-    @property
-    def shape_keys(self):
-        """The Blender shape_keys block.
-        """
-        return self.wrapped.shape_keys
+    # ----------------------------------------------------------------------------------------------------
+    # The blocks
+    
+    def key_blocks(self, first_name="Basis"):
+        return self.shape_keys(first_name).key_blocks
+    
+    # ====================================================================================================
+    # Get a shape key or an array of shape keys
+    #
+    # Used by getitem with create=False
+    
+    def shape_key(self, key, create=False):
+        
+        # ----- Done if empty
+        
+        if len(self) == 0:
+            if not create:
+                raise WError(f"Shape key index error. The object '{self.name}' has no shape key",
+                             Class    = "WShapeKeys",
+                             Method   = "shape_key",
+                             Object   = self.name,
+                             key      = key,
+                             create   = create)
+        
+        # ----- Integer index
+        
+        if type(key) is int:
+            
+            # ----- We don't create keys with int index
+            
+            if key >= len(self):
+                raise WError(f"Shape key index '{key}' is greater than the number of shape keys {len(self)}.",
+                             Class    = "WShapeKeys",
+                             Method   = "shape_key",
+                             Object   = self.name,
+                             key      = key,
+                             create   = create)
+            
+            return self.key_blocks()[key]
+        
+        # ----- Key name
+        
+        elif type(key) is str:
+            
+            block = self.key_blocks(key).get(key)
+            if block is None:
+                if not create:
+                    raise WError(f"Shape key '{key}' doesn't exist.",
+                             Class    = "WShapeKeys",
+                             Method   = "shape_key",
+                             Object   = self.name,
+                             key      = key,
+                             create   = create)
+                    
+                self.object.shape_key_add(name=key)
+                return self.key_blocks()[key]
+                
+            return block
+        
+        # ----- An array of keys
+        
+        elif hasattr(key, "__len__"):
+            return [self.shape_key(k, create) for k in key]
+        
+        # ----- What the hell is this key ?
+        
+        else:
+            raise WError("Invalid shape key . The key ust be int, str or array of valid keys.",
+                             Class    = "WShapeKeys",
+                             Method   = "shape_key",
+                             Object   = self.name,
+                             key      = key,
+                             create   = create)
 
     # ----------------------------------------------------------------------------------------------------
-    # Create the shape_keys structure
+    # As an array of key_blocks
     
-    @property
-    def safe_shape_keys(self):
-        sks = self.shape_keys
-        if sks is not None:
-            return sks
+    def __len__(self):
+        return 0 if self.data.shape_keys is None else len(self.key_blocks())
+    
+    def __getitem__(self, key):
+        return self.shape_key(key, create=False)
         
-        obj = self.blender_object
-        
-        obj.shape_key_add()
-        obj.data.shape_keys.use_relative = False
-        
-        return self.shape_keys
     
     # ====================================================================================================
     # Eval time
+    
+    # ----------------------------------------------------------------------------------------------------
+    # Use relative
+    
+    @property
+    def use_relative(self):
+        return self.shape_keys().use_relative
+    
+    @use_relative.setter
+    def use_relative(self, value):
+        self.shape_keys().use_relative = value
     
     # ----------------------------------------------------------------------------------------------------
     # Shape_key eval time
     
     @property
     def eval_time(self):
-        return self.safe_shape_keys.eval_time
+        return self.shape_keys().eval_time
     
     @eval_time.setter
     def eval_time(self, value):
-        self.safe_shape_keys.eval_time = value
+        self.shape_keys().eval_time = value
         
     
     # ====================================================================================================
-    
-    # ----------------------------------------------------------------------------------------------------
-    # ----------------------------------------------------------------------------------------------------
-    # Shape keys are managed:
-    # - By an individual name
-    # - By a name and a step --> name xxx is the single name of a shape key
-    # - By an array of names
-    #
-    # The following utility method return:
-    # - An array of key names
-    # - A flag indicating if the input was or not a single name
-    
-    # ----------------------------------------------------------------------------------------------------
-    # Build the stepped names
-    
-    @staticmethod
-    def stepped_keys(name, step=None):
-        """Stepped shape key name. 
-
-        Parameters
-        ----------
-        name : str
-            Base name of the shape key name.
-        step : int or array of ints, optional
-            The step number. The default is None.
-
-        Returns
-        -------
-        str
-            Array of full names of the shape key.
-            bool : True if single name
-        """
-        
-        if step is None:
-            return [name], True
-        
-        if hasattr(step, '__len__'):
-            return [f"{name} {i:3d}" for i in step], False
-        
-        return [f"{name} {step:3d}" for i in step], True
+    # Keys utilities
     
     # ----------------------------------------------------------------------------------------------------
     # Test if a key exists
@@ -151,252 +202,26 @@ class WShapeKeys(WStruct):
     def key_exists(self, key):
         if len(self) == 0:
             return False
-        return self.shape_keys.key_blocks.get(key) is not None
+        
+        if type(key) is int:
+            return key < len(self)
+        
+        return self.key_blocks().get(key) is not None
     
     # ----------------------------------------------------------------------------------------------------
-    # If a name is not an existing name, it could be the whole series
-    
-    def name_is_series_name(self, name):
-        
-        if len(self) == 0:
-            return False
-        
-        blocks = self.shape_keys.key_blocks
-        
-        for sk in blocks:
-            base = sk.name[:len(name)] 
-            sind = sk.name[len(name):]
-            if base == name:
-                try:
-                    _  = int(sind)
-                    return True
-                except:
-                    pass
-                
-        return False
-    
-    # ---------------------------------------------------------------------------
-    # Get all the names shaping a series: 'name 001' ... 'name 099' ...
-    
-    def series_keys(self, name):
-        
-        if len(self) == 0:
-            return []
-        
-        blocks = self.shape_keys.key_blocks
-        
-        indices = []
-        keys    = []
-        for sk in blocks:
-            base = sk.name[:len(name)] 
-            sind = sk.name[len(name):]
-            if base == name:
-                try:
-                    indices.append(int(sind))
-                    keys.append(sk.name)
-                except:
-                    pass
-                
-        return keys
-        
-    # ----------------------------------------------------------------------------------------------------
-    # Utility to convert a couple (name, step) is an array of keys plus the single flag
-    
-    def keys_array(self, name, step, sort=False):
-        
-        # ----- Name is None: we want all the keys
-        
-        if name is None:
-            keys   = [sk.name for sk in self.safe_shape_keys.key_blocks]
-            single = False
-        
-        # ----- Name is a string, a single name or the stepped keys
-        
-        elif type(name) is str:
-            if step is None:
-                if self.key_exists(name):
-                    return [name], True
-                
-                if self.name_is_series_name(name):
-                    keys   = self.series_keys(name)
-                    single = False
-                else:
-                    return [name], True
-                
-            else:
-                keys, single = self.stepped_keys(name, step)
-
-        # ----- Otherwise: name is an array of strings (let's hoep so !)
-        
-        else:
-            keys   = name
-            single = False
-            
-        # ---------------------------------------------------------------------------
-        # Let's sort if requested
-        
-        if sort:
-            blocks = self.safe_shape_keys.key_blocks
-            sks = {}
-            for key in keys:
-                sk = blocks.get(key)
-                if sk is not None:
-                    sks[sk.name] = sk.frame
-                    
-            keys = list(dict(sorted(sks.items(), key=lambda item: item[1])).keys())
-
-        # ---------------------------------------------------------------------------
-        # We are good
-        
-        return keys, single    
-    
-    # ====================================================================================================
-    # An array of shape keys
-    #
-    # If requested, a shape key can be created if it doesn't exist
-    
-    def get_create_shape_key(self, key, create=False):
-        
-        if create:
-            sks = self.safe_shape_keys
-        else:
-            sks = self.shape_keys
-            if sks is None:
-                return None
-            
-        sk = sks.key_blocks.get(key)
-        if (sk is not None) or (not create):
-            return sk
-        
-        self.blender_object.shape_key_add(name=key)
-        return sks.key_blocks[key]
-
-    # ----------------------------------------------------------------------------------------------------
-    # As an array of shape keys
-    
-    def __len__(self):
-        return 0 if self.shape_keys is None else len(self.shape_keys.key_blocks)
-    
-        
-    
-    def index_to_indices(self, index):
-        
-        # ----- Key name is int : very simple
-        if type(index) is int:
-            return [index], True
-        
-        # ----- Key name is str, if it doesn't exist, could be the series
-        if type(index) is str:
-            if self.name_is_series_name(index):
-                return self.series_keys(index), False
-            else:
-                return [index], True
-        
-        # ----- Can be a slice
-        if isinstance(index, slice):
-            inds = index.indices(len(self))
-            return [i for i in range(inds[0], inds[1], inds[2])], False
-        
-        # ----- Can be a couple name, step
-        if (type(index) is tuple) and (len(index) == 2):
-            return self.keys_array(index[0], index[1], sort=False)
-        
-        else:
-            return index, False # It should be an array 
-        
-        raise WError(f"Bad shape keys index: {index}. Use valid shape keys")
-        
-    
-    def __getitem__(self, index):
-        
-        sks = self.shape_keys
-        if sks is None:
-            return None
-        
-        indices, single = self.index_to_indices(index)
-        sks = [sks.key_blocks.get(i) for i in indices]
-        
-        if single:
-            return sks[0]
-        else:
-            return sks
-    
-    # ====================================================================================================
     # All the keys
     
     @property
     def all_keys(self):
-        if self.shape_keys is None:
+        if len(self) == 0:
             return []
-        else:
-            keys, _ = self.keys_array(None, None, sort=True)
-            return keys
         
-    # ====================================================================================================
-    # Same as getitem but create shake keys which doesn't exist
+        return [block.name for block in self.key_blocks()]
     
-    @property
-    def safe_get(self, index):
-
-        sks = self.safe_shape_keys
-        if sks is None:
-            return None
-        
-        indices, single = self.index_to_indices(index)
-        sks = [self.get_create_shape_key(i, create=True) for i in indices]
-        
-        if single:
-            return sks[0]
-        else:
-            return sks
-        
-    # -----------------------------------------------------------------------------------------------------------------------------
-    # Set the eval_time property to the shape key
-
-    def set_on_key(self, name, step=None):
-        """Set the evaluation time of the object on the specified shape key.
-        
-        The method raises an error if the shape key doesn't exist. Call sk_exists
-        before for a safe call.
-
-        Parameters
-        ----------
-        name : str
-            Base name of the shape key.
-        step : int, optional
-            Step of the shape key if in a series. The default is None.
-
-        Raises
-        ------
-        RuntimeError
-            If the shape key doesn't exist.
-
-        Returns
-        -------
-        TYPE
-            DESCRIPTION.
-        """
-        
-        key, single = self.keys_array(name)
-        if not single:
-            raise WError(f"Impossible to set eval time on several shape keys: {key}.",
-                         Class = "WShapeKeys", Method="set_on_key", name=name, step=step)
-
-        sk = self[key]
-        if key is None:
-            raise WError(f"The shape key '{self.sk_name(name, step)}' doesn't exist in object '{self.name}'!",
-                         Class = "WShapeKeys",
-                         Method = "set_on_sk",
-                         name = name,
-                         step = step)
-        
-        self.eval_time = sk.frame
-        return self.eval_time
-
     # -----------------------------------------------------------------------------------------------------------------------------
     # Delete a shape key
 
-    def delete(self, name=None, step=None):
+    def delete(self, key):
         """Delete a shape key.
         
         If name is None, all the shape keys are deleted.
@@ -416,29 +241,83 @@ class WShapeKeys(WStruct):
         if len(self) == 0:
             return
         
-        obj = self.blender_object
-        
-        if name is None:
-
-            obj.shape_key_clear()
+        if key is None:
+            self.object.shape_key_clear()
+            
+        elif type(key) is str:
+            self.object.shape_key_remove(key)
+            
+        elif hasattr(key, '__len__'):
+            for k in key:
+                self.delete(k)
             
         else:
-            sks = self[name, step]
-            for sk in sks:
-                if sk is not None:
-                    obj.shape_key_remove(sk)
-                    
+            raise WError("Invalid shape key for deletion: {key}.",
+                    Class    = "WShapeKeys",
+                    Method   = "delete",
+                    Object   = self.name,
+                    key      = key)
                 
     # ====================================================================================================
     # Series management
+    
+    # ----------------------------------------------------------------------------------------------------
+    # Build the stepped names
+    # CAUTION: to match Blender behavior, keys are numbered from 1 not 0
+    
+    @staticmethod
+    def series_key(name, step=None):
+        """Stepped shape key name. 
+
+        Parameters
+        ----------
+        name : str
+            Base name of the shape key name.
+        step : int or array of ints, optional
+            The step number. The default is None.
+
+        Returns
+        -------
+        str or array of str
+        """
+        
+        if step is None:
+            return name
+        
+        if hasattr(step, '__len__'):
+            return [f"{name} {i+1}" for i in step]
+        
+        return f"{name} {step+1}"
+    
+    # ---------------------------------------------------------------------------
+    # Is a series name
+    
+    def is_series_name(self, name):
+        return self.key_exists(self.series_key(name, 0))
+    
+    # ---------------------------------------------------------------------------
+    # Get all the names shaping a series: 'name 1' ... 'name 123' ...
+    
+    def series_keys(self, name):
+        
+        all_keys = self.all_keys
+        
+        keys = []
+        for key_name in all_keys:
+            base = key_name[:len(name)]
+            sind = key_name[len(name)+1:]
+            if (base == name) and (sind.isdigit()):
+                keys.append(key_name)
+                
+        return keys
 
     # ---------------------------------------------------------------------------
     # Create a series
     
     def create_series(self, name, steps):
         
-        cur_keys = self.series_keys(name)
-        target_keys, _ = self.keys_array(name, range(steps))
+        cur_keys    = self.series_keys(name)
+        target_keys = self.keys_array(name, range(steps))
         
         dels = []
         for key in cur_keys:
@@ -447,114 +326,163 @@ class WShapeKeys(WStruct):
                 
         self.delete(dels)
         
-        for key in target_keys:
-            if key in cur_keys:
-                continue
-            self.get_create_shape_key(key, create=True)
-        
-        return self[target_keys]
+        return self.shape_key(target_keys)
 
     # ---------------------------------------------------------------------------
     # The key shapes of a series
             
-    def get_series(self, name):
+    def series(self, name):
         return self[self.series_keys(name)]
+    
+    # ---------------------------------------------------------------------------
+    # Get the keys corresponding to a spec
+    # - None:                  all the keys
+    # - Existing key:          this key
+    # - Base name of a series: all the series keys
+    
+    def get_keys(self, name):
+        
+        if name is None:
+            return self.all_keys
+        
+        elif type(name) is str:
+            if self.key_exists(name):
+                return [name]
+            else:
+                return self.series_keys(name)
+            
+        elif hasattr(name, '__len__'):
+            return name
+        
+        else:
+            raise WError(f"Invalide name '{name}' to build a list of keys.",
+                        Class = "WShapeKeys",
+                        Method = "get_keys",
+                        Object   = self.name,
+                        name     = name)
     
 
     # ===========================================================================
     # Get the mesh vertices
+    #
+    # Verts are shape (shapes_count, verts_count, 3)
     
-    def get_mesh_vertices(self, name=None, step=None):
+    def get_mesh_vertices(self, name=None):
         
-        if len(self) == 0:
+        # --------------------------------------------------
+        # Get the blocks to read
+        
+        keys = self.get_keys(name)
+        if len(keys) == 0:
             return None
-        
-        keys, single = self.keys_array(name, step)
-        sks = self[keys]
-        if len(sks) == 0:
-            return None
-
-        n = len(sks[0].data)
-        verts = np.zeros((len(sks), n, 3), np.float)
-        
-        a = np.zeros(n*3, np.float)
-
-        for i_sk, sk in enumerate(sks):
-            sk.data.foreach_get('co', a)
-            verts[i_sk] = a.reshape(n, 3)
             
-        if single:
-            return verts[0]
+        blocks = self[keys]
+        if len(blocks) == 0:
+            return None
+
+        # --------------------------------------------------
+        # Let's read the blocks
+        
+        verts_count = len(blocks[0].data)
+        verts = np.zeros((len(blocks), verts_count, 3), float)
+        
+        a = np.zeros(verts_count*3, float)
+
+        for i_sk, block in enumerate(blocks):
+            block.data.foreach_get('co', a)
+            verts[i_sk] = a.reshape(verts_count, 3)
+            
+        return verts
+        
+    # ===========================================================================
+    # Set the mesh vertices
+    
+    def set_mesh_vertices(self, verts, name="Key"):
+
+        # ----- Check the validity of the vertices shape
+        
+        shape = np.shape(verts)
+        if len(shape) == 2:
+            count = 1
+        elif len(shape) == 3:
+            count = shape[0]
         else:
-            return verts
+            raise WError(f"Impossible to set mesh vertices with shape {shape}. The vertices must be shaped either in two ot three dimensions.",
+                        Class = "WShapeKeys",
+                        Method = "set_mesh_vertices",
+                        Object      = self.name,
+                        verts_shape = np.shape(verts),
+                        name        = name)
+            
+        # ----- The list of keys
+            
+        keys = self.series_key(name, range(count))
+        
+        # ----- Let's create the keys
+        
+        vs = np.reshape(verts, (count, shape[-2]*3))
+        a = np.array(vs[0])
+        for i, key in enumerate(keys):
+            
+            block = self.shape_key(key, create=True)
+            
+            a[:] = vs[i]
+            block.data.foreach_set('co', a)
             
     # ===========================================================================
     # Get the curve vertices
     
-    def get_curve_vertices(self, name=None, step=None):
+    def get_curve_vertices(self, name=None):
         
-        if len(self) == 0:
+        # --------------------------------------------------
+        # Get the blocks to read
+        
+        keys = self.get_keys(name)
+        if len(keys) == 0:
+            return None
+            
+        blocks = self[keys]
+        count = len(blocks)
+        if count == 0:
             return None
         
-        keys, single = self.keys_array(name, step)
-        sks = self[keys]
-        if len(sks) == 0:
-            return None
+        # --------------------------------------------------
+        # Let's read the blocks
         
         # --------------------------------------------------
         # Need to read the alternance bezier / not bezier
         
-        profile     = WSplines(self.wrapped).profile
+        profile     = WSplines(self.data).profile
         only_bezier = np.min(profile[:, 0]) == 3
         only_nurbs  = np.max(profile[:, 0]) == 1
         
         nverts      = np.sum(profile[:, 0] * profile[:, 1])
-        
-        if only_bezier:
-            verts = np.zeros((len(sks), nverts, 3), np.float)
-        else:
-            verts = np.zeros((len(sks), nverts, 5), np.float) # plus radius & tilt
+        verts       = np.zeros((count, nverts, 3), float)
             
         # --------------------------------------------------
         # Loop on the shapes
-        
-        if only_bezier:
-            co = np.zeros(nverts*3, np.float)
-            le = np.zeros(nverts*3, np.float)
-            ri = np.zeros(nverts*3, np.float)
-        elif only_nurbs:
-            co = np.zeros(nverts*3, np.float)
-            ra = np.zeros(nverts,   np.float)
-            ti = np.zeros(nverts,   np.float)
-            
 
-        for i_sk, sk in enumerate(sks):
-            
-            if sk is None:
-                continue
+        for i_sk, sk in enumerate(blocks):
             
             # --------------------------------------------------
             # Load bezier when only bezier curves
             
             if only_bezier:
                 
-                co = co.reshape(nverts * 3)
-                le = co.reshape(nverts * 3)
-                ri = ri.reshape(nverts * 3)
-
+                co = np.empty(nverts*3, float)
+                le = np.empty(nverts*3, float)
+                ri = np.empty(nverts*3, float)
+                
                 sk.data.foreach_get('co',           co)
                 sk.data.foreach_get('handle_left',  le)
                 sk.data.foreach_get('handle_right', ri)
                 
-                co = co.reshape(nverts, 3)
-                le = le.reshape(nverts, 3)
-                ri = ri.reshape(nverts, 3)
-                
                 index = 0
                 for t, n, st in profile:
-                    verts[i_sk, 3*index       :3*index + n, ] = co[index]
-                    verts[i_sk, 3*index + n   :3*index + 2*n] = le[index]
-                    verts[i_sk, 3*index + 2*n :3*index + 3*n] = ri[index]
+                    i3 = index*3
+                    verts[i_sk, i3       :i3 + n  ] = co.reshape(nverts, 3)[index: index+n]
+                    verts[i_sk, i3 + n   :i3 + 2*n] = le.reshape(nverts, 3)[index: index+n]
+                    verts[i_sk, i3 + 2*n :i3 + 3*n] = ri.reshape(nverts, 3)[index: index+n]
                     
                     index += n
                     
@@ -563,19 +491,13 @@ class WShapeKeys(WStruct):
             
             elif only_nurbs:
                 
-                co = co.reshape(nverts*3)
+                co = np.empty(nverts*3, float)
                 
-                sk.data.foreach_get('co',     co)
-                sk.data.foreach_get('radius', ra)
-                sk.data.foreach_get('tilt',   ti)
+                sk.data.foreach_get('co', co)
                 
-                co = co.reshape(nverts, 3)
-
                 index = 0
                 for t, n, st in profile:
-                    verts[i_sk, index :index + n, :3] = co[index]
-                    verts[i_sk, index :index + n, 3]  = ra[index]
-                    verts[i_sk, index :index + n, 4]  = ti[index]
+                    verts[i_sk, index :index + n] = co.reshape(nverts, 3)[index: index+n]
                     
                     index += n
                     
@@ -590,47 +512,164 @@ class WShapeKeys(WStruct):
                 if t == 3:
                     
                     for i in range(n):
-                        #print(f"Loop {(t, n)}: index= {index} / nverts= {nverts}, i_data= {i_data} -> {i_data+n} / {len(sk.data)}")
     
                         usk = sk.data[i_data + i]
     
-                        verts[i_sk, index       + i, :3] = usk.co
-                        verts[i_sk, index +   n + i, :3] = usk.handle_left
-                        verts[i_sk, index + 2*n + i, :3] = usk.handle_right
+                        verts[i_sk, index       + i] = usk.co
+                        verts[i_sk, index +   n + i] = usk.handle_left
+                        verts[i_sk, index + 2*n + i] = usk.handle_right
                         
                     index += 3*n
                     
                 else:
                 
                     for i in range(n):
-                        #print(f"Loop {(t, n)}: index= {index} / nverts= {nverts}, i_data= {i_data} -> {i_data+n}/ {len(sk.data)}")
     
                         usk = sk.data[i_data + i]
     
-                        verts[i_sk, index + i, :3] = usk.co
-                        verts[i_sk, index + i,  3] = usk.radius
-                        verts[i_sk, index + i,  4] = usk.tilt
+                        verts[i_sk, index + i] = usk.co
                         
                     index += n
                     
                 i_data += n
 
+        return verts
 
-
-        if single:
-            return verts[0]
-        else:
-            return verts
+    # ===========================================================================
+    # Get the curve vertices
+    
+    def set_curve_vertices(self, verts, name="Key"):
         
+        # ----- Check the validity of the vertices shape
+        
+        shape = np.shape(verts)
+        if len(shape) == 2:
+            count = 1
+        elif len(shape) == 3:
+            count = shape[0]
+        else:
+            raise WError(f"Impossible to set curve vertices with shape {shape}. The vertices must be shaped either in two ot three dimensions.",
+                        Class = "WShapeKeys",
+                        Method = "set_curve_vertices",
+                        Object      = self.name,
+                        verts_shape = np.shape(verts),
+                        name        = name)
+            
+        # --------------------------------------------------
+        # Let's write the blocks
+        
+        # --------------------------------------------------
+        # Need to read the alternance bezier / not bezier
+        
+        profile     = WSplines(self.data).profile
+        only_bezier = np.min(profile[:, 0]) == 3
+        only_nurbs  = np.max(profile[:, 0]) == 1
+        
+        nverts      = np.sum(profile[:, 0] * profile[:, 1])
+        if nverts != shape[-2]:
+            raise WError(f"Impossible to set curve vertices with shape {shape}. The number of vertices per shape must be {nverts}, not {shape[-2]}.",
+                        Class = "WShapeKeys",
+                        Method = "set_curve_vertices",
+                        Object      = self.name,
+                        verts_shape = np.shape(verts),
+                        name        = name)
+            
+        # --------------------------------------------------
+        # Loop on the shapes
+        
+        # ----- The list of keys
+            
+        keys = self.series_key(name, range(count))
+        
+        for i_sk, key in enumerate(keys):
+            
+            sk = self.shape_key(key, create=True)
+            
+            # --------------------------------------------------
+            # Only bezier curves
+            
+            if only_bezier:
+                
+                co = np.empty((nverts, 3), float)
+                le = np.empty((nverts, 3), float)
+                ri = np.empty((nverts, 3), float)
+                
+                index = 0
+                for t, n, st in profile:
+                    i3 = index*3
+                    co[index:index + n] = verts[i_sk, i3       :i3 + n  ]
+                    le[index:index + n] = verts[i_sk, i3 + n   :i3 + 2*n]
+                    ri[index:index + n] = verts[i_sk, i3 + 2*n :i3 + 3*n]
+                    
+                    index += n
+                    
+                sk.data.foreach_set('co',           co.reshape(nverts * 3))
+                sk.data.foreach_set('handle_left',  le.reshape(nverts * 3))
+                sk.data.foreach_set('handle_right', ri.reshape(nverts * 3))
+                    
+            # --------------------------------------------------
+            # No bezier curve at all
+            
+            elif only_nurbs:
+                
+                co = np.empty((nverts, 3), float)
+
+                index = 0
+                for t, n, st in profile:
+                    co[index: index+n] = verts[i_sk, index :index + n]
+                    
+                    index += n
+                
+                sk.data.foreach_set('co', co.reshape(nverts * 3))
+
+            # --------------------------------------------------
+            # We have to loop :-(
+            
+            i_data = 0
+            index  = 0
+            
+            for t, n, st in profile:
+                
+                if t == 3:
+                    
+                    for i in range(n):
+    
+                        usk = sk.data[i_data + i]
+    
+                        usk.co           = verts[i_sk, index       + i]
+                        usk.handle_left  = verts[i_sk, index +   n + i]
+                        usk.handle_right = verts[i_sk, index + 2*n + i]
+                        
+                    index += 3*n
+                    
+                else:
+                
+                    for i in range(n):
+    
+                        usk = sk.data[i_data + i]
+    
+                        usk.co = verts[i_sk, index + i]
+                        
+                    index += n
+                    
+                i_data += n
+
     # ----------------------------------------------------------------------------------------------------
     # Get vertices
     
-    def verts(self, name=None, step=None):
+    def get_verts(self, name=None):
         
-        if self.is_mesh:
-            return self.get_mesh_vertices(name, step)
+        if self.object_type == 'Mesh':
+            return self.get_mesh_vertices(name)
         else:
-            return self.get_curve_vertices(name, step)
+            return self.get_curve_vertices(name)
+    
+    def set_verts(self, name="Key"):
+        
+        if self.object_type == 'Mesh':
+            return self.set_mesh_vertices(name)
+        else:
+            return self.set_curve_vertices(name)
     
 
     # ---------------------------------------------------------------------------
@@ -640,7 +679,7 @@ class WShapeKeys(WStruct):
     def get_sk_animation(self, eval_times):
         memo = self.eval_time
         
-        verts = np.empty((len(eval_times), self.verts_count, 3), np.float)
+        verts = np.empty((len(eval_times), self.verts_count, 3), float)
         for i, evt in enumerate(eval_times):
             self.eval_time = evt
             verts[i] = self.evaluated.verts

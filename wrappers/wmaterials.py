@@ -6,18 +6,40 @@ Created on Tue Aug 10 18:12:24 2021
 @author: alain
 """
 
+import numpy as np
+
 import bpy
-from .wstruct import WStruct
+
+from ..core.commons import WError
 
 # Interface for materials management
+# Can be initialized either from an object name or directly from the data structure
 
-class WMaterials(WStruct):
+class WMaterials():
     
-    def __init__(self, name):
-        if not type(name) is str:
-            name = name.name
+    def __init__(self, object_name=None, data=None):
+        
+        if object_name is None:
+            if data is None:
+                raise WError("WMaterials initialization error. Either object name or data structure must be provided.",
+                    Class = "WMaterials",
+                    Mehod = "__init__")
+                
+            self.data_       = data
+            self.object_name = None
             
-        super().__init__(name=name)
+        else:
+            if type(object_name) is str:
+                self.object_name = object_name
+            else:
+                self.object_name = object_name.name
+            
+    @property
+    def name(self):
+        if self.object_name is None:
+            return f"{type(self.data).__name__} {self.data.name}"
+        else:
+            return f"Object {self.object_name}"
         
     def __repr__(self):
         s = f"<WMaterials of '{self.name}': "
@@ -32,44 +54,111 @@ class WMaterials(WStruct):
                 s += f"   {i:2d}: '{self[i].name}'\n"
         return s + ">"
 
+    # ---------------------------------------------------------------------------
+    # Access to the data structure
+    
     @property
-    def wrapped(self):
-        return bpy.data.objects[self.name].data.materials
+    def data(self):
+        if self.object_name is None:
+            return self.data_
+        else:
+            return bpy.data.objects[self.object_name].data
+
+    # ---------------------------------------------------------------------------
+    # Access to the blender structure
+    
+    @property
+    def materials(self):
+        return self.data.materials
+    
+    # ---------------------------------------------------------------------------
+    # As an array of materials
         
     def __len__(self):
-        return len(self.wrapped)
+        return len(self.materials)
     
     def __getitem__(self, index):
-        return self.wrapped[index]
+        return self.materials[index]
         
     def clear(self):
-        self.wrapped.clear()
+        self.materials.clear()
         
+    # ---------------------------------------------------------------------------
+    # Data type
+    
     @property
-    def mat_names(self):
-        return [mat.name for mat in self.wrapped]
+    def data_type(self):
+        return type(self.data).__name__
+
+    # ---------------------------------------------------------------------------
+    # Access to the structure owning the material_index attribute
+    
+    @property
+    def indices_structure(self):
+
+        dtype = self.data_type
+        if dtype == 'Mesh':
+            return self.data.polygons
         
-    def indices_by_name(self, name):
-        indices = []
-        for i, mat in enumerate(self.wrapped):
-            if mat.name == name:
-                indices.append(i)
-        return indices
+        elif dtype == 'Curve':
+            return self.data.splines
+            
+        elif dtype == 'TextCurve':
+            return self.data.body_format
+            
+        else:
+            return None
+    
+    # ---------------------------------------------------------------------------
+    # Get / set the materials indices
+    
+    @property
+    def material_indices(self):
         
-    def copy_materials_from(self, other, append=False):
-        mat_names = self.mat_names
-        wmat = WMaterials(other)
-        for mat in wmat.wrapped:
-            if append or (mat.name not in mat_names):
-                self.wrapped.append(mat)
-                
-    def replace(self, names):
-        self.clear()
+        props = self.indices_structure
+        if props is None:
+            return None
+        else:
+            a = np.empty(len(props), int)
+            props.foreach_get('material_index', a)
+            return a
+            
+    @material_indices.setter
+    def material_indices(self, indices):
+        
+        props = self.indices_structure
+        if props is not None:
+            a = np.empty(len(props), int)
+            a[:] = indices
+            a = np.clip(a, 0, len(self)-1)
+            props.foreach_set('material_index', a)
+        
+    # ---------------------------------------------------------------------------
+    # Materials names
+    
+    def append(self, names):
         for name in names:
             mat = bpy.data.materials.get(name)
             if mat is None:
                 mat = bpy.data.materials.new(name)
             
-            self.wrapped.append(mat)
+            self.materials.append(mat)
+    
+        
+    @property
+    def mat_names(self):
+        return [mat.name for mat in self.materials]
+    
+    @mat_names.setter
+    def mat_names(self, names):
+        
+        mat_i = self.mat_indices
+
+        self.clear()
+        self.append(names)
             
+        self.mat_indices = mat_i
+        
             
+        
+                

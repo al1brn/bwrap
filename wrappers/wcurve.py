@@ -128,14 +128,14 @@ class WCurve(WID):
     
     @property
     def wshape_keys(self):
-        return WShapeKeys(self.wrapped)
+        return WShapeKeys(self.blender_object)
 
     # ===========================================================================
     # Materials
     
     @property
     def wmaterials(self):
-        return WMaterials(self)
+        return WMaterials(data=self)
         
     @property
     def material_indices(self):
@@ -224,25 +224,6 @@ class WCurve(WID):
         return other
     
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-        
-    
     @property
     def curve_properties(self):
         class Props():
@@ -264,8 +245,8 @@ class WCurve(WID):
 
     @classmethod
     def exposed_properties(cls):
-        return {"materials": 'RO', "wsplines": 'RO', "wshape_keys": 'RO', "profile": 'RW', "ext_verts": 'RO', "verts": 'RW',
-                "wmaterials": 'RO', "material_indices": 'RW', "verts_count": 'RO', "verts_dim": 'RO',
+        return {"materials": 'RO', "wsplines": 'RO', "profile": 'RW', "ext_verts": 'RO', "verts": 'RW',
+                "material_indices": 'RW', "verts_count": 'RO', "verts_dim": 'RO', "wshape_keys": 'RO',
                 "curve_properties": 'RW', "splines_properties": 'RW'}
     
     # ===========================================================================

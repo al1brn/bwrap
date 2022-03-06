@@ -821,24 +821,11 @@ class WMesh(WID):
     # Materials
 
     # ---------------------------------------------------------------------------
-    # Materials names
-    
-    @property
-    def mat_names(self):
-        return [mat.name for mat in self.wrapped.materials]
-    
-    @mat_names.setter
-    def mat_names(self, value):
-        self.wrapped.materials.clear()
-        for name in value:
-            self.wrapped.materials.append(bpy.data.materials[name])
-
-    # ---------------------------------------------------------------------------
     # Materials indices
     
     @property
     def wmaterials(self):
-        return WMaterials(self)
+        return WMaterials(data=self)
         
     @property
     def material_indices(self):
@@ -1183,7 +1170,7 @@ class WMesh(WID):
     
     @property
     def wshape_keys(self):
-        return WShapeKeys(self.wrapped)
+        return WShapeKeys(self.blender_object)
         
     # ===========================================================================
     # Faces neighborhood
@@ -1354,9 +1341,9 @@ class WMesh(WID):
     @classmethod
     def exposed_properties(cls):
         return {"verts_count": 'RO', "verts_dim": 'RO', "shape": 'RO', "verts": 'RW', "xs": 'RW', "ys": 'RW', "zs": 'RW',
-             "bevel_weights": 'RW',"wedges": 'RO', "faces_count": 'RO', "mat_names": 'RW',
-             "faces": 'RO', "centers": 'RO', "normals": 'RO', "wmaterials" : 'RO',
-             "materials": 'RO', "material_indices": 'RW', "uvmaps": 'RO', "wshape_keys": 'RO', "all_uvs": 'RW', "uvs_size": 'RO'}
+             "bevel_weights": 'RW',"wedges": 'RO', "faces_count": 'RO', "wshape_keys": 'RO',
+             "faces": 'RO', "centers": 'RO', "normals": 'RO',
+             "material_indices": 'RW', "uvmaps": 'RO', "all_uvs": 'RW', "uvs_size": 'RO'}
         
     # ===========================================================================
     # Generated source code for WMesh class

@@ -13,10 +13,6 @@ from core.wroot import WRoot
 from core.vertparts import VertParts
 from core.faces import Faces
 
-def f(t):
-    v = np.zeros((len(t), 3), float)
-    v[:, 2] = t
-    return v
 
-geo = VertParts.CurveToMesh(f)
+geo = VertParts.Arrow(segms=8)
 print(geo)

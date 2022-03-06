@@ -201,7 +201,7 @@ class Crowd(Transformations):
         
         self.rebuild = False
         
-        return self.full_geometry.set_to(wobj, verts=self.transform())
+        return self.full_geometry.set_to(wobj, verts=self.transform(), shape_keys=False)
 
     # ---------------------------------------------------------------------------
     # Update the object
@@ -427,7 +427,7 @@ class Crowds(Transformations):
         if crowd_name is not None:
             self.crowd_name = crowd_name
         
-        return self.full_geometry.set_to(self.crowd_name, verts=self.transform())
+        return self.full_geometry.set_to(self.crowd_name, verts=self.transform(), shape_keys=False)
 
     # ---------------------------------------------------------------------------
     # Update the object

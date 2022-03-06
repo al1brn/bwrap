@@ -44,7 +44,7 @@ class VertParts(WRoot):
         self.sizes     = np.empty((0,), int)           # Number of vertices per part
         self.true_indices = None
 
-        self.materials = []
+        self.mats_     = []
         self.mat_i     = np.empty(0, int)
         
         if self.type == 'Mesh':
@@ -397,18 +397,217 @@ class VertParts(WRoot):
         if materials:
             for i in range(len(geo.mat_i)):
                 if i < 5:
-                    geo.materials.append(f"Material {i}")
+                    geo.mats_.append(f"Material {i}")
                 geo.mat_i[i] = i % 5
         
         # ----- return the Geometry
         
         return geo
+
+    
+    # ---------------------------------------------------------------------------
+    # A head of and arrow
+    
+    @classmethod
+    def ArrowHead(cls, shaft_radius=0.04, head_radius=.14, height=0.2, recess=.3, segms=16, z=0., orient='Z', uv_rect=(0, 0, 1, 1)):
+        
+        # ----- Height is null : only two circles
+        
+        if height < 0.001:
+            zs = np.zeros(2, float)
+            rs = np.array([shaft_radius, head_radius])
+            
+        # ----- Height is not Null
+        
+        else:
+            
+            # ----- Vertical increment for external cone
+            # Slope is z --> radius
+            
+            dz = min(.01, height/3)
+            outer_slope = head_radius / height
+            
+            # ----- A single cone when the head radius is smaller than
+            # the shaft radius
+            
+            spike = head_radius <= shaft_radius
+            
+            # ----- Spike: no recess, only one intermédiary circle 
+            
+            if spike:
+                head_radius = shaft_radius
+                outer_slope = head_radius / height
+                
+                head_z = 0
+                zs = np.array([0.])
+                rs = np.array([shaft_radius])
+                
+            # ----- Head with a recess
+                
+            else:
+                
+                # ----- Check that the recess doesn't make the shaft
+                # pass through the external cone
+                
+                min_head_z = -height + shaft_radius / outer_slope
+                head_z     = np.clip(-recess*height, min_head_z, 0.)
+                
+                # ----- Radius increment for intermediary circles
+                # CAUTION: slope is radius --> z
+                
+                dr = min(.01, (head_radius - shaft_radius)/3)
+                inner_slope = -head_z / (head_radius - shaft_radius)
+                
+                zs = [0.,           -inner_slope*dr,   head_z + inner_slope*dr, head_z     ]
+                rs = [shaft_radius, shaft_radius + dr, head_radius - dr,        head_radius]
+                
+                
+        if False:
+            for t in np.linspace(dz, height-dz, 6):
+                zs = np.append(zs, head_z + t)
+                rs = np.append(rs, head_radius - t*outer_slope)
+        else:
+            zs = np.append(zs, (head_z + dz,                  head_z + height - dz))
+            rs = np.append(rs, (head_radius - dz*outer_slope, dz*outer_slope))
+            
+        # ---------------------------------------------------------------------------
+        # Let's build the head
+        
+        n = len(zs)
+        verts = np.zeros((n, segms, 3), float)
+        verts[..., 0], verts[..., 1] = cls.polygon(segms, radius=1.)
+        verts[..., 2] = np.reshape(zs, (n, 1))
+        verts[..., :2] *= np.reshape(rs, (n, 1, 1))
+        
+        # ----- Top point
+        
+        verts = np.append(np.reshape(verts, (n*segms, 3)), [[0, 0, head_z + height]], axis=0)
+
+        # ----- Faces
+        
+        faces = Faces.Grid(segms, len(rs), x_close=True, y_close=False)
+        faces.extend(Faces.Triangles(len(verts)-1, np.arange(segms)+(n-1)*segms, close=True))
+        
+        # ----- Uvs
+
+        itv = np.zeros(len(zs)+1, float)
+        itv[1:] = zs
+        
+        uvs = Faces.uvgrid(len(rs), itv[1:] - itv[:-1], uv_rect)
+        
+        # ---- The geometry
+        
+        geo = cls.MeshFromData(verts, faces)
+        geo.uvmaps["UVMap"] = uvs
+        geo.ensure_mat_i()
+        
+        return geo    
+    
+    # ---------------------------------------------------------------------------
+    # An arrow
+    #
+    # - Base
+    # - Shaft length
+    # - head base
+    # - head top = length
+    
+    @classmethod
+    def Arrow(cls, length=1., radius=0.04, segms=16, head_height=0.3, head_angle=25., shapes=True):
+        
+        # ----- Animated arrow
+        
+        if shapes:
+            
+            def get_arrow(lg):
+                return cls.Arrow(length=lg, radius=radius, segms=segms, head_height=head_height, head_angle=head_angle, shapes=False)
+            
+            arrow = get_arrow(length)
+            
+            for i, lg in enumerate([0, 2*length, 10*length]):
+                
+                ar = get_arrow(lg)
+                index = arrow.add_shape()
+                
+                if i == 0:
+                    index = 0
+                    
+                arrow.verts[:, index] = ar.verts[0, 0]
+                    
+            return arrow
+                    
+        # ----- Not animated arrow
+        
+        dz = min(.01, length/3)
+        zs = np.array([0., 0., dz, length-dz])
+        
+        def f(t, der=0):
+            
+            if not hasattr(t, '__len__'):
+                return f([t], der)[0]
+            
+            v = np.zeros((len(t), 3), float)
+            
+            if der == 0:
+                v[:, 2] = zs[np.round(t).astype(int)]
+                
+            elif der == 1:
+                v[:, 2] = 1
+                
+            return v
+        
+        # ----- The shaft
+        
+        radius = max(0.001, radius)
+        dr = 0.0001
+            
+        shaft = cls.CurveToMesh(f, profile=radius, segms=segms, caps=False, t0=0, t1=3, count=4)
+        # Inset of the base
+        shaft.verts[0, 0, :segms, :2] *= 1 - dr/radius
+        
+        # ----- The arrow head
+        
+        angle = np.radians(np.clip(head_angle, 5, 89))
+        head_radius = np.tan(angle)*head_height
+
+        head  = cls.ArrowHead(shaft_radius=radius, head_radius=head_radius, height=head_height, segms=segms)
+        head.verts[..., 2] += length
+        
+        # ----- Put the head on to the shaft with a seam
+        
+        ring = np.arange(segms)
+        seam0 = ring + (len(zs)-1)*segms
+        shaft.join(head, as_part=False, seam_from=seam0, seam_to=ring, seam_close=True)
+        
+        # The base cap
+        base_face = shaft.faces.append(np.flip(ring))
+
+        # ----- Cylinder uv on the shaft
+        
+        shaft.uvmaps["UVMap"] = Faces.uvgrid(segms, Faces.loc_to_delta(np.append(zs, length)))
+        
+        # ----- The material indices
+        
+        shaft_faces = segms*(len(zs))
+        
+        shaft.ensure_mat_i()
+        
+        # Arrow head
+        shaft.mat_i[shaft_faces:] = 1
+        
+        # Base cap
+        shaft.mat_i[base_face:]   = 2
+        shaft.mat_i[:segms]       = 2
+        
+        shaft.mat_names = ['Arrow Shaft', 'Arrow head', 'Arrow cap']
+        
+        return shaft
+        
     
     # ---------------------------------------------------------------------------
     # A cylindric shape around a backbone
     
     @classmethod
-    def CurveToMesh(cls, f, profile=.1, t0=0, t1=1, count=100, uv_start=0, uv_end=1, scale=1, twist=None):
+    def CurveToMesh(cls, f, profile=.1, segms=12, caps=True, t0=0, t1=1, count=100, uv_start=0, uv_end=1, scale=1, twist=None):
         
         # ----- The call arguments for the points
         
@@ -443,7 +642,7 @@ class VertParts(WRoot):
             prof[:, 0] = np.array(profile)[:, 0]
             prof[:, 1] = np.array(profile)[:, 1]
         else:
-            n = 12
+            n = segms
             ags = np.linspace(0, 2*np.pi, n, endpoint=False)
             prof = np.zeros((n, 3), float)
             prof[:, 0] = profile*np.cos(ags)
@@ -484,13 +683,24 @@ class VertParts(WRoot):
         # ---------------------------------------------------------------------------
         # Let's create the geometry
         
-        verts = np.reshape(tm.transform(prof), (count*len(profile), 3))
+        verts = np.reshape(tm.transform(prof), (count*len(prof), 3))
         faces = Faces.Grid(len(prof), count, x_close=True, y_close=False)
-        uvs   = Faces.uvgrid(len(prof), count, (0, uv_start, 1, uv_end))
+        if caps:
+            faces.append(np.flip(np.arange(len(prof))))
+            faces.append(np.arange(len(prof)) + (count-1)*len(prof))
+        
+        # ----- The uvs are based on the distances between the points of the profile
+        
+        pts = np.append(prof, [prof[0]], axis=0)
+        dx  = np.linalg.norm(pts[1:] - pts[:-1], axis=-1) 
+        
+        uvs   = Faces.uvgrid(dx, count-1, (0, uv_start, 1, uv_end))
         
         geo = cls.MeshFromData(verts, faces)
         geo.uvmaps["UVMap"] = uvs
         geo.ensure_mat_i()
+        if caps:
+            geo.mat_i[-2:] = 1
         
         return geo
     
@@ -646,7 +856,7 @@ class VertParts(WRoot):
             print()
             
         print("===== Materials")
-        for i, name in enumerate(self.materials):
+        for i, name in enumerate(self.mat_names):
             print(f"{i:2d}: {name}")
         print()
         
@@ -663,7 +873,7 @@ class VertParts(WRoot):
         s += f"   part size:    {self.part_size:4d} vertices; {self.sizes[:10]}{'...' if len(self.sizes) > 10 else ''}\n"
         s += f"   vertices:     {self.true_verts_count:4d} true on {self.verts_count} stored"
         if self.verts_count > 0:
-            s += ", ratio = {self.true_verts_count/self.verts_count*100:.1f}%\n"
+            s += f", ratio = {self.true_verts_count/self.verts_count*100:.1f}%\n"
         else:
             s += "\n"
             
@@ -721,6 +931,21 @@ class VertParts(WRoot):
     @property
     def same_sizes(self):
         return self.true_indices is None
+    
+    # ---------------------------------------------------------------------------
+    # Shapes
+    
+    def add_shape(self, from_shape=0):
+        
+        index = self.shapes_count
+        
+        shape = self.verts.shape
+        new_shape = (shape[0], shape[1] + 1, shape[2], shape[3])
+        self.verts = np.resize(self.verts, new_shape)
+        
+        self.verts[:, index] = self.verts[:, from_shape]
+        
+        return index
     
     # ----------------------------------------------------------------------------------------------------
     # Parts centers
@@ -807,12 +1032,30 @@ class VertParts(WRoot):
     # Materials are defined
     
     @property
-    def materials_count(self):
-        return len(self.materials)
+    def max_mat_i(self):
+        return np.max(self.mat_i)
     
     @property
-    def has_mat_i(self):
-        return len(self.mat_i) > 0
+    def mat_names(self):
+        mats = list(self.mats_)
+        n = len(mats)
+        imax = np.max(self.mat_i)
+        if (imax > 0) and (n < imax+1):
+            for i in range(n, imax+1):
+                mats.append("Material")
+                #mats.append(f"Material {i}")
+        return mats
+    
+    @mat_names.setter
+    def mat_names(self, value):
+
+        n = len(self.mats_)
+        
+        for i in range(n):
+            self.mats_[i] = value[i]
+            
+        for i in range(n, len(value)):
+            self.mats_.append(value[i])
     
     def ensure_mat_i(self):
         if self.type == 'Mesh':
@@ -822,6 +1065,7 @@ class VertParts(WRoot):
             
         if len(self.mat_i) < target:
             self.mat_i = np.append(self.mat_i, np.zeros(target - len(self.mat_i), int))
+            
             
     # ----------------------------------------------------------------------------------------------------
     # Array
@@ -847,7 +1091,7 @@ class VertParts(WRoot):
         # ---------------------------------------------------------------------------
         # Materials
 
-        geo.materials = list(model.materials)
+        geo.mat_names = model.mat_names
         geo.mat_i     = np.resize(model.mat_i, (count*len(model.mat_i),))
         
         # ---------------------------------------------------------------------------
@@ -905,7 +1149,11 @@ class VertParts(WRoot):
     # ----------------------------------------------------------------------------------------------------
     # Join faces
     
-    def join_faces(self, other, vcount):    
+    def join_faces(self, other, vcount, seam_from=None, seam_to=None, seam_close=False):
+        
+        if (seam_from is not None) and (seam_to is not None):
+            self.faces.extend(Faces.Stripe(seam_from, np.array(seam_to) + vcount, seam_close))
+            
         self.faces.join(other.faces, verts_count = vcount)
         
     # ----------------------------------------------------------------------------------------------------
@@ -917,13 +1165,13 @@ class VertParts(WRoot):
         # Append new materials when required
         
         mat_inds = []
-        for i, name in enumerate(other.materials):
+        for i, name in enumerate(other.mats_):
             try:
-                index = self.materials.index(name)
+                index = self.mats_.index(name)
                 mat_inds.append(index) 
             except:
-                mat_inds.append(len(self.materials))
-                self.materials.append(name)
+                mat_inds.append(len(self.mats_))
+                self.mats_.append(name)
                 
         # Append the new indices
         if len(mat_inds) > 0:
@@ -970,7 +1218,7 @@ class VertParts(WRoot):
     # ----------------------------------------------------------------------------------------------------
     # Join another geometry
     
-    def join(self, other, as_part=False):
+    def join(self, other, as_part=False, seam_from=None, seam_to=None, seam_close=False):
         
         # ---------------------------------------------------------------------------
         # Vertices
@@ -1048,7 +1296,7 @@ class VertParts(WRoot):
             
             # ----- Faces
             
-            self.join_faces(other, vcount)
+            self.join_faces(other, vcount, seam_from=seam_from, seam_to=seam_to, seam_close=seam_close)
             
             # ----- uv maps
             
@@ -1123,7 +1371,7 @@ class VertParts(WRoot):
             groups = np.arange(len(self.faces))
             
         geo = type(self)(type='Mesh')
-        geo.materials = list(self.materials)
+        geo.mat_names = self.mat_names
         
         for group in range(np.max(groups)+1):
             

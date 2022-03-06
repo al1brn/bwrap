@@ -17,18 +17,7 @@ from pathlib import Path
 # Text wrapper
 # wrapped : TextCurve
 
-class WText(WID, WMaterials):
-    """TextCurve wrapper.
-    
-    Simple wrapper limited to provide the text attribute.
-    Other attributes come from the Blender TextCurve class.
-    """
-
-    def __init__DEPR(self, wrapped, evaluated=False):
-        if evaluated:
-            super().__init__(wrapped, name=wrapped.name)
-        else:
-            super().__init__(name=wrapped.name, coll=bpy.data.curves)
+class WText(WID):
             
     @property
     def wrapped(self):
@@ -64,6 +53,11 @@ class WText(WID, WMaterials):
     def text(self, value):
         self.wrapped.body = value
         
+        
+    @property
+    def wmaterials(self):
+        return WMaterials(data=self)
+        
     # ===========================================================================
     # File path to font
     
@@ -88,7 +82,7 @@ class WText(WID, WMaterials):
     
     @classmethod
     def exposed_methods(cls):
-        return ["copy_materials_from"]
+        return []
 
     @classmethod
     def exposed_properties(cls):
