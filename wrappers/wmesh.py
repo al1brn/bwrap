@@ -1165,12 +1165,82 @@ class WMesh(WID):
     def groups_triplets(self):
         return VertGroups.read_triplets(self.wrapped)
     
-    # ---------------------------------------------------------------------------
+    # ===========================================================================
     # Shape keys
+
+    # ---------------------------------------------------------------------------
+    # Keys management
     
     @property
     def wshape_keys(self):
         return WShapeKeys(self.blender_object)
+    
+    # ---------------------------------------------------------------------------
+    # Get the mesh vertices
+    #
+    # Verts are shape (shapes_count, verts_count, 3)
+    
+    def get_shape_keys_verts(self, name=None):
+        
+        # --------------------------------------------------
+        # Get the blocks to read
+        
+        keys = self.wshape_keys.get_keys(name)
+        if len(keys) == 0:
+            return None
+        
+        blocks = self.wshape_keys[keys]
+        if len(blocks) == 0:
+            return None
+
+        # --------------------------------------------------
+        # Let's read the blocks
+        
+        verts_count = len(blocks[0].data)
+        verts = np.zeros((len(blocks), verts_count, 3), float)
+        
+        a = np.zeros(verts_count*3, float)
+
+        for i_sk, block in enumerate(blocks):
+            block.data.foreach_get('co', a)
+            verts[i_sk] = a.reshape(verts_count, 3)
+            
+        return verts
+        
+    # ---------------------------------------------------------------------------
+    # Set the mesh vertices
+    
+    def set_shape_keys_verts(self, verts, name="Key"):
+
+        # ----- Check the validity of the vertices shape
+        
+        shape = np.shape(verts)
+        if len(shape) == 2:
+            count = 1
+        elif len(shape) == 3:
+            count = shape[0]
+        else:
+            raise WError(f"Impossible to set mesh vertices with shape {shape}. The vertices must be shaped either in two ot three dimensions.",
+                        Class = "WMesh",
+                        Method = "set_shape_keys_verts",
+                        Object      = self.name,
+                        verts_shape = np.shape(verts),
+                        name        = name)
+            
+        # ----- The list of keys
+            
+        keys = self.wshape_keys.series_key(name, range(count))
+        
+        # ----- Let's create the keys
+        
+        vs = np.reshape(verts, (count, shape[-2]*3))
+        a = np.array(vs[0])
+        for i, key in enumerate(keys):
+            
+            block = self.wshape_keys.shape_key(key, create=True)
+            
+            a[:] = vs[i]
+            block.data.foreach_set('co', a)    
         
     # ===========================================================================
     # Faces neighborhood
@@ -1333,6 +1403,7 @@ class WMesh(WID):
         return ["get_uvmap", "create_uvmap", "get_uvs", "set_uvs",
              "get_poly_uvs", "set_poly_uvs", "get_poly_uvs_indices", "new_geometry",
              "stick_to_surface", "duplicate", "shade_smooth", "shade_flat",
+             "get_shape_keys_verts", "set_shape_keys_verts",
              "detach_geometry_OLD", "copy_mesh_OLD", "python_source_code",
              "get_floats", "set_floats", "get_ints", "set_ints",
              "init_surface", "init_plane", "init_cylinder", "init_torus", "reshape",

@@ -9,11 +9,18 @@ Created on Mon Jul 26 09:38:15 2021
 import numpy as np
 
 from .wid import WID
-#from .wbezierspline import WBezierSpline
-#from .wnurbsspline import WNurbsSpline
-from .wsplines import WSplines
+
+from .wbezierspline import WBezierSpline
+from .wnurbsspline import WNurbsSpline
+
+from ..core.profile import Profile
+from ..core.maths.bezier import Beziers
+
 from .wmaterials import WMaterials
 from .wshapekeys import WShapeKeys
+
+from ..core.commons import WError
+
         
 # ---------------------------------------------------------------------------
 # Curve wrapper
@@ -27,6 +34,15 @@ class WCurve(WID):
     
     The items are wrapper of splines.
     """
+    
+    # ---------------------------------------------------------------------------
+    # Initialization by name
+    
+    def __init__(self, wrapped, is_evaluated=None):
+        super().__init__(wrapped, is_evaluated=is_evaluated)
+        
+        self.profile_ = None
+    
 
     @property
     def wrapped(self):
@@ -41,94 +57,595 @@ class WCurve(WID):
         return self.blender_object.data
     
     # ===========================================================================
-    # Splines
-    
-    @property
-    def wsplines(self):
-        return WSplines(self.wrapped)
-
     # ===========================================================================
-    # Implement WSpline
-    
+    # Splines wrapper
+
     # ---------------------------------------------------------------------------
-    # WCurve as a collection of splines
+    # WCurve is a collection of splines
 
     def __len__(self):
-        return len(self.wsplines)
+        return len(self.wrapped.splines)
 
     def __getitem__(self, index):
-        return self.wsplines[index]
+        return self.spline_wrapper(self.wrapped.splines[index])
+
+    # ---------------------------------------------------------------------------
+    # Utility function to wrap a BEZIER ot NURBS spline.
+    
+    @staticmethod
+    def spline_wrapper(spline):
+        return WBezierSpline(spline) if spline.type == 'BEZIER' else WNurbsSpline(spline)
 
     # ---------------------------------------------------------------------------
     # Add a spline
 
-    def new(self, spline_type='BEZIER', length=None):
-        return self.wsplines.new(spline_type, length)
+    def new(self, spline_type='BEZIER', verts_count=None):
+        splines = self.splines
+        spline  = self.spline_wrapper(splines.new(spline_type))
+        if verts_count is not None:
+            spline.verts_count = verts_count
+        
+        self.update_tag()
+        
+        self.uncache_profile()
+        
+        return spline
 
     # ---------------------------------------------------------------------------
     # Delete a spline
 
     def delete(self, index):
-        self.wsplines.delete(index)
+        splines = self.splines
+        if index <= len(splines)-1:
+            splines.remove(splines[index])
+
+        self.update_tag()
         
-    # ---------------------------------------------------------------------------
-    # Vertices management from wsplines
-        
+    # ===========================================================================
+    # Profile
+    
+    def cache_profile(self):
+        self.profile_ = None
+        self.profile_ = self.profile
+        return self.profile_
+    
+    def uncache_profile(self):
+        self.profile_ = None
+    
     @property
     def profile(self):
-        return self.wsplines.profile
+        if self.profile_ is not None:
+            return self.profile_
+        else:
+            return Profile.FromSplines(self)
+    
+    # ===========================================================================
+    # Change the profile
+    #
+    # As soon as the requested type of spline doesn't match the existing,
+    # the spline and the following are deleted
+    #
+    # Nothing happens if the requested profile matches the existing one
     
     @profile.setter
     def profile(self, profile):
-        self.wsplines.profile = profile
         
-    def set_profile(self, types='BEZIER', lengths=2, count=None):
-        self.wsplines.set_profile(types, lengths, count)
+        self.profile_ = profile
         
-    #@property
-    #def ext_verts(self):
-    #    return self.wsplines.ext_verts
+        splines = self.splines
+        
+        # ---------------------------------------------------------------------------
+        # From bottom to top while we can change without deleting splines
+        
+        index = 0
+        for (ctype, length), spline in zip(profile, self):
+            
+            spline_type = Profile.ctype_code(spline.type)
+            
+            # ----- Types are different and one is Bezier
+            # we must exit
+            
+            if spline_type != ctype:
+                if spline_type == 0 or ctype == 0:
+                    break
+                spline.type = Profile.ctype_name(ctype)
+
+            # ----- We can only add points, otherwise
+            # we must exit
+            
+            points = spline.points
+            n = len(points)
+            if n < length:
+                points.add(length - n)
+                
+            if len(points) != length:
+                break
+
+            index += 1
+        
+        # ---------------------------------------------------------------------------
+        # index is the number of splines which are ok
+        # splines after must be deleted
+        
+        for i in range(index, len(splines)):
+            splines.remove(splines[len(splines)-1])
+            
+        # ---------------------------------------------------------------------------
+        # We must then create the missing splines with the right number of points
+        
+        for i in range(index, len(profile)):
+            spline = self.new(profile.ctype(i, as_str=True),  profile.length(i))
+                
+        self.update_tag()
+        
+                
+    # ===========================================================================
+    # A user friendly version of the profile setting
+    #
+    # set_profile('BEZIER', 3, 10) : Create 10 BEZIER splines of 3 points
+    
+    def set_profile(self, ctype = 'BEZIER', length=2, count=1):
+        self.profile = Profile(ctype, length, count)
+        
+    # ===========================================================================
+    # Initialize with a set of points
+    
+    def set_beziers(self, points, lefts=None, rights=None):
+        
+        bzs    = Beziers(points, lefts, rights)
+        count  = 1 if bzs.shape == () else bzs.shape[0]
+        length = bzs.count
+        
+        self.set_profile('BEZIER', length, count)
+        v, l, r = bzs.control_points()
+        
+        if bzs.shape == ():
+            self[0].set_vertices(np.array((v, l, r)))
+        else:
+            for i in range(count):
+                self[i].set_vertices(np.array((v[i], l[i], r[i])))
+                
+        return
+            
+    # ===========================================================================
+    # Initialize with a set of functions
+            
+    def set_function(self, f, t0=0, t1=1, length=100):
+        
+        self.set_profile('BEZIER', length, 1)
+        self[0].set_function(f, t0, t1)
+            
+    # ===========================================================================
+    # Initialize with a set of functions
+            
+    def set_functions(self, fs, t0=0, t1=1, length=100):
+        
+        self.set_profile('BEZIER', length, len(fs))
+        for i, f in enumerate(fs):
+            self[i].set_function(f, t0, t1)
+        
+    # ===========================================================================
+    # Some helpers
+    
+    @property
+    def only_bezier(self):
+        return self.profile.only_bezier
+
+    @property
+    def only_nurbs(self):
+        return self.profile.only_nurbs
+    
+    @property
+    def has_bezier(self):
+        return self.profile.has_bezier
+
+    @property
+    def has_nurbs(self):
+        return self.profile.has_nurbs
+
+    @property
+    def is_mix(self):
+        return self.has_bezier and self.is_mix
+    
+    @property
+    def verts_count(self):
+        return self.profile.verts_count
+    
+    @property
+    def points_count(self):
+        return self.profile.points_count
+    
+    # ===========================================================================
+    # Get the vertices
+    
+    def get_vertices(self, ndim=3):
+        
+        profile = self.profile
+
+        ndim = np.clip(ndim, 3, 4)
+
+        verts = np.zeros((profile.verts_count, ndim), float)
+
+        for (ctype, offset, length, nverts), spline in zip(profile.verts_iter(), self.splines):
+
+            if ctype == 0:
+                a = np.empty((3, length * 3), float)
+
+                spline.bezier_points.foreach_get('co',           a[0])
+                spline.bezier_points.foreach_get('handle_left',  a[1])
+                spline.bezier_points.foreach_get('handle_right', a[2])
+
+                verts[offset:offset+nverts, :3] = np.reshape(a, (nverts, 3))
+
+            else:
+                a = np.empty(length*4, float)
+                spline.points.foreach_get('co', a)
+
+                verts[offset:offset +
+                      nverts] = np.reshape(a, (length, 4))[:, :ndim]
+
+        return verts
+    
+    @property
+    def verts4(self):
+        return self.get_vertices(ndim=4)
     
     @property
     def verts(self):
-        return self.wsplines.verts
+        return self.get_vertices()
+
+    # ===========================================================================
+    # Set the vertices, either ndim=3 ort 4
     
     @verts.setter
     def verts(self, verts):
-        self.wsplines.verts = verts
         
-    @property
-    def verts_count(self):
-        return self.wsplines.verts_count
+        profile = self.profile
 
-    @property
-    def verts_dim(self):
-        return self.wsplines.verts_dim
-    
-    def set_beziers(self, points, lefts=None, rights=None):
-        self.wsplines.set_beziers(points, lefts, rights)
-            
-    def set_function(self, f, t0=0, t1=1, length=100):
-        self.wsplines.set_function(f, t0, t1, length)
-    
-    def set_functions(self, fs, t0=0, t1=1, length=100):
-        self.wsplines.set_functions(fs, t0, t1, length)
+        ndim = np.shape(verts)[-1]
+
+        for (ctype, offset, length, nverts), spline in zip(profile.verts_iter(), self.splines):
+
+            if ctype == 0:
+                a = np.reshape(verts[offset:offset+nverts, :3], (3, length*3))
+
+                spline.bezier_points.foreach_set('co',           a[0])
+                spline.bezier_points.foreach_set('handle_left',  a[1])
+                spline.bezier_points.foreach_set('handle_right', a[2])
+
+            else:
+                a = np.ones((length, 4), float)
+                a[:, :ndim] = verts[offset:offset+nverts]
+                spline.points.foreach_set('co', np.reshape(a, (length*4)))
+
+        self.update_tag()
+
+    # ===========================================================================
+    # Read attributes
+
+    def get_attrs(self, attrs=['radius', 'tilt', 'weight', 'weight_softbody']):
         
+        profile = self.profile
+
+        n = len(attrs)
+        if n == 0:
+            return None
+
+        values = {}
+        for attr in attrs:
+            values[attr] = np.zeros(profile.points_count, float)
+
+        for (ctype, offset, length), spline in zip(profile.points_iter(), self.splines):
+
+            for attr, vals in values.items():
+
+                pts = spline.bezier_points if ctype == 0 else spline.points
+
+                if (ctype != 0) or (attr != 'weight'):
+                    pts.foreach_get(attr, vals[offset:offset+length])
+
+        return values
+
+    # ===========================================================================
+    # Write attributes
+
+    def set_attrs(self, values):
+        
+        profile = self.profile
+
+        offset = 0
+
+        for (ctype, offset, length), spline in zip(profile.points_iter(), self.splines):
+
+            for attr, vals in values.items():
+
+                pts = spline.bezier_points if ctype == 0 else spline.points
+
+                if (ctype != 0) or (attr != 'weight'):
+                    pts.foreach_set(attr, vals[offset:offset+length])    
+    
+            
+    # ===========================================================================
+    
+    def get_attr(self, name):
+        return self.get_attrs(name)[name]
+
+    def set_attr(self, name, values):
+        return self.set_attrs({name: values})
+    
+    # ---------------------------------------------------------------------------
+    # Tilt
+    
+    @property
+    def tilts(self):
+        return self.get_attr('tilt')
+    
+    @tilts.setter
+    def tilts(self, value):
+        self.set_points_attr('tilt', value)
+        
+    # ---------------------------------------------------------------------------
+    # Radius
+    
+    @property
+    def radius(self):
+        return self.get_attr('radius')
+    
+    @radius.setter
+    def radius(self, value):
+        self.set_attr('radius', value)
+
+    # ---------------------------------------------------------------------------
+    # Weight soft body
+    
+    @property
+    def weight_softbodies(self):
+        return self.get_attr('weight_softbody')
+    
+    @weight_softbodies.setter
+    def weight_softbodies(self, value):
+        self.set_attr('weight_softbody', value)
+        
+    # ---------------------------------------------------------------------------
+    # Weight
+    
+    @property
+    def weights(self):
+        return self.get_attr('weight')
+    
+    @weights.setter
+    def weights(self, value):
+        self.set_attr('weight', value)
+        
+
+    # ---------------------------------------------------------------------------
+    # Spline parameters
+    
     @property
     def splines_properties(self):
-        return self.wsplines.splines_properties
+        return [self[i].spline_properties for i in range(len(self))]
     
     @splines_properties.setter
     def splines_properties(self, value):
-        self.wsplines.splines_properties = value
-    
+        for i, props in enumerate(value):
+            self[i].spline_properties = props
     
     # ===========================================================================
+    # ===========================================================================
     # Shape keys
+    
+    # ---------------------------------------------------------------------------
+    # Shape keys wrapper
     
     @property
     def wshape_keys(self):
         return WShapeKeys(self.blender_object)
+    
+    # ---------------------------------------------------------------------------
+    # Get the shape keys vertices
+    
+    def get_shape_keys_verts(self, name=None):
+        
+        # --------------------------------------------------
+        # Get the blocks to read
+        
+        keys = self.wshape_keys.get_keys(name)
+        if len(keys) == 0:
+            return None
+            
+        blocks = self.wshape_keys[keys]
+        count = len(blocks)
+        if count == 0:
+            return None
+        
+        # --------------------------------------------------
+        # Let's read the blocks
+        
+        # --------------------------------------------------
+        # Need to read the alternance bezier / not bezier
+        
+        profile     = self.profile
+        
+        only_bezier = profile.only_bezier
+        only_nurbs  = profile.only_nurbs
+        
+        nverts      = profile.verts_count
+        verts       = np.zeros((count, nverts, 3), float)
+            
+        # --------------------------------------------------
+        # Loop on the shapes
+
+        for i_sk, sk in enumerate(blocks):
+            
+            # --------------------------------------------------
+            # Load bezier when only bezier curves
+            
+            if only_bezier:
+                
+                co = np.empty(nverts*3, float)
+                le = np.empty(nverts*3, float)
+                ri = np.empty(nverts*3, float)
+                
+                sk.data.foreach_get('co',           co)
+                sk.data.foreach_get('handle_left',  le)
+                sk.data.foreach_get('handle_right', ri)
+                
+                for _, index, n in profile.points_iter():
+                    i3 = index*3
+                    verts[i_sk, i3       :i3 + n  ] = co.reshape(nverts, 3)[index: index+n]
+                    verts[i_sk, i3 + n   :i3 + 2*n] = le.reshape(nverts, 3)[index: index+n]
+                    verts[i_sk, i3 + 2*n :i3 + 3*n] = ri.reshape(nverts, 3)[index: index+n]
+                    
+            # --------------------------------------------------
+            # Load nurbs when no bezier curves
+            
+            elif only_nurbs:
+                
+                co = np.empty(nverts*3, float)
+                
+                sk.data.foreach_get('co', co)
+                
+                for _, index, n in profile.points_iter():
+                    verts[i_sk, index :index + n] = co.reshape(nverts, 3)[index: index+n]
+                    
+            # --------------------------------------------------
+            # We have to loop :-(
+            
+            else:
+                index  = 0
+                
+                for ctype, offset, n in profile.points_iter():
+                    
+                    if ctype == 0:
+                        for i in range(n):
+        
+                            usk = sk.data[offset + i]
+        
+                            verts[i_sk, index       + i] = usk.co
+                            verts[i_sk, index +   n + i] = usk.handle_left
+                            verts[i_sk, index + 2*n + i] = usk.handle_right
+                            
+                        index += 3*n
+                        
+                    else:
+                        for i in range(n):
+        
+                            usk = sk.data[offset + i]
+                            verts[i_sk, index + i] = usk.co
+                            
+                        index += n
+
+        return verts
+
+    # ===========================================================================
+    # Get the curve vertices
+    
+    def set_shape_keys_verts(self, verts, name="Key"):
+        
+        # ----- Check the validity of the vertices shape
+        
+        shape = np.shape(verts)
+        if len(shape) == 2:
+            count = 1
+        elif len(shape) == 3:
+            count = shape[0]
+        else:
+            raise WError(f"Impossible to set curve vertices with shape {shape}. The vertices must be shaped either in two ot three dimensions.",
+                        Class = "WCurve",
+                        Method = "set_shape_keys_verts",
+                        Object      = self.name,
+                        verts_shape = np.shape(verts),
+                        name        = name)
+            
+        # --------------------------------------------------
+        # Let's write the blocks
+        
+        # --------------------------------------------------
+        # Need to read the alternance bezier / not bezier
+        
+        profile     = self.profile
+        only_bezier = profile.only_bezier
+        only_nurbs  = profile.only_nurbs
+        
+        nverts      = profile.verts_count
+        if nverts != shape[-2]:
+            raise WError(f"Impossible to set curve vertices with shape {shape}. The number of vertices per shape must be {nverts}, not {shape[-2]}.",
+                        Class = "WShapeKeys",
+                        Method = "set_curve_vertices",
+                        Object      = self.name,
+                        verts_shape = np.shape(verts),
+                        name        = name)
+            
+        # --------------------------------------------------
+        # Loop on the shapes
+        
+        # ----- The list of keys
+            
+        keys = self.wshape_keys.series_key(name, range(count))
+        
+        for i_sk, key in enumerate(keys):
+            
+            sk = self.wshape_keys.shape_key(key, create=True)
+            
+            # --------------------------------------------------
+            # Only bezier curves
+            
+            if only_bezier:
+                
+                co = np.empty((nverts, 3), float)
+                le = np.empty((nverts, 3), float)
+                ri = np.empty((nverts, 3), float)
+                
+                for _, index, n in profile.points_iter():
+                    i3 = index*3
+                    co[index:index + n] = verts[i_sk, i3       :i3 + n  ]
+                    le[index:index + n] = verts[i_sk, i3 + n   :i3 + 2*n]
+                    ri[index:index + n] = verts[i_sk, i3 + 2*n :i3 + 3*n]
+                        
+                sk.data.foreach_set('co',           co.reshape(nverts * 3))
+                sk.data.foreach_set('handle_left',  le.reshape(nverts * 3))
+                sk.data.foreach_set('handle_right', ri.reshape(nverts * 3))
+                    
+            # --------------------------------------------------
+            # No bezier curve at all
+            
+            elif only_nurbs:
+                
+                co = np.empty((nverts, 3), float)
+                
+                for _, index, n in profile.points_iter():
+                    co[index: index+n] = verts[i_sk, index :index + n]
+
+                sk.data.foreach_set('co', co.reshape(nverts * 3))
+
+            # --------------------------------------------------
+            # We have to loop :-(        
+            
+            else:
+                index = 0
+                for ctype, offset, n in profile.points_iter():
+                    if ctype == 3:
+                        
+                        for i in range(n):
+        
+                            usk = sk.data[offset + i]
+        
+                            usk.co           = verts[i_sk, index       + i]
+                            usk.handle_left  = verts[i_sk, index +   n + i]
+                            usk.handle_right = verts[i_sk, index + 2*n + i]
+                            
+                        index += 3*n
+                        
+                    else:
+                    
+                        for i in range(n):
+        
+                            usk = sk.data[offset + i]
+        
+                            usk.co = verts[i_sk, index + i]
+                            
+                        index += n
+    
 
     # ===========================================================================
     # Materials
@@ -241,13 +758,17 @@ class WCurve(WID):
     
     @classmethod
     def exposed_methods(cls):
-        return ["new", "delete", "set_profile", "set_beziers", "set_function", "set_functions"]
+        return ["new", "delete", "set_profile", "set_beziers", "set_function", "set_functions",
+                "get_attrs", "set_attrs", "cache_profile", "uncache_profile",
+                "get_shape_keys_verts", "set_shape_keys_verts"]
 
     @classmethod
     def exposed_properties(cls):
-        return {"materials": 'RO', "wsplines": 'RO', "profile": 'RW', "ext_verts": 'RO', "verts": 'RW',
-                "material_indices": 'RW', "verts_count": 'RO', "verts_dim": 'RO', "wshape_keys": 'RO',
-                "curve_properties": 'RW', "splines_properties": 'RW'}
+        return {"materials": 'RO', "profile": 'RW', "verts4": 'RO', "verts": 'RW',
+                "only_bezier": 'RO', "only_nurbs": 'RO', "has_bezier": 'RO', "has_nurbs": 'RO', "is_mix": 'RO', 
+                "material_indices": 'RW', "verts_count": 'RO', "points_count": 'RO', "wshape_keys": 'RO',
+                "curve_properties": 'RW', "splines_properties": 'RW',
+                "tilts": 'RW', "radius": 'RW', "weights": 'RO', "weight_softbodies": 'RW'}
     
     # ===========================================================================
     # Generated source code for WCurve class

@@ -24,31 +24,6 @@ class WSpline(WStruct):
     For Bezier curves, gives access to the left and right handles.
     For nurbs curves, the points are 4D vectors.
     """
-    
-    # ---------------------------------------------------------------------------
-    # [‘POLY’, ‘BEZIER’, ‘BSPLINE’, ‘CARDINAL’, ‘NURBS’], default ‘POLY’
-    
-    @staticmethod
-    def type_to_code(type):
-        if type == 'BEZIER':
-            return 0
-        elif type == 'POLY':
-            return 1
-        elif type == 'BSPLINE':
-            return 2
-        elif type == 'CARDINAL':
-            return 3
-        else: # NURBS
-            return 4
-        
-    @staticmethod
-    def code_to_type(code):
-        return ['BEZIER', 'POLY', 'BSPLINE', 'CARDINAL', 'NURBS'][code]
-    
-    @property
-    def type_code(self):
-        return WSpline.type_to_code(self.wrapped.type)
-
     # ---------------------------------------------------------------------------
     # A Bezier curve
     
@@ -84,19 +59,6 @@ class WSpline(WStruct):
         else:
             return self.wrapped.points
     
-    # ---------------------------------------------------------------------------
-    # Spline profile: 1 triplets made of
-    # - 3 for Bezier curves (point, left, right)
-    # - points count
-    # - type code
-    
-    @property
-    def profile(self):
-        if self.type == 'BEZIER':
-            return [3, len(self.wrapped.bezier_points), 0]
-        else:
-            return [1, len(self.wrapped.points), WSpline.type_to_code(self.wrapped.type)]
-        
     # ---------------------------------------------------------------------------
     # As an array of points or bezier points
 

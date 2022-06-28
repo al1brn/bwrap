@@ -10,8 +10,9 @@ import numpy as np
 
 import bpy
 
-#from .wstruct import WStruct
-from .wsplines import WSplines
+#from .wcurve import WCurve
+
+from ..core.profile import Profile
 from ..core.commons import WError
 
 # ---------------------------------------------------------------------------
@@ -452,11 +453,12 @@ class WShapeKeys():
         # --------------------------------------------------
         # Need to read the alternance bezier / not bezier
         
-        profile     = WSplines(self.data).profile
-        only_bezier = np.min(profile[:, 0]) == 3
-        only_nurbs  = np.max(profile[:, 0]) == 1
+        profile     = WCurve(self.data).profile
         
-        nverts      = np.sum(profile[:, 0] * profile[:, 1])
+        only_bezier = profile.only_bezier
+        only_nurbs  = profile.only_nurbs
+        
+        nverts      = profile.verts_count
         verts       = np.zeros((count, nverts, 3), float)
             
         # --------------------------------------------------
@@ -477,14 +479,23 @@ class WShapeKeys():
                 sk.data.foreach_get('handle_left',  le)
                 sk.data.foreach_get('handle_right', ri)
                 
-                index = 0
-                for t, n, st in profile:
-                    i3 = index*3
-                    verts[i_sk, i3       :i3 + n  ] = co.reshape(nverts, 3)[index: index+n]
-                    verts[i_sk, i3 + n   :i3 + 2*n] = le.reshape(nverts, 3)[index: index+n]
-                    verts[i_sk, i3 + 2*n :i3 + 3*n] = ri.reshape(nverts, 3)[index: index+n]
+                if True:
+                    for _, index, n in profile.points_iter():
+                        i3 = index*3
+                        verts[i_sk, i3       :i3 + n  ] = co.reshape(nverts, 3)[index: index+n]
+                        verts[i_sk, i3 + n   :i3 + 2*n] = le.reshape(nverts, 3)[index: index+n]
+                        verts[i_sk, i3 + 2*n :i3 + 3*n] = ri.reshape(nverts, 3)[index: index+n]
+
+                else:
+                    index = 0
+                    for t, n, st in profile:
+                        i3 = index*3
+                        verts[i_sk, i3       :i3 + n  ] = co.reshape(nverts, 3)[index: index+n]
+                        verts[i_sk, i3 + n   :i3 + 2*n] = le.reshape(nverts, 3)[index: index+n]
+                        verts[i_sk, i3 + 2*n :i3 + 3*n] = ri.reshape(nverts, 3)[index: index+n]
+                        
+                        index += n
                     
-                    index += n
                     
             # --------------------------------------------------
             # Load nurbs when no bezier curves
@@ -495,43 +506,72 @@ class WShapeKeys():
                 
                 sk.data.foreach_get('co', co)
                 
-                index = 0
-                for t, n, st in profile:
-                    verts[i_sk, index :index + n] = co.reshape(nverts, 3)[index: index+n]
-                    
-                    index += n
+                if True:
+                    for _, index, n in profile.points_iter():
+                        verts[i_sk, index :index + n] = co.reshape(nverts, 3)[index: index+n]
+                else:
+                    index = 0
+                    for t, n, st in profile:
+                        verts[i_sk, index :index + n] = co.reshape(nverts, 3)[index: index+n]
+                        
+                        index += n
                     
             # --------------------------------------------------
             # We have to loop :-(
             
-            i_data = 0
-            index  = 0
+            else:
+                if True:
+                    index  = 0
+                    for ctype, offset, n in profile.points_iter():
+                        
+                        if ctype == 0:
+                            for i in range(n):
             
-            for t, n, st in profile:
-                
-                if t == 3:
-                    
-                    for i in range(n):
-    
-                        usk = sk.data[i_data + i]
-    
-                        verts[i_sk, index       + i] = usk.co
-                        verts[i_sk, index +   n + i] = usk.handle_left
-                        verts[i_sk, index + 2*n + i] = usk.handle_right
-                        
-                    index += 3*n
-                    
+                                usk = sk.data[offset + i]
+            
+                                verts[i_sk, index       + i] = usk.co
+                                verts[i_sk, index +   n + i] = usk.handle_left
+                                verts[i_sk, index + 2*n + i] = usk.handle_right
+                                
+                            index += 3*n
+                            
+                        else:
+                            for i in range(n):
+            
+                                usk = sk.data[offset + i]
+                                verts[i_sk, index + i] = usk.co
+                                
+                            index += n
+                            
                 else:
-                
-                    for i in range(n):
-    
-                        usk = sk.data[i_data + i]
-    
-                        verts[i_sk, index + i] = usk.co
-                        
-                    index += n
+                    i_data = 0
+                    index  = 0
                     
-                i_data += n
+                    for t, n, st in profile:
+                        
+                        if t == 3:
+                            
+                            for i in range(n):
+            
+                                usk = sk.data[i_data + i]
+            
+                                verts[i_sk, index       + i] = usk.co
+                                verts[i_sk, index +   n + i] = usk.handle_left
+                                verts[i_sk, index + 2*n + i] = usk.handle_right
+                                
+                            index += 3*n
+                            
+                        else:
+                        
+                            for i in range(n):
+            
+                                usk = sk.data[i_data + i]
+            
+                                verts[i_sk, index + i] = usk.co
+                                
+                            index += n
+                            
+                        i_data += n
 
         return verts
 
@@ -561,11 +601,11 @@ class WShapeKeys():
         # --------------------------------------------------
         # Need to read the alternance bezier / not bezier
         
-        profile     = WSplines(self.data).profile
-        only_bezier = np.min(profile[:, 0]) == 3
-        only_nurbs  = np.max(profile[:, 0]) == 1
+        profile     = WCurve(self.data).profile
+        only_bezier = profile.only_bezier
+        only_nurbs  = profile.only_nurbs
         
-        nverts      = np.sum(profile[:, 0] * profile[:, 1])
+        nverts      = profile.verts_count
         if nverts != shape[-2]:
             raise WError(f"Impossible to set curve vertices with shape {shape}. The number of vertices per shape must be {nverts}, not {shape[-2]}.",
                         Class = "WShapeKeys",
@@ -594,15 +634,23 @@ class WShapeKeys():
                 le = np.empty((nverts, 3), float)
                 ri = np.empty((nverts, 3), float)
                 
-                index = 0
-                for t, n, st in profile:
-                    i3 = index*3
-                    co[index:index + n] = verts[i_sk, i3       :i3 + n  ]
-                    le[index:index + n] = verts[i_sk, i3 + n   :i3 + 2*n]
-                    ri[index:index + n] = verts[i_sk, i3 + 2*n :i3 + 3*n]
-                    
-                    index += n
-                    
+                if True:
+                    for _, index, n in profile.points_iter():
+                        i3 = index*3
+                        co[index:index + n] = verts[i_sk, i3       :i3 + n  ]
+                        le[index:index + n] = verts[i_sk, i3 + n   :i3 + 2*n]
+                        ri[index:index + n] = verts[i_sk, i3 + 2*n :i3 + 3*n]
+                        
+                else:
+                    index = 0
+                    for t, n, st in profile:
+                        i3 = index*3
+                        co[index:index + n] = verts[i_sk, i3       :i3 + n  ]
+                        le[index:index + n] = verts[i_sk, i3 + n   :i3 + 2*n]
+                        ri[index:index + n] = verts[i_sk, i3 + 2*n :i3 + 3*n]
+                        
+                        index += n
+                        
                 sk.data.foreach_set('co',           co.reshape(nverts * 3))
                 sk.data.foreach_set('handle_left',  le.reshape(nverts * 3))
                 sk.data.foreach_set('handle_right', ri.reshape(nverts * 3))
@@ -613,46 +661,77 @@ class WShapeKeys():
             elif only_nurbs:
                 
                 co = np.empty((nverts, 3), float)
-
-                index = 0
-                for t, n, st in profile:
-                    co[index: index+n] = verts[i_sk, index :index + n]
-                    
-                    index += n
                 
+                if True:
+                    for _, index, n in profile.points_iter():
+                        co[index: index+n] = verts[i_sk, index :index + n]
+                else:
+                    index = 0
+                    for t, n, st in profile:
+                        co[index: index+n] = verts[i_sk, index :index + n]
+                        
+                        index += n
+                    
                 sk.data.foreach_set('co', co.reshape(nverts * 3))
 
             # --------------------------------------------------
-            # We have to loop :-(
+            # We have to loop :-(        
             
-            i_data = 0
-            index  = 0
+            else:
+                if True:
+                    index = 0
+                    for ctype, offset, n in profile.points_iter():
+                        if ctype == 3:
+                            
+                            for i in range(n):
             
-            for t, n, st in profile:
-                
-                if t == 3:
-                    
-                    for i in range(n):
-    
-                        usk = sk.data[i_data + i]
-    
-                        usk.co           = verts[i_sk, index       + i]
-                        usk.handle_left  = verts[i_sk, index +   n + i]
-                        usk.handle_right = verts[i_sk, index + 2*n + i]
+                                usk = sk.data[offset + i]
+            
+                                usk.co           = verts[i_sk, index       + i]
+                                usk.handle_left  = verts[i_sk, index +   n + i]
+                                usk.handle_right = verts[i_sk, index + 2*n + i]
+                                
+                            index += 3*n
+                            
+                        else:
                         
-                    index += 3*n
-                    
+                            for i in range(n):
+            
+                                usk = sk.data[offset + i]
+            
+                                usk.co = verts[i_sk, index + i]
+                                
+                            index += n
+                        
                 else:
-                
-                    for i in range(n):
-    
-                        usk = sk.data[i_data + i]
-    
-                        usk.co = verts[i_sk, index + i]
-                        
-                    index += n
+                    i_data = 0
+                    index  = 0
                     
-                i_data += n
+                    for t, n, st in profile:
+                        
+                        if t == 3:
+                            
+                            for i in range(n):
+            
+                                usk = sk.data[i_data + i]
+            
+                                usk.co           = verts[i_sk, index       + i]
+                                usk.handle_left  = verts[i_sk, index +   n + i]
+                                usk.handle_right = verts[i_sk, index + 2*n + i]
+                                
+                            index += 3*n
+                            
+                        else:
+                        
+                            for i in range(n):
+            
+                                usk = sk.data[i_data + i]
+            
+                                usk.co = verts[i_sk, index + i]
+                                
+                            index += n
+                            
+                        i_data += n
 
     # ----------------------------------------------------------------------------------------------------
     # Get vertices
